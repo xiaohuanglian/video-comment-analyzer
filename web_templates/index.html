@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>视频评论分析</title>
+  <link rel="stylesheet" href="/static/style.css?v=15" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">VC</div>
+      <div>
+        <h1>视频评论分析</h1>
+        <p>从真实评论中发现需求、痛点与商机</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <div class="progress-chip" id="envChip">检查环境中…</div>
+      <button class="btn ghost" id="btnBackSetup" hidden>← 返回设置</button>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <section class="setup-view" id="setupView">
+      <div class="setup-intro">
+        <div>
+          <p class="eyebrow">新建采集任务</p>
+          <h2>选择数据来源，获取可分析的真实评论</h2>
+          <p>完成三步即可开始。当前版本提供采集、预览与下载，为下一阶段评论洞察准备标准数据。</p>
+          <div class="product-stage-strip" aria-label="产品能力阶段">
+            <span class="active">1 数据采集</span>
+            <span>2 评论洞察 <small>下一阶段</small></span>
+          </div>
+        </div>
+        <ol class="setup-stepper" aria-label="任务设置步骤">
+          <li class="active"><span>1</span>选择平台</li>
+          <li><span>2</span>选择内容</li>
+          <li><span>3</span>确认设置</li>
+        </ol>
+      </div>
+
+      <article class="card flow-card">
+        <div class="step-header">
+          <div class="step-number">1</div>
+          <div class="step-header-copy">
+            <h3>选择内容平台</h3>
+            <p class="hint">后续输入格式和可用指标会随平台自动调整。</p>
+          </div>
+        </div>
+        <div class="platform-grid platform-grid-wide" id="platformGrid" role="group" aria-label="选择内容平台"></div>
+      </article>
+
+      <article class="card flow-card" id="contentSourceCard">
+        <div class="step-header">
+          <div class="step-number">2</div>
+          <div class="step-header-copy">
+            <h3>选择要采集的内容</h3>
+            <p class="hint">从创作者主页发现高评论内容，或直接粘贴已知内容链接。</p>
+          </div>
+          <span class="rank-platform-chip" id="rankPlatformChip">B站</span>
+        </div>
+
+        <div class="source-tabs" role="tablist" aria-label="内容选择方式">
+          <button class="source-tab active" id="tabCreator" type="button" role="tab" aria-selected="true" data-source-mode="creator">从创作者发现</button>
+          <button class="source-tab" id="tabDirect" type="button" role="tab" aria-selected="false" data-source-mode="direct">直接粘贴链接</button>
+        </div>
+
+        <section class="source-panel" id="creatorSourcePanel" role="tabpanel">
+          <div class="creator-rank-form">
+            <div class="creator-url-row">
+              <label class="field-label" for="creatorInput" id="creatorInputLabel">创作者主页链接</label>
+              <div class="input-action-row">
+                <input id="creatorInput" type="text" placeholder="https://space.bilibili.com/20813884" autocomplete="url" />
+                <button class="btn primary" id="btnRankCreator" type="button">查找高评论内容</button>
+                <button class="btn danger" id="btnCancelRank" type="button" hidden>取消扫描</button>
+              </div>
+              <p class="field-help">将扫描该博主主页全部公开内容，再按评论数从高到低排序。</p>
+            </div>
+            <label class="rank-count-control">
+              <span class="field-label">显示结果</span>
+              <select id="creatorTopN">
+                <option value="5">前 5 名</option>
+                <option value="10" selected>前 10 名</option>
+                <option value="20">前 20 名</option>
+                <option value="50">前 50 名</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="rank-empty-state" id="creatorRankEmpty">
+            <strong>先输入创作者主页链接</strong>
+            <span>系统会列出评论最活跃的内容，帮你快速确定采集目标。</span>
+          </div>
+          <div class="rank-results" id="creatorRankWrap" hidden>
+            <div class="rank-summary" id="creatorRankSummary"></div>
+            <p class="field-help rank-select-hint">可点击「选用」选择多条内容；每条将保存到独立子文件夹。</p>
+            <div class="rank-list-head">
+              <span class="col-rank">排名</span>
+              <span class="col-comments">评论数</span>
+              <span class="col-title">内容标题</span>
+              <span class="col-action">操作</span>
+            </div>
+            <div class="rank-list" id="creatorRankList"></div>
+          </div>
+          <div class="inline-status" id="creatorRankStatus" aria-live="polite"></div>
+        </section>
+
+        <section class="source-panel" id="directSourcePanel" role="tabpanel" hidden>
+          <label class="field-label" for="videoInput">内容链接或 ID</label>
+          <input id="videoInput" type="text" placeholder="例如 BV1xxxxxx 或完整内容链接" autocomplete="url" />
+          <p class="field-help" id="directInputHelp">支持粘贴完整链接或平台内容 ID。</p>
+        </section>
+
+        <div class="selected-content-card" id="selectedContentCard" hidden>
+          <div>
+            <span class="selected-label" id="selectedContentLabel">已选择内容</span>
+            <strong id="selectedContentTitle">—</strong>
+            <small id="selectedContentMeta">—</small>
+            <ul class="selected-content-list" id="selectedContentList" hidden></ul>
+          </div>
+          <button class="btn ghost sm" id="btnClearSelection" type="button">清空选用</button>
+        </div>
+      </article>
+
+      <article class="card flow-card">
+        <div class="step-header">
+          <div class="step-number">3</div>
+          <div class="step-header-copy">
+            <h3>确认采集设置</h3>
+            <p class="hint">已为普通分析场景配置推荐值，通常无需修改。</p>
+          </div>
+        </div>
+        <div class="collection-settings-grid">
+          <label class="setting-field">
+            <span class="field-label">保存格式</span>
+            <select id="saveFormat">
+              <option value="csv" selected>CSV（推荐）</option>
+              <option value="jsonl">JSONL</option>
+              <option value="json">JSON</option>
+              <option value="excel">Excel</option>
+            </select>
+          </label>
+          <label class="checkbox-setting">
+            <input id="enableSubComments" type="checkbox" />
+            <span><strong>同时采集二级评论</strong><small>数据更完整，但耗时与请求量明显增加</small></span>
+          </label>
+          <label class="setting-field save-path-field" for="saveDataPath">
+            <span class="field-label">保存根目录</span>
+            <input id="saveDataPath" type="text" value="./data/comments" placeholder="./data/comments" spellcheck="false" />
+            <small>只需填写总文件夹，每条内容会自动建立独立子目录。</small>
+          </label>
+        </div>
+        <details class="advanced-details">
+          <summary>查看文件结构与重爬规则</summary>
+          <div class="advanced-content">
+            <div class="save-path-preview" id="savePathPreview">
+              <div class="preview-title">保存结构预览</div>
+              <pre class="preview-tree" id="savePathPreviewTree"></pre>
+            </div>
+            <p>若检测到上次采集未完成，将清理该内容的旧结果并重新采集，避免重复或缺失数据。</p>
+          </div>
+        </details>
+      </article>
+
+      <div class="start-action-bar">
+        <div class="launch-summary">
+          <strong id="launchSummaryTitle">还差一步即可开始</strong>
+          <div class="setup-status" id="setupStatus" aria-live="polite">请选择平台并选择要采集的内容。</div>
+        </div>
+        <button class="btn primary xl" id="btnStart" type="button" disabled>开始采集评论</button>
+      </div>
+    </section>
+
+    <section class="workspace" id="workspace" hidden>
+      <div class="left-column">
+        <div class="card log-card">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">执行详情</p>
+              <h2>运行日志</h2>
+            </div>
+            <div class="panel-actions">
+              <button class="btn secondary sm" id="btnCopyLogs" type="button">复制</button>
+              <button class="btn secondary sm" id="btnClearLogs" type="button">清空</button>
+            </div>
+          </div>
+          <div class="log-console" id="logConsole">
+            <div class="log-line info">等待任务启动…</div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="right-column">
+        <div class="card status-card">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">任务进度</p>
+              <h2>任务状态</h2>
+            </div>
+            <span class="status-badge idle" id="statusBadge">空闲</span>
+          </div>
+          <div class="progress-track" aria-hidden="true"><span id="statusProgressBar"></span></div>
+          <dl class="status-grid">
+            <div class="status-item">
+              <dt>平台</dt>
+              <dd id="statusPlatform">—</dd>
+            </div>
+            <div class="status-item">
+              <dt>模式</dt>
+              <dd id="statusMode">详情模式</dd>
+            </div>
+            <div class="status-item">
+              <dt>开始时间</dt>
+              <dd id="statusStarted">—</dd>
+            </div>
+            <div class="status-item">
+              <dt>进度</dt>
+              <dd id="statusProgress">—</dd>
+            </div>
+          </dl>
+          <div class="task-result-banner" id="taskResultBanner" hidden></div>
+          <div class="action-row">
+            <button class="btn danger full" id="btnStop">停止抓取</button>
+          </div>
+        </div>
+
+        <div class="card results-card">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">采集结果</p>
+              <h2>结果文件</h2>
+            </div>
+            <button class="btn ghost sm" id="btnRefreshFiles">刷新</button>
+          </div>
+          <div class="file-list" id="fileList">
+            <div class="empty-state"><strong>暂无结果文件</strong><span>采集完成后，文件会自动出现在这里。</span></div>
+          </div>
+          <p class="hint file-save-hint">文件保存在「保存根目录 / 视频文件夹 /」下，可直接用 Excel 打开 CSV。</p>
+        </div>
+
+        <div class="card preview-card">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">数据检查</p>
+              <h2>数据预览</h2>
+            </div>
+            <a class="btn ghost sm" id="btnDownload" href="#" hidden download>下载</a>
+          </div>
+          <div class="preview-meta" id="previewMeta"></div>
+          <div class="preview-path" id="previewPath"></div>
+          <div class="preview-body">
+            <pre class="preview-content" id="previewContent">选择结果文件即可查看前 20 条数据</pre>
+            <div class="preview-table-wrap" id="previewTableWrap" hidden></div>
+          </div>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <script src="/static/comment.js?v=27"></script>
+</body>
+</html>
