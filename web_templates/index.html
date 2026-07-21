@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>视频评论分析</title>
-  <link rel="stylesheet" href="/static/style.css?v=15" />
+  <link rel="stylesheet" href="/static/style.css?v=26" />
 </head>
 <body>
   <header class="topbar">
@@ -12,10 +12,15 @@
       <div class="logo">VC</div>
       <div>
         <h1>视频评论分析</h1>
-        <p>从真实评论中发现需求、痛点与商机</p>
+        <p>从真实评论中发现需求、验证假设、找到值得深聊的调研对象</p>
       </div>
     </div>
     <div class="topbar-actions">
+      <nav class="product-stage-strip topbar-stage-strip" aria-label="产品能力阶段">
+        <button type="button" class="stage-tab active" id="stageTabCollect" data-stage="collect">1 数据采集</button>
+        <button type="button" class="stage-tab" id="stageTabInsight" data-stage="insight">2 评论洞察</button>
+        <button type="button" class="stage-tab" id="stageTabOutreach" data-stage="outreach">3 找人聊聊</button>
+      </nav>
       <div class="progress-chip" id="envChip">检查环境中…</div>
       <button class="btn ghost" id="btnBackSetup" hidden>← 返回设置</button>
     </div>
@@ -27,11 +32,7 @@
         <div>
           <p class="eyebrow">新建采集任务</p>
           <h2>选择数据来源，获取可分析的真实评论</h2>
-          <p>完成三步即可开始。当前版本提供采集、预览与下载，为下一阶段评论洞察准备标准数据。</p>
-          <div class="product-stage-strip" aria-label="产品能力阶段">
-            <span class="active">1 数据采集</span>
-            <span>2 评论洞察 <small>下一阶段</small></span>
-          </div>
+          <p>完成三步即可开始。采集完成后可在「评论洞察」中分析已有数据。</p>
         </div>
         <ol class="setup-stepper" aria-label="任务设置步骤">
           <li class="active"><span>1</span>选择平台</li>
@@ -256,8 +257,334 @@
         </div>
       </aside>
     </section>
+
+    <section class="insight-view" id="insightView" hidden>
+      <div class="setup-intro">
+        <div>
+          <p class="eyebrow">评论洞察</p>
+          <h2>验证假设，发现未知需求</h2>
+          <p>选择已采集的评论数据，使用 LLM 进行结构化分析；结果持久保存，支持导出分享。调研对象筛选请前往「找人聊聊」。</p>
+        </div>
+      </div>
+
+      <article class="card flow-card">
+        <div class="step-header">
+          <div class="step-number">A</div>
+          <div class="step-header-copy">
+            <h3>选择数据</h3>
+            <p class="hint">从 data/ 目录选择 comments_*.csv，支持多平台已采集文件。</p>
+          </div>
+          <button class="btn ghost sm" type="button" id="btnInsightRefreshSources">刷新列表</button>
+        </div>
+        <div class="insight-source-toolbar">
+          <input id="insightSourceSearch" type="search" placeholder="搜索分类、博主或视频标题…" />
+          <div class="insight-source-actions">
+            <button class="btn ghost sm" type="button" id="btnInsightSelectVisible">全选当前结果</button>
+            <button class="btn ghost sm" type="button" id="btnInsightClearSelection">清空选择</button>
+          </div>
+        </div>
+        <div class="insight-selection-bar" id="insightSelectionSummary">
+          <span class="insight-selection-pill">未选择文件</span>
+        </div>
+        <div class="insight-source-tree" id="insightSourceList" role="tree" aria-label="评论数据文件"></div>
+        <p class="inline-status" id="insightSourceStatus"></p>
+      </article>
+
+      <article class="card flow-card">
+        <div class="step-header">
+          <div class="step-number">B</div>
+          <div class="step-header-copy">
+            <h3>模型配置</h3>
+            <p class="hint">支持 OpenAI-compatible 接口（DeepSeek、OpenAI 等）。API Key 仅保存在浏览器会话，不会写入磁盘或日志。</p>
+          </div>
+        </div>
+        <div class="insight-model-panel" id="insightModelPanel">
+          <div class="insight-model-grid">
+            <label class="setting-field">
+              <span class="field-label">Base URL</span>
+              <input id="insightBaseUrl" type="url" value="https://api.deepseek.com" placeholder="https://api.deepseek.com" />
+            </label>
+            <label class="setting-field">
+              <span class="field-label">Model Name</span>
+              <input id="insightModelName" type="text" value="deepseek-v4-flash" placeholder="deepseek-v4-flash" />
+              <span class="hint">推荐 V4-Flash；`deepseek-chat` 为其旧别名（非 Pro）</span>
+            </label>
+            <label class="setting-field insight-api-key-field">
+              <span class="field-label">API Key</span>
+              <input id="insightApiKey" type="password" autocomplete="off" placeholder="仅本次会话有效" />
+            </label>
+            <label class="setting-field">
+              <span class="field-label">预算上限（元，0=不限）</span>
+              <input id="insightBudgetLimit" type="number" min="0" step="0.01" value="0" />
+            </label>
+          </div>
+          <div class="insight-verify-row">
+            <button class="btn ghost sm" type="button" id="btnInsightVerifyModel">验证 API 连接</button>
+            <p class="inline-status" id="insightVerifyStatus"></p>
+          </div>
+          <details class="insight-advanced-settings">
+            <summary>高级设置</summary>
+            <label class="setting-field" style="margin-top:0.75rem">
+              <span class="field-label">分析引擎</span>
+              <select id="insightAnalysisEngine">
+                <option value="evidence_items_v1" selected>新版证据分析（推荐）</option>
+                <option value="legacy_per_record">旧版逐条分析（兼容）</option>
+              </select>
+            </label>
+            <p class="hint">普通任务默认使用新版证据分析；仅在调试或单任务回退时选择旧版。</p>
+          </details>
+        </div>
+      </article>
+
+      <article class="card flow-card">
+        <div class="step-header">
+          <div class="step-number">C</div>
+          <div class="step-header-copy">
+            <h3>分析控制</h3>
+            <p class="hint">选择数据后一键开始；运行中可查看进度，完成后统计实际费用与耗时。</p>
+          </div>
+        </div>
+        <div class="insight-run-controls">
+          <label class="setting-field insight-run-name-field">
+            <span class="field-label">任务名称</span>
+            <input id="insightRunName" type="text" value="评论洞察任务" />
+          </label>
+          <label class="setting-field insight-run-history-field">
+            <span class="field-label">历史任务</span>
+            <select id="insightRunHistory">
+              <option value="">— 加载已有任务 —</option>
+            </select>
+          </label>
+        </div>
+        <p class="hint">选择新文件并「开始分析」会<strong>创建新任务</strong>；从「历史任务」加载则只查看或继续该任务，不会合并文件。</p>
+        <fieldset class="insight-analysis-limit-field">
+          <legend class="field-label">本次分析数量</legend>
+          <div class="insight-segmented-control" role="radiogroup" aria-label="本次分析数量">
+            <label class="insight-segment"><input type="radio" name="insightAnalysisLimit" value="20" /> 20 条</label>
+            <label class="insight-segment"><input type="radio" name="insightAnalysisLimit" value="50" /> 50 条</label>
+            <label class="insight-segment"><input type="radio" name="insightAnalysisLimit" value="100" checked /> 100 条</label>
+            <label class="insight-segment"><input type="radio" name="insightAnalysisLimit" value="0" /> 全部</label>
+          </div>
+          <p class="hint">默认 100 条用于 Prompt 验收；继续分析会处理剩余评论，已分析不会重复调用。</p>
+        </fieldset>
+        <div class="action-row insight-control-actions">
+          <button class="btn primary" type="button" id="btnInsightStartRun">开始分析</button>
+          <button class="btn danger sm" type="button" id="btnInsightStopRun" disabled>停止分析</button>
+          <button class="btn secondary sm" type="button" id="btnInsightRetryFailed" disabled>重试失败项</button>
+        </div>
+        <div class="insight-progress-wrap" id="insightProgressWrap" hidden>
+          <div class="insight-progress-track">
+            <div class="insight-progress-fill" id="insightProgressFill"></div>
+          </div>
+          <p class="insight-progress-label" id="insightProgressLabel">0 / 0</p>
+        </div>
+        <p class="inline-status" id="insightRunStatus"></p>
+        <p class="hint" id="insightRunHint" hidden>分析在后台运行，进度每 5 秒自动刷新；可随时点击「停止分析」。</p>
+        <div class="insight-completion-summary" id="insightCompletionSummary" hidden></div>
+        <dl class="status-grid insight-metrics" id="insightMetrics">
+          <div class="status-item"><dt>任务</dt><dd id="insightRunId">—</dd></div>
+          <div class="status-item"><dt>总评论</dt><dd id="insightTotal">—</dd></div>
+          <div class="status-item"><dt>已分析</dt><dd id="insightCompleted">—</dd></div>
+          <div class="status-item"><dt>状态</dt><dd id="insightStatus">—</dd></div>
+          <div class="status-item"><dt>已用时间</dt><dd id="insightElapsed">—</dd></div>
+          <div class="status-item"><dt>失败</dt><dd id="insightFailed">—</dd></div>
+          <div class="status-item insight-error-item"><dt>错误原因</dt><dd id="insightErrorSummary">—</dd></div>
+          <div class="status-item"><dt>Prompt Tokens</dt><dd id="insightPromptTokens">—</dd></div>
+          <div class="status-item"><dt>缓存命中 Tokens</dt><dd id="insightCacheHitTokens">—</dd></div>
+          <div class="status-item"><dt>Completion Tokens</dt><dd id="insightCompletionTokens">—</dd></div>
+          <div class="status-item"><dt>实际费用</dt><dd id="insightCost">—</dd></div>
+          <div class="status-item insight-cost-projection"><dt>费用预估</dt><dd id="insightCostProjection">—</dd></div>
+        </dl>
+      </article>
+
+      <article class="card flow-card insight-results-card">
+        <div class="step-header">
+          <div class="step-number">D</div>
+          <div class="step-header-copy">
+            <h3>总体洞察</h3>
+            <p class="hint">基于已分析评论的汇总；点击数字或标签可筛选下方明细。</p>
+          </div>
+        </div>
+        <div id="insightOverview" class="insight-overview">
+          <p class="hint">暂无统计，请先运行分析。</p>
+        </div>
+        <div id="insightContradictions" class="insight-contradictions" hidden></div>
+        <div id="insightDashboard" class="insight-dashboard"></div>
+      </article>
+
+      <article class="card flow-card insight-themes-card">
+        <div class="step-header">
+          <div class="step-number">D2</div>
+          <div class="step-header-copy">
+            <h3>开放发现</h3>
+            <p class="hint">基于已分析评论中的 new_signals 做二阶段主题归并；完成后再导出报告。证据路径任务另见「研究报告」。</p>
+          </div>
+          <button class="btn secondary sm" type="button" id="btnInsightClusterThemes">生成开放主题</button>
+        </div>
+        <p class="inline-status" id="insightThemesStatus"></p>
+        <div id="insightThemesPanel" class="insight-themes-panel">
+          <p class="hint">完成评论分析后，点击「生成开放主题」归并 new_signals。</p>
+        </div>
+      </article>
+
+      <article class="card flow-card insight-research-card" id="insightResearchCard" hidden>
+        <div class="step-header">
+          <div class="step-number">D3</div>
+          <div class="step-header-copy">
+            <h3>研究报告</h3>
+            <p class="hint">evidence_items 路径生成的高可读报告（结论优先，不含原始 JSON）。</p>
+          </div>
+        </div>
+        <div id="insightResearchReport" class="insight-research-report"></div>
+      </article>
+
+      <article class="card flow-card">
+        <div class="step-header">
+          <div class="step-number">E</div>
+          <div class="step-header-copy">
+            <h3>评论明细</h3>
+            <p class="hint">旧任务显示假设/信号；证据路径任务显示状态、主表达与证据项。</p>
+          </div>
+        </div>
+        <div class="insight-filter-bar" id="insightFilterBar">
+          <input id="insightFilterKeyword" type="search" placeholder="关键词搜索评论…" />
+          <select id="insightFilterIntent"><option value="">全部目的</option></select>
+          <select id="insightFilterVideo"><option value="">全部视频关系</option></select>
+          <select id="insightFilterFit"><option value="">全部适配度</option></select>
+          <select id="insightFilterHypothesis"><option value="">全部假设关系</option></select>
+          <button class="btn ghost sm" type="button" id="btnInsightClearFilters">清除筛选</button>
+        </div>
+        <p class="inline-status" id="insightFilterStatus"></p>
+        <div class="preview-table-wrap insight-results-wrap" id="insightResultsTable"></div>
+        <div class="insight-pager" id="insightResultsPager" hidden></div>
+      </article>
+
+      <article class="card flow-card insight-export-card">
+        <div class="step-header">
+          <div class="step-number">F</div>
+          <div class="step-header-copy">
+            <h3>输出文件</h3>
+            <p class="hint">分析完成后自动保存至源 CSV 同目录，无需手动下载。建议先完成「开放发现」，报告内容会更完整。</p>
+          </div>
+        </div>
+        <p class="hint insight-export-placeholder" id="insightExportPlaceholder">完成至少一批评论分析后，将自动保存至 CSV 同目录。</p>
+      </article>
+    </section>
+
+    <section class="outreach-view" id="outreachView" hidden>
+      <div class="setup-intro">
+        <div>
+          <p class="eyebrow">找人聊聊</p>
+          <h2>筛选调研对象，撰写访谈邀请</h2>
+          <p>本板块<strong>独立运作</strong>：只读取前两板块已产出的分析任务（无需重新上传 CSV），负责调研筛选与访谈邀请；不会反向改写评论洞察的分析流程。</p>
+        </div>
+        <dl class="outreach-flow-legend">
+          <div><dt>关联任务</dt><dd>只读消费第二板块的分析结果</dd></div>
+          <div><dt>生成调研对象</dt><dd><strong>纯算法</strong>（关键词匹配 + 评分合并），不用大模型</dd></div>
+          <div><dt>生成私信</dt><dd><strong>需要大模型</strong>（API Key 可在本板块填写）</dd></div>
+        </dl>
+      </div>
+
+      <article class="card flow-card">
+        <div class="step-header">
+          <div class="step-number">A</div>
+          <div class="step-header-copy">
+            <h3>关联分析任务</h3>
+            <p class="hint">从已有分析任务中选择；读取源 CSV 同目录 <code>.insight/</code> 中的结果。与第二板块无强制同步，可单独选择任务。</p>
+          </div>
+        </div>
+        <label class="setting-field">
+          <span class="field-label">分析任务</span>
+          <select id="outreachRunHistory">
+            <option value="">— 选择已有分析任务 —</option>
+          </select>
+        </label>
+        <label class="setting-field">
+          <span class="field-label">API Key（仅生成私信需要；可复用第二板块已填的 Key）</span>
+          <input type="password" id="outreachApiKey" placeholder="sk-…" autocomplete="off" />
+        </label>
+        <p class="inline-status" id="outreachRunStatus"></p>
+      </article>
+
+      <article class="card flow-card">
+        <div class="step-header">
+          <div class="step-number">B</div>
+          <div class="step-header-copy">
+            <h3>调研目标人群</h3>
+            <p class="hint">仅在本板块填写；用于算法筛选调研对象（不需大模型）。保存后点击「生成调研对象列表」生效。</p>
+          </div>
+        </div>
+        <label class="setting-field outreach-research-targets-field">
+          <textarea id="outreachResearchTargets" rows="2" placeholder="运动损伤、初老群体、产后康复、中考体育家长"></textarea>
+        </label>
+        <button class="btn ghost sm" type="button" id="btnOutreachSaveTargets">保存调研目标到任务</button>
+        <p class="inline-status" id="outreachTargetsStatus"></p>
+      </article>
+
+      <article class="card flow-card outreach-candidates-card">
+        <div class="step-header">
+          <div class="step-number">C</div>
+          <div class="step-header-copy">
+            <h3>调研对象</h3>
+            <p class="hint">按用户合并，优先展示符合调研目标的对象；评分仅供参考，不代表产品付费意愿。</p>
+          </div>
+        </div>
+        <div class="action-row outreach-candidate-actions">
+          <button class="btn secondary sm" type="button" id="btnOutreachBuildCandidates">生成调研对象列表（算法）</button>
+          <button class="btn secondary sm" type="button" id="btnOutreachGenerate">为选中同学生成私信（大模型）</button>
+          <a class="btn ghost sm" id="btnOutreachExportCandidates" href="#" download hidden>导出对象 CSV</a>
+          <a class="btn ghost sm" id="btnOutreachExportOutreach" href="#" download hidden>导出联系记录 CSV</a>
+        </div>
+        <p class="hint" id="outreachExportHint" hidden></p>
+        <div class="outreach-candidate-toolbar">
+          <select id="outreachCandidateFilterResearch" aria-label="调研对象匹配筛选">
+            <option value="">全部对象</option>
+            <option value="yes">仅匹配调研目标</option>
+            <option value="no">未匹配调研目标</option>
+          </select>
+          <select id="outreachCandidateFilterPriority" aria-label="优先级筛选">
+            <option value="">全部优先级</option>
+            <option value="high">高优先（≥7 分）</option>
+            <option value="medium">中优先</option>
+            <option value="low">低优先</option>
+          </select>
+          <select id="outreachCandidateFilterContactability" aria-label="可联系性筛选">
+            <option value="">全部可联系性</option>
+            <option value="high">可定位主页</option>
+            <option value="medium">仅有评论链接</option>
+            <option value="low">难以联系</option>
+          </select>
+          <select id="outreachCandidateFilterStatus" aria-label="联系状态筛选">
+            <option value="">全部状态</option>
+            <option value="not_contacted">未联系</option>
+            <option value="preparing">准备中</option>
+            <option value="contacted">已联系</option>
+            <option value="replied">已回复</option>
+            <option value="interview_agreed">同意访谈</option>
+            <option value="declined">已拒绝</option>
+            <option value="no_reply">无回复</option>
+            <option value="interview_completed">访谈完成</option>
+          </select>
+          <label class="outreach-candidate-select-all">
+            <input type="checkbox" id="outreachCandidateSelectAll" /> 全选可见
+          </label>
+        </div>
+        <label class="setting-field outreach-template-field">
+          <span>访谈邀请参考话术（Mom Test 式，含内测体验资格说明）</span>
+          <textarea id="outreachTemplate" rows="5" placeholder="默认会邀请聊「上一次在家怎么练、当时最没底的是什么」；参与交流优先获得内测体验资格（待定）。可在生成前按场景微调…"></textarea>
+          <span class="hint">话术应对齐产品验证计划中的 C 端访谈：还原真实场景、挖掘阻力与替代做法，不直接推销。内测权益具体形式待定，勿过度承诺。</span>
+        </label>
+        <p class="inline-status" id="outreachCandidatesStatus"></p>
+        <div id="outreachCandidatesPanel" class="outreach-candidates-panel">
+          <p class="hint">请先关联分析任务，再点击「生成调研对象列表」。</p>
+        </div>
+        <div class="insight-pager" id="outreachCandidatesPager" hidden></div>
+      </article>
+    </section>
   </main>
 
-  <script src="/static/comment.js?v=27"></script>
+  <script src="/static/comment.js?v=28"></script>
+  <script src="/static/insight.js?v=19"></script>
+  <script src="/static/outreach.js?v=1"></script>
 </body>
 </html>

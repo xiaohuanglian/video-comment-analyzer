@@ -20,8 +20,15 @@ def _first(row: Mapping[str, Any], *keys: str, default: Any = "") -> Any:
 
 
 def _as_int(value: Any) -> int:
+    if value is None:
+        return 0
+    text = str(value).strip()
+    if not text:
+        return 0
+    if text.startswith("http://") or text.startswith("https://"):
+        return 0
     try:
-        return int(float(value or 0))
+        return int(float(text))
     except (TypeError, ValueError):
         return 0
 
@@ -46,7 +53,11 @@ def infer_platform(source_path: str, rows: Iterable[Mapping[str, Any]]) -> str:
     for platform in PLATFORMS:
         if platform in path_parts:
             return platform
+    if "BV" in source_path:
+        return "bili"
     first_row = next(iter(rows), {})
+    if first_row.get("video_id") and first_row.get("comment_id"):
+        return "bili"
     candidate = str(_first(first_row, "platform", "source_platform")).lower()
     return candidate if candidate in PLATFORMS else "unknown"
 
