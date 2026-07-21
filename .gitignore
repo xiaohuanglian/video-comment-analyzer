@@ -165,8 +165,10 @@ cython_debug/
 /temp_image/
 /browser_data/
 /data/
+/docs/
 
-*/.DS_Store
+.DS_Store
+/log
 .vscode
 /node_modules
 
@@ -175,3 +177,7 @@ debug_tools
 
 database/*.db
 .omx/
+
+# Insight run index (also covered by /data/)
+data/.insight_run_index.json
+**/.insight/

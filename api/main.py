@@ -6,6 +6,7 @@ Or: ./run_web.sh
 """
 import asyncio
 import os
+import re
 import sys
 import subprocess
 import uvicorn
@@ -15,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from .routers import crawler_router, data_router, websocket_router, bilibili_router, creator_router
+from .routers import crawler_router, data_router, websocket_router, bilibili_router, creator_router, analysis_router
 from .services.platform_capabilities import PLATFORM_CAPABILITIES
 from .services.browser_check import probe_browser_launch
 
@@ -40,6 +41,16 @@ def _apply_web_defaults() -> None:
 
 
 _apply_web_defaults()
+
+# Ensure stdout/stderr accept Chinese logs in the uvicorn worker (avoids ascii encode crashes).
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+os.environ.setdefault("PYTHONUTF8", "1")
+
 WEB_TEMPLATES_DIR = APP_DIR / "web_templates"
 WEB_STATIC_DIR = APP_DIR / "web_static"
 
@@ -71,6 +82,7 @@ app.include_router(data_router, prefix="/api")
 app.include_router(websocket_router, prefix="/api")
 app.include_router(bilibili_router, prefix="/api")
 app.include_router(creator_router, prefix="/api")
+app.include_router(analysis_router, prefix="/api")
 
 
 @app.get("/")
@@ -78,7 +90,12 @@ async def serve_frontend():
     """Return Chinese comment crawler UI"""
     index_path = WEB_TEMPLATES_DIR / "index.html"
     if index_path.exists():
-        return FileResponse(index_path)
+        content = index_path.read_text(encoding="utf-8")
+        static_version = os.environ.get("VC_STATIC_VERSION") or str(int(index_path.stat().st_mtime))
+        content = re.sub(r"(comment|insight)\.js\?v=[^\"']+", lambda m: f"{m.group(1)}.js?v={static_version}", content)
+        from fastapi.responses import HTMLResponse
+
+        return HTMLResponse(content)
     return {
         "message": "视频评论分析 WebUI API",
         "version": "1.0.0",
@@ -222,4 +239,6 @@ if WEB_STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(WEB_STATIC_DIR)), name="comment-static")
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8766)
+    host = os.environ.get("WEB_HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "8766"))
+    uvicorn.run(app, host=host, port=port)
