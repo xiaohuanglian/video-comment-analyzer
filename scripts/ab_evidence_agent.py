@@ -271,7 +271,6 @@ def run_ab(
         field_mapping=FieldMapping(comment_text="content"),
         use_mock=use_mock,
         analysis_version=ANALYSIS_VERSION_EVIDENCE,
-        analysis_mode="full_llm",
         batch_size=20,
         concurrency=8,
         created_at=_utc_now(),

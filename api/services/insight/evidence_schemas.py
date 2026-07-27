@@ -8,10 +8,8 @@ from typing import Any, Dict, List, Optional, Set
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-EVIDENCE_PROMPT_VERSION = "evidence_extract_v5"
+EVIDENCE_PROMPT_VERSION = "evidence_extract_v9_compact_status_fix"
 ANALYSIS_VERSION_EVIDENCE = "evidence_items_v1"
-ANALYSIS_VERSION_EVIDENCE_LEGACY = "evidence_agent_v1"  # B1–B3 artifacts
-ANALYSIS_VERSION_LEGACY = "legacy_per_record"
 
 
 # ---------------------------------------------------------------------------

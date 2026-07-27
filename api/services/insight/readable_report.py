@@ -6,8 +6,13 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Sequence
 
-from .evidence_adapter import assign_evidence_item_ids
+from .evidence_adapter import (
+    assign_evidence_item_ids,
+    has_explicit_paid_action,
+    has_paid_failure,
+)
 from .evidence_schemas import EvidenceCard, EvidenceItemType
+from .labels import label_intent, label_signal, label_single_video
 from .research_agent import _index_evidence_items
 from .schemas import SourceRecord
 from .user_identity import user_key
@@ -30,25 +35,15 @@ def _users_for_ids(records: Sequence[SourceRecord], ids: Sequence[str]) -> int:
     return len(users)
 
 
-def _format_quotes_from_refs(refs: Sequence[dict], item_index: Dict[str, dict], *, limit: int = 3) -> List[str]:
-    quotes: List[str] = []
-    for ref in refs or []:
-        if not isinstance(ref, dict):
-            continue
-        eid = str(ref.get("evidence_item_id") or "").strip()
-        item = item_index.get(eid)
-        if not item:
-            continue
-        quote = (item.get("evidence_quote") or "").strip()
-        if quote and quote not in quotes:
-            quotes.append(quote)
-        if len(quotes) >= limit:
-            break
-    return quotes
-
-
 def _quote_meta(refs: Sequence[dict], item_index: Dict[str, dict], *, limit: int = 3) -> List[str]:
     """Backfill quote + scope/certainty labels from evidence ids only."""
+    scope_labels = {
+        "self": "本人",
+        "other_user": "他人",
+        "general_observation": "泛指",
+        "unclear": "不明确",
+    }
+    certainty_labels = {"high": "高确定性", "medium": "中确定性", "low": "低确定性"}
     lines: List[str] = []
     for ref in refs or []:
         if not isinstance(ref, dict):
@@ -62,10 +57,262 @@ def _quote_meta(refs: Sequence[dict], item_index: Dict[str, dict], *, limit: int
             continue
         scope = item.get("speaker_scope") or "unclear"
         cert = item.get("certainty") or "medium"
-        lines.append(f"「{quote}」（{scope} / {cert}）")
+        lines.append(
+            f"「{quote}」（{scope_labels.get(scope, '不明确')} / "
+            f"{certainty_labels.get(cert, '中确定性')}）"
+        )
         if len(lines) >= limit:
             break
     return lines
+
+
+REPORT_BEHAVIOR_GROUPS = {
+    "已开始尝试": {"attempted", "completed_once", "completed", "self_reported_ability"},
+    "正在持续训练": {
+        "continued",
+        "ongoing_period",
+        "sustained_practice",
+        "persistence",
+        "completed_repeated",
+        "completed_repeatedly",
+    },
+    "已经获得结果": {"progress", "result", "improved"},
+    "尝试后停止": {"stopped", "tried_but_gave_up", "started_but_stopped"},
+    "有计划但未执行": {"planned", "planned_but_not_started"},
+    "付费但无结果": {"paid_but_no_result", "paid_but_not_used"},
+    "收藏/观看但未行动": {"saved_but_not_started", "watched_but_not_practiced"},
+}
+
+
+def _finding_has_required_evidence(finding: dict, item_index: Dict[str, dict]) -> bool:
+    """Do not surface paid-help claims without paid behavior/gap evidence."""
+    claim = " ".join(
+        str(finding.get(key) or "")
+        for key in ("finding", "conclusion", "why_it_matters")
+    )
+    if "付费" not in claim:
+        return True
+    for ref in finding.get("supporting_evidence_refs") or []:
+        if not isinstance(ref, dict):
+            continue
+        item = item_index.get(str(ref.get("evidence_item_id") or "")) or {}
+        if str(item.get("subtype") or "") in {
+            "sought_paid_help",
+            "paid_but_no_result",
+            "paid_but_not_used",
+        }:
+            return True
+        evidence = f"{item.get('text') or ''} {item.get('evidence_quote') or ''}"
+        if has_explicit_paid_action(evidence) or has_paid_failure(evidence):
+            return True
+    return False
+
+
+def _theme_record_ids(theme: dict) -> List[str]:
+    ids = theme.get("comment_record_ids") or theme.get("record_ids") or []
+    return [rid for rid in ids if isinstance(rid, str) and rid]
+
+
+def _theme_count(theme: dict) -> int:
+    return int(theme.get("comment_count") or len(_theme_record_ids(theme)))
+
+
+def _is_reportable_theme(theme: dict) -> bool:
+    """Keep ritual/noise clusters out of executive recommendations."""
+    name = str(theme.get("theme_name") or "")
+    definition = str(theme.get("theme_definition") or theme.get("definition") or "")
+    text = f"{name} {definition}".lower()
+    if not name or len(name) < 3:
+        return False
+    noise_markers = (
+        "打卡", "day", "第九天", "第四天", "d5", "d6", "bgm",
+        "收藏", "点赞", "真的有用",
+    )
+    if any(marker in text for marker in noise_markers):
+        return False
+    return _theme_count(theme) >= 8
+
+
+def _reportable_themes(themes: Sequence[dict]) -> List[dict]:
+    return [theme for theme in themes if _is_reportable_theme(theme)]
+
+
+def _theme_summary(theme: dict) -> str:
+    """Turn a cluster label into a bounded, decision-useful observation."""
+    name = str(theme.get("theme_name") or "").strip()
+    if any(token in name for token in ("疼", "痛", "不适", "关节")):
+        return f"用户反复报告「{name}」相关不适；应先确认触发动作与安全边界，而非将其直接解释为产品需求。"
+    if any(token in name for token in ("做不了", "不行", "困难", "好难", "累", "不到位")):
+        return f"用户反复表示「{name}」；优先验证降阶、节奏或动作提示能否降低完成门槛。"
+    if any(token in name for token in ("可以", "能不能", "吗", "要做几次", "每天")):
+        return f"用户围绕「{name}」寻求适用范围或训练安排；先补齐视频内的明确说明，再观察重复提问是否下降。"
+    return f"评论中反复出现「{name}」，但当前只能确认表达集中，不能据此推导原因、需求强度或付费意愿。"
+
+
+def _theme_implication(theme: dict) -> str:
+    implication = str(theme.get("implication") or "").strip()
+    if implication and not implication.startswith("围绕"):
+        return implication
+    return _theme_summary(theme)
+
+
+def _is_reportable_finding(finding: dict) -> bool:
+    text = " ".join(
+        str(finding.get(key) or "") for key in ("finding", "conclusion", "why_it_matters")
+    ).lower()
+    return not any(marker in text for marker in ("打卡", "第九天", "第四天", "day", "bgm", "收藏"))
+
+
+def _priority_insight(themes: Sequence[dict]) -> dict:
+    """Insight-oriented next step — not interview recruitment copy."""
+    candidates = _reportable_themes(themes)
+    if candidates:
+        top = max(candidates, key=_theme_count)
+        name = str(top.get("theme_name") or "核心问题主题")
+        count = _theme_count(top)
+        implication = str(
+            top.get("implication")
+            or top.get("theme_definition")
+            or top.get("definition")
+            or ""
+        ).strip()
+        return {
+            "action": f"优先围绕「{name}」做内容或产品单点验证（约 {count} 条相关评论）。",
+            "why": implication if implication and not implication.startswith("围绕") else _theme_summary(top),
+            "confirm": "该问题是否反复出现、用户现有替代方案是什么、何种辅助真正会被尝试",
+            "advance": "若同类问题在新样本中复现，且用户愿意试用最小辅助流程，则推进对应单点原型或内容改版。",
+            "refute": "若问题靠重看视频或一次答疑即可解决，或无法复现，则暂缓产品化。",
+        }
+    return {
+        "action": "先补齐本视频的开放主题归并，再决定内容/产品单点方向。",
+        "why": "当前没有足够集中的主题证据，继续泛化推进容易偏离真实评论结构。",
+        "confirm": "是否存在反复出现的具体问题主题，以及其规模与行为证据",
+        "advance": "若归并后出现稳定主题且具备行为证据，再进入单点验证。",
+        "refute": "若评论以低信息互动为主、无法形成主题，则暂缓产品化，优先优化内容表达。",
+    }
+
+
+def _behavior_groups(cards: Sequence[EvidenceCard]) -> Dict[str, List[str]]:
+    grouped: Dict[str, List[str]] = defaultdict(list)
+    for card in cards:
+        for item in card.evidence_items:
+            subtype = str(item.subtype or "")
+            for label, members in REPORT_BEHAVIOR_GROUPS.items():
+                if subtype in members and card.record_id not in grouped[label]:
+                    grouped[label].append(card.record_id)
+                    break
+    return grouped
+
+
+def _minimal_opportunities(themes: Sequence[dict]) -> List[dict]:
+    opportunities: List[dict] = []
+    seen_names: set[str] = set()
+    for theme in _reportable_themes(themes):
+        name = str(theme.get("theme_name") or "")
+        definition = str(theme.get("theme_definition") or theme.get("definition") or "")
+        implication = str(theme.get("implication") or "")
+        candidate: Optional[dict] = None
+        if any(keyword in name for keyword in ("方向", "判断")):
+            candidate = {
+                "name": "训练前方向判断辅助",
+                "problem": "用户不知道该练哪一侧，或担心方向判断错误。",
+                "experiment": "让用户上传一段标准姿态视频，只返回方向提示并明确非医疗诊断；验证其是否比自行判断更可靠。",
+            }
+        elif any(keyword in name for keyword in ("动作", "质控", "发力", "反馈")):
+            candidate = {
+                "name": "单动作执行反馈",
+                "problem": "用户找不到发力感，或无法判断一个具体动作是否做对。",
+                "experiment": "只选择一个动作，对比普通视频组与反馈组的完成率、主观确定感和纠错次数。",
+            }
+        elif any(keyword in name for keyword in ("安排", "规划", "下一步", "降阶")):
+            candidate = {
+                "name": "单次训练下一步建议",
+                "problem": "用户不知道当前动作之后该练什么，或是否需要降阶。",
+                "experiment": "只提供一次训练的下一步建议，验证用户是否采纳及是否减少反复搜索。",
+            }
+        elif name:
+            candidate = {
+                "name": f"围绕「{name}」的单点验证",
+                "problem": _theme_summary(theme),
+                "experiment": (
+                    implication
+                    if implication and not implication.startswith("围绕")
+                    else "在一支视频中补充针对性说明或降阶提示，对比同类提问与中途放弃表达是否下降。"
+                ),
+            }
+        if candidate and candidate["name"] not in seen_names:
+            seen_names.add(candidate["name"])
+            opportunities.append(candidate)
+        if len(opportunities) >= 3:
+            break
+    return opportunities
+
+
+def _qual_stats_section(qual_stats: Optional[dict]) -> List[str]:
+    if not qual_stats:
+        return []
+    lines: List[str] = ["## 评论结构（本视频）", ""]
+    intent_counts = qual_stats.get("primary_intent_counts") or {}
+    intent_pct = qual_stats.get("primary_intent_percentages") or {}
+    if intent_counts:
+        lines.extend(
+            [
+                "### 主要沟通目的",
+                "",
+                "| 目的 | 条数 | 占比 |",
+                "| --- | ---: | ---: |",
+            ]
+        )
+        for key in sorted(intent_counts.keys(), key=lambda k: (-intent_counts.get(k, 0), k)):
+            lines.append(
+                f"| {label_intent(key)} | {intent_counts.get(key, 0)} | {intent_pct.get(key, 0)}% |"
+            )
+        lines.append("")
+
+    signal_coverage = qual_stats.get("signal_coverage") or {}
+    if signal_coverage:
+        lines.extend(
+            [
+                "### 信息信号覆盖率",
+                "",
+                "> 同一评论可含多个信号，覆盖率之和可能超过 100%。",
+                "",
+                "| 信号 | 条数 | 覆盖率 |",
+                "| --- | ---: | ---: |",
+            ]
+        )
+        for key, info in sorted(
+            signal_coverage.items(),
+            key=lambda item: (-int((item[1] or {}).get("count") or 0), item[0]),
+        ):
+            if int((info or {}).get("count") or 0) <= 0:
+                continue
+            lines.append(
+                f"| {label_signal(key)} | {info.get('count', 0)} | {info.get('coverage_pct', 0)}% |"
+            )
+        lines.append("")
+
+    video_stats = qual_stats.get("single_video_stats") or {}
+    if video_stats:
+        lines.extend(
+            [
+                "### 单向视频关系",
+                "",
+                "| 关系 | 条数 | 覆盖率 |",
+                "| --- | ---: | ---: |",
+            ]
+        )
+        for key, info in sorted(
+            video_stats.items(),
+            key=lambda item: (-int((item[1] or {}).get("count") or 0), item[0]),
+        ):
+            if int((info or {}).get("count") or 0) <= 0:
+                continue
+            lines.append(
+                f"| {label_single_video(key)} | {info.get('count', 0)} | {info.get('coverage_pct', 0)}% |"
+            )
+        lines.append("")
+    return lines if len(lines) > 2 else []
 
 
 def build_readable_report(
@@ -75,292 +322,244 @@ def build_readable_report(
     card_rows: Sequence[dict],
     run_id: str = "",
     performance: Optional[dict] = None,
+    open_themes: Optional[Sequence[dict]] = None,
+    qual_stats: Optional[dict] = None,
 ) -> str:
     summary = research.get("dataset_summary") or {}
     cards: List[EvidenceCard] = []
-    by_id: Dict[str, EvidenceCard] = {}
     for row in card_rows:
-        card = EvidenceCard.model_validate(row.get("card") or row)
-        card = assign_evidence_item_ids(card)
-        by_id[card.record_id] = card
-        cards.append(card)
+        try:
+            cards.append(assign_evidence_item_ids(EvidenceCard.model_validate(row.get("card") or row)))
+        except Exception:
+            continue
     item_index = _index_evidence_items(card_rows)
+    research_themes = list(research.get("themes") or [])
+    open_theme_list = [dict(theme) for theme in (open_themes or []) if isinstance(theme, dict)]
+    # The LLM research outline may contain broad labels; decision pages must
+    # instead be anchored in the evidence-bearing, action-filtered clusters.
+    themes = _reportable_themes(open_theme_list) or _reportable_themes(research_themes)
+    coverage_themes = open_theme_list or research_themes
+    coverage_label = "开放主题覆盖率" if open_theme_list else "主要主题覆盖率"
 
-    problem_ids = [c.record_id for c in cards if any(i.type == EvidenceItemType.PROBLEM for i in c.evidence_items)]
-    behavior_ids = [c.record_id for c in cards if any(i.type == EvidenceItemType.BEHAVIOR for i in c.evidence_items)]
-    gap_ids = [c.record_id for c in cards if any(i.type == EvidenceItemType.ACTION_GAP for i in c.evidence_items)]
-
-    behavior_buckets: Dict[str, List[str]] = defaultdict(list)
-    gap_by_scope: Dict[str, Dict[str, List[str]]] = defaultdict(lambda: defaultdict(list))
-    for c in cards:
-        for item in c.evidence_items:
-            if item.type == EvidenceItemType.BEHAVIOR and item.subtype:
-                behavior_buckets[item.subtype].append(c.record_id)
-            if item.type == EvidenceItemType.ACTION_GAP:
-                key = item.subtype or "action_gap"
-                behavior_buckets[key].append(c.record_id)
-                gap_by_scope[key][item.speaker_scope.value].append(c.record_id)
-                gap_by_scope[key][f"cert:{item.certainty.value}"].append(c.record_id)
-
-    conclusions = research.get("research_conclusions") or []
-    findings = research.get("unexpected_findings") or []
-    themes = research.get("themes") or []
-    hyps = research.get("hypothesis_assessment") or []
-    opps = research.get("opportunity_hypotheses") or []
-    dropped = (research.get("model_draft") or {}).get("dropped_evidence_refs") or []
-
-    lines: List[str] = []
-    lines.append(f"# 评论洞察研究报告{' · ' + run_id if run_id else ''}")
-    lines.append("")
-    lines.append("## 1. 执行摘要")
-    lines.append("")
-    if conclusions:
-        for c in conclusions[:4]:
-            lines.append(f"- {c}")
-    else:
-        lines.append("- （研究 Agent 未给出浓缩结论；请结合下方发现与假设阅读。）")
-    lines.append("")
-    lines.append("须直接回答：用户最主要问题、最重要行为信号、最值得先验证的机会、当前证据不能证明什么。")
-    lines.append("")
-
-    lines.append("## 2. 核心数据")
-    lines.append("")
-    lines.append("| 指标 | 数值 |")
-    lines.append("|---|---:|")
-    lines.append(f"| 评论总数 | {summary.get('total_comments', len(records))} |")
-    lines.append(f"| 独立用户数 | {summary.get('unique_users', 0)} |")
-    lines.append(f"| 可用评论 | {summary.get('usable_comments', 0)} |")
-    lines.append(
-        f"| 强/中证据评论 | {summary.get('strong_evidence_comments', 0)} / {summary.get('medium_evidence_comments', 0)} |"
+    findings = [
+        finding
+        for finding in (research.get("unexpected_findings") or [])
+        if _finding_has_required_evidence(finding, item_index)
+        and _is_reportable_finding(finding)
+    ][:3]
+    model_draft = research.get("model_draft") or {}
+    dropped = model_draft.get("dropped_evidence_refs") or []
+    aggregate_research_used = any(
+        theme.get("cluster_ids") for theme in (model_draft.get("themes") or []) if isinstance(theme, dict)
     )
-    lines.append(f"| 有具体问题 | {summary.get('problem_comments', len(problem_ids))}（用户 {_users_for_ids(records, problem_ids)}） |")
-    lines.append(f"| 有真实行为 | {summary.get('behavior_comments', len(behavior_ids))}（用户 {_users_for_ids(records, behavior_ids)}） |")
-    lines.append(f"| 有行动差距 | {summary.get('action_gap_comments', len(gap_ids))}（用户 {_users_for_ids(records, gap_ids)}） |")
-    lines.append(f"| 主题覆盖率 | {summary.get('theme_coverage_rate', 0)} |")
-    lines.append("")
 
-    lines.append("## 3. 最重要的 3—5 个发现")
-    lines.append("")
-    display_findings = findings[:5] if findings else []
-    if display_findings:
-        for i, f in enumerate(display_findings, 1):
-            rids = f.get("record_ids") or []
-            refs = f.get("supporting_evidence_refs") or []
-            quote_lines = _quote_meta(refs, item_index)
-            # Only fall back to record's first item when no refs were supplied at all
-            if not quote_lines and not refs and rids:
-                for rid in rids[:2]:
-                    card = by_id.get(rid)
-                    if not card or not card.evidence_items:
-                        continue
-                    it = card.evidence_items[0]
-                    if it.evidence_quote:
-                        quote_lines.append(
-                            f"「{it.evidence_quote}」（{it.speaker_scope.value} / {it.certainty.value}）"
-                        )
-            lines.append(f"### 发现 {i}：{f.get('finding') or '（未命名）'}")
-            lines.append("")
-            lines.append(f"- **结论**：{f.get('conclusion') or f.get('finding') or '—'}")
-            lines.append(f"- **为什么重要**：{f.get('why_it_matters') or '—'}")
-            lines.append(f"- **涉及评论数**：{len(rids)}")
-            lines.append(f"- **涉及独立用户数**：{_users_for_ids(records, rids)}")
-            if quote_lines:
-                lines.append(f"- **代表原话**：{'；'.join(quote_lines)}")
-            else:
-                lines.append("- **代表原话**：—（无有效 evidence_item_id 引用）")
-            lines.append(f"- **反例或限制**：{f.get('limitations') or '—'}")
-            lines.append(f"- **下一步建议**：{f.get('next_step') or '—'}")
-            lines.append("")
-    else:
-        for i, theme in enumerate(themes[:5], 1):
-            rids = theme.get("comment_record_ids") or []
-            refs = theme.get("representative_evidence_refs") or []
-            quote_lines = _quote_meta(refs, item_index)
-            lines.append(f"### 发现 {i}：{theme.get('theme_name') or theme.get('theme_id')}")
-            lines.append("")
-            lines.append(f"- **结论**：{theme.get('theme_definition') or '—'}")
-            lines.append("- **为什么重要**：主题高频出现，需产品/内容跟进验证")
-            lines.append(f"- **涉及评论数**：{theme.get('comment_count') or len(rids)}")
-            lines.append(f"- **涉及独立用户数**：{theme.get('unique_user_count', _users_for_ids(records, rids))}")
-            if quote_lines:
-                lines.append(f"- **代表原话**：{'；'.join(quote_lines)}")
-            else:
-                lines.append("- **代表原话**：—（无有效 evidence_item_id 引用）")
-            counter = theme.get("counter_evidence") or []
-            lines.append(f"- **反例或限制**：{counter[0] if counter else '—'}")
-            lines.append("- **下一步建议**：抽样访谈该主题用户，验证是否可产品化")
-            lines.append("")
-    if not display_findings and not themes:
-        lines.append("- （暂无发现）")
-        lines.append("")
-
-    lines.append("## 4. 用户问题结构")
-    lines.append("")
-    for theme in themes[:8]:
-        lines.append(f"### {theme.get('theme_name') or theme.get('theme_id')}")
-        lines.append("")
-        lines.append(f"- 一级问题：{theme.get('theme_name') or '—'}")
-        lines.append(f"- 定义 / 场景：{theme.get('theme_definition') or '—'}")
-        sols = theme.get("current_solutions") or []
-        impacts = theme.get("impact_or_cost") or []
-        if sols:
-            lines.append(f"- 现有解决方式：{'；'.join(sols[:3])}")
-        if impacts:
-            lines.append(f"- 未解决部分：{'；'.join(impacts[:3])}")
-        lines.append("")
-    if not themes:
-        lines.append("- （暂无主题）")
-        lines.append("")
-
-    lines.append("## 5. 用户行为与行动差距")
-    lines.append("")
-    labels = {
-        "attempted": "已尝试",
-        "continued": "持续训练",
-        "stopped": "尝试后停止",
-        "started_but_stopped": "尝试后停止",
-        "saved_but_not_started": "收藏但未开始",
-        "watched_but_not_practiced": "观看但未实践",
-        "planned_but_not_started": "有计划但未执行",
-        "intended_but_avoided": "想改变但觉得方案太难",
-        "paid_but_no_result": "付费但无结果",
-        "paid_but_not_used": "付费但未使用",
-        "sought_paid_help": "寻求付费帮助",
-        "planned": "有计划未确认执行",
-        "checked_in": "只打卡或互动",
-        "self_reported_ability": "自报能力",
-        "completed_once": "完成一次",
-        "progress": "有进步",
+    problem_ids = {
+        card.record_id for card in cards if any(item.type == EvidenceItemType.PROBLEM for item in card.evidence_items)
     }
-    if behavior_buckets:
-        for key, rids in sorted(behavior_buckets.items(), key=lambda x: -len(set(x[1]))):
-            uniq = list(dict.fromkeys(rids))
-            scope_bits = gap_by_scope.get(key) or {}
-            self_n = len(set(scope_bits.get("self") or []))
-            gen_n = len(set(scope_bits.get("general_observation") or []))
-            other_n = len(set(scope_bits.get("other_user") or []))
-            lines.append(
-                f"- **{labels.get(key, key)}**：{len(uniq)} 条 / {_users_for_ids(records, uniq)} 用户"
-                f"（self={self_n}, general_observation={gen_n}, other_user={other_n}）"
+    behavior_ids = {
+        card.record_id for card in cards if any(item.type == EvidenceItemType.BEHAVIOR for item in card.evidence_items)
+    }
+    gap_ids = {
+        card.record_id for card in cards if any(item.type == EvidenceItemType.ACTION_GAP for item in card.evidence_items)
+    }
+    themed_ids = {rid for theme in coverage_themes for rid in _theme_record_ids(theme)}
+    usable = int(summary.get("usable_comments", 0) or 0)
+    if usable <= 0:
+        usable = max(len(records), len(cards))
+    covered = len(themed_ids)
+    coverage = covered / usable if usable else 0.0
+    low_information = int(summary.get("low_information_comments", 0) or 0)
+    unclustered_valid = max(0, usable - covered - low_information)
+    decision_keywords = ("方向", "判断", "动作", "困难", "问题", "障碍", "疼痛", "规划", "积液", "甩泥")
+    top_theme = (
+        max(
+            themes,
+            key=lambda theme: (
+                int(any(keyword in str(theme.get("theme_name") or "") for keyword in decision_keywords)),
+                _theme_count(theme),
+            ),
+        )
+        if themes
+        else {}
+    )
+    top_theme_name = str(top_theme.get("theme_name") or "尚未形成稳定主题")
+    top_theme_count = _theme_count(top_theme) if top_theme else 0
+    top_theme_users = int(
+        top_theme.get("unique_user_count")
+        or (_users_for_ids(records, _theme_record_ids(top_theme)) if top_theme else 0)
+    )
+    action = _priority_insight(themes)
+
+    summary_text = (
+        f"本次分析 {summary.get('total_comments', len(records))} 条评论，涉及 "
+        f"{summary.get('unique_users', 0)} 名独立用户。当前最明确的问题是“{top_theme_name}”："
+        f"相关主题中有 {top_theme_count} 条评论、{top_theme_users} 名用户提供证据。"
+        "现阶段最值得优先验证的不是大而全产品，而是这类用户是否真的无法靠重看视频或一次答疑解决问题。"
+        "本次结果也不能证明付费意愿、市场规模、长期留存或医疗效果。"
+        f"因此当前优先行动：{action['action']}"
+    )
+
+    lines = [
+        f"# 评论洞察决策报告{' · ' + run_id if run_id else ''}",
+        "",
+        "## 1. 一页决策摘要",
+        "",
+        "### 执行摘要",
+        "",
+        summary_text,
+        "",
+        "### 核心数字",
+        "",
+        "| 指标 | 数值 |",
+        "|---|---:|",
+        f"| 评论总数 | {summary.get('total_comments', len(records))} |",
+        f"| 独立用户数 | {summary.get('unique_users', 0)} |",
+        f"| 有具体问题的用户数 | {_users_for_ids(records, list(problem_ids))} |",
+        f"| 有真实行为的用户数 | {_users_for_ids(records, list(behavior_ids))} |",
+        f"| 有行动差距的用户数 | {_users_for_ids(records, list(gap_ids))} |",
+        f"| {coverage_label} | {covered} / {usable}（{coverage:.1%}） |",
+        "",
+        "## 当前优先行动",
+        "",
+        f"**{action['action']}**",
+        "",
+        f"- **为什么优先这个**：{action['why']}",
+        f"- **要确认什么**：{action['confirm']}。",
+        f"- **什么结果会推进**：{action['advance']}",
+        f"- **什么结果会否定**：{action['refute']}",
+        "",
+        "### 结论边界",
+        "",
+        "- 本报告识别的是评论中的问题与行为信号，不等于需求已经验证。",
+        "- 规则推断的个性化/实时反馈标签仅用于候选筛选，不作为事实统计。",
+        "- 当前数据不能证明付费意愿、市场规模、长期留存或医疗效果。",
+        "",
+        "## 2. 最重要发现",
+        "",
+    ]
+
+    if findings:
+        for index, finding in enumerate(findings, 1):
+            rids = finding.get("record_ids") or []
+            refs = finding.get("supporting_evidence_refs") or []
+            quotes = _quote_meta(refs, item_index, limit=2)
+            next_step = finding.get("next_step") or "用小样本对照或内容改版验证该发现是否复现。"
+            if "访谈" in str(next_step):
+                next_step = "用小样本对照或内容改版验证该发现是否复现。"
+            lines.extend(
+                [
+                    f"### 发现 {index}：{finding.get('finding') or '未命名发现'}",
+                    "",
+                    f"- **【事实】用户在说什么**：{';'.join(quotes) if quotes else '—（无有效 evidence_item_id 引用）'}",
+                    f"- **【事实】证据规模**：{len(rids)} 条评论 / {_users_for_ids(records, rids)} 名用户。",
+                    f"- **【推断】这意味着什么**：{str(finding.get('conclusion') or finding.get('why_it_matters') or '').strip()}",
+                    f"- **【限制】当前不能证明什么**：{finding.get('limitations') or '不能证明该现象具有普遍性，也不能证明付费意愿。'}",
+                    f"- **【建议】下一步**：{next_step}",
+                    "",
+                ]
             )
+    elif themes:
+        theme = themes[0]
+        rids = _theme_record_ids(theme)
+        quotes = _quote_meta(theme.get("representative_evidence_refs") or [], item_index, limit=2)
+        if not quotes:
+            for quote in (theme.get("representative_quotes") or [])[:2]:
+                if quote:
+                    quotes.append(f"「{quote}」")
+        lines.extend(
+            [
+                f"### 发现 1：{theme.get('theme_name') or '主要问题'}",
+                "",
+                f"- **【事实】用户在说什么**：{';'.join(quotes) if quotes else '—（暂无代表原话）'}",
+                f"- **【事实】证据规模**：{len(rids)} 条评论 / {_users_for_ids(records, rids)} 名用户。",
+                    f"- **【推断】这意味着什么**：{_theme_summary(theme)}",
+                "- **【限制】当前不能证明什么**：不能证明所有用户都存在该问题，也不能证明其愿意付费。",
+                f"- **【建议】下一步**：{str(theme.get('implication') or '围绕该主题做内容/产品单点验证。').strip()}",
+                "",
+            ]
+        )
     else:
-        lines.append("- （本批未提取到结构化行为或行动差距）")
-    lines.append("")
-    lines.append("> 不要把 `general_observation` 当成用户本人经历；并区分 high/medium/low certainty。")
-    lines.append("")
+        lines.extend(["- 当前没有达到报告门槛的强发现。", ""])
 
-    lines.append("## 6. 假设判断")
-    lines.append("")
-    for hyp in hyps:
-        lines.append(f"### {hyp.get('hypothesis_id')}")
-        lines.append("")
-        lines.append(f"- **结论**：{hyp.get('conclusion')}")
-        refs = hyp.get("supporting_evidence_refs") or []
-        weak_refs = [r for r in refs if (r.get("strength") or "") == "weak_context"]
-        strong_refs = [r for r in refs if (r.get("strength") or "") in {"direct", "behavioral"}]
-        strong_quotes = _quote_meta(strong_refs, item_index, limit=3)
-        if strong_quotes:
-            lines.append(f"- **强支持证据**：{'；'.join(strong_quotes)}")
-        elif strong_refs:
-            lines.append(
-                "- **强支持证据**："
-                + "；".join(f"{r.get('evidence_item_id')}({r.get('strength')})" for r in strong_refs[:5])
+    lines.extend(_qual_stats_section(qual_stats))
+
+    lines.extend(["## 3. 用户问题结构", ""])
+    if themes:
+        for theme in themes[:5]:
+            rids = _theme_record_ids(theme)
+            quotes = _quote_meta(theme.get("representative_evidence_refs") or [], item_index, limit=2)
+            if not quotes:
+                for quote in (theme.get("representative_quotes") or [])[:2]:
+                    if quote:
+                        quotes.append(f"「{quote}」")
+            lines.extend(
+                [
+                    f"### {theme.get('theme_name') or theme.get('theme_id')}",
+                    "",
+                    f"- **事实规模**：{len(rids)} 条评论 / {_users_for_ids(records, rids)} 名用户。",
+                    f"- **问题场景**：{theme.get('theme_definition') or theme.get('definition') or '—'}",
+                    f"- **代表原话**：{';'.join(quotes) if quotes else '—'}",
+                    f"- **产品含义**：{_theme_implication(theme)}",
+                    "",
+                ]
             )
-        else:
-            lines.append("- **强支持证据**：—")
-        weaken = hyp.get("weakening_record_ids") or []
-        w_refs = hyp.get("weakening_evidence_refs") or []
-        w_quotes = _quote_meta(w_refs, item_index, limit=2)
-        if w_quotes:
-            lines.append(f"- **反证**：{'；'.join(w_quotes)}")
-        elif weaken:
-            lines.append(f"- **反证**：{', '.join(weaken[:5])}")
-        else:
-            lines.append("- **反证**：—")
-        if weak_refs:
-            lines.append(f"- **弱相关证据**：{len(weak_refs)} 条（不得撑结论）")
-        else:
-            lines.append("- **弱相关证据**：—")
-        unknowns = hyp.get("unknowns") or []
-        lines.append(f"- **当前未知**：{'；'.join(unknowns[:3]) if unknowns else '—'}")
-        lines.append(f"- **下一步验证**：{hyp.get('reasoning_summary') or '抽样访谈 + 对照实验'}")
-        lines.append("")
+    elif open_theme_list:
+        lines.extend(
+            [
+                f"- 本视频已归并 {len(open_theme_list)} 个开放主题；详细定义、类型与产品含义见下文「开放主题（归并结果）」。",
+                "",
+            ]
+        )
+    else:
+        lines.extend(["- 暂无稳定问题主题。可先生成开放主题后再看本段。", ""])
 
-    lines.append("## 7. 产品机会（值得验证的机会）")
-    lines.append("")
-    for opp in opps[:6]:
-        lines.append(f"### {opp.get('opportunity_name')}")
-        lines.append("")
-        lines.append(f"- **对应用户**：{opp.get('target_users') or '—'}")
-        lines.append(f"- **具体问题**：{opp.get('concrete_problem') or '—'}")
-        alts = opp.get("current_alternatives") or []
-        lines.append(f"- **当前解决方式**：{'；'.join(alts[:3]) if alts else '—'}")
-        b_quotes = _quote_meta(opp.get("behavior_evidence_refs") or [], item_index, limit=2)
-        lines.append(f"- **行为证据**：{'；'.join(b_quotes) if b_quotes else '—'}")
-        s_quotes = _quote_meta(opp.get("supporting_evidence_refs") or [], item_index, limit=2)
-        if s_quotes:
-            lines.append(f"- **支持证据**：{'；'.join(s_quotes)}")
-        elif opp.get("supporting_evidence"):
-            lines.append(f"- **支持证据**：{'；'.join((opp.get('supporting_evidence') or [])[:3])}")
-        else:
-            lines.append("- **支持证据**：—")
-        c_quotes = _quote_meta(opp.get("counter_evidence_refs") or [], item_index, limit=2)
-        if c_quotes:
-            lines.append(f"- **反证**：{'；'.join(c_quotes)}")
-        elif opp.get("counter_evidence"):
-            lines.append(f"- **反证**：{'；'.join((opp.get('counter_evidence') or [])[:2])}")
-        else:
-            lines.append("- **反证**：—")
-        if opp.get("possible_product_form"):
-            lines.append(f"- **可能产品形式**：{'；'.join((opp.get('possible_product_form') or [])[:3])}")
-        else:
-            lines.append("- **可能产品形式**：—")
-        lines.append(f"- **当前未知**：{'；'.join((opp.get('current_unknowns') or [])[:3]) or '—'}")
-        lines.append(f"- **最小验证实验**：{'；'.join((opp.get('recommended_validation') or [])[:3]) or '—'}")
-        lines.append("")
-    if not opps:
-        lines.append("- （暂无机会假设）")
-        lines.append("")
-
-    lines.append("## 8. 推荐访谈对象与问题")
-    lines.append("")
-    for item in research.get("recommended_interviews") or []:
-        lines.append(f"- {item}")
-    if not research.get("recommended_interviews"):
-        lines.append("- （暂无）")
+    lines.extend(["## 4. 用户行为与行动差距", ""])
+    grouped_behaviors = _behavior_groups(cards)
+    for label, rids in sorted(grouped_behaviors.items(), key=lambda item: -len(item[1])):
+        lines.append(f"- **{label}**：{len(rids)} 条 / {_users_for_ids(records, rids)} 名用户")
+    if not grouped_behaviors:
+        lines.append("- 本批未提取到可归并的行为或行动差距。")
     lines.append("")
 
-    lines.append("## 9. 推荐验证实验")
-    lines.append("")
-    for item in research.get("recommended_experiments") or []:
-        lines.append(f"- {item}")
-    if not research.get("recommended_experiments"):
-        lines.append("- （暂无）")
-    lines.append("")
+    lines.extend(["## 5. 值得验证的机会", ""])
+    for opportunity in _minimal_opportunities(themes)[:3]:
+        lines.extend(
+            [
+                f"### {opportunity['name']}",
+                "",
+                f"- **要解决的单一问题**：{opportunity['problem']}",
+                f"- **最小验证**：{opportunity['experiment']}",
+                "- **当前边界**：这是待验证机会，不代表需求或付费已成立。",
+                "",
+            ]
+        )
+    if not themes:
+        lines.extend(["- 当前证据不足以提出产品机会。", ""])
 
-    lines.append("## 10. 方法、覆盖率与限制")
-    lines.append("")
-    lines.append("- 流水线：微批次证据提取 → 代码校验/统计 → 一次数据集研究 Agent → 本报告")
-    lines.append("- 代表原话由代码按 `evidence_item_id` 从证据卡原样回填，研究 Agent 不得改写 quote")
-    lines.append("- 单条评论不直接做产品结论；假设与机会仅在数据集级产出")
-    lines.append(
-        f"- 状态分布：usable={summary.get('usable_comments')} / off_topic={summary.get('off_topic_comments')} / "
-        f"machine={summary.get('machine_generated_comments')} / spam={summary.get('spam_comments')} / "
-        f"garbled={summary.get('garbled_comments')}"
+    lines.extend(
+        [
+            "## 6. 方法与限制",
+            "",
+            (
+                "- 全部 evidence_items 已先由代码按类型、子类型、说话范围、确定性与语义规则聚合，再交给研究 Agent。"
+                if aggregate_research_used
+                else "- 本任务沿用既有研究结果与开放主题归并；定性结构统计来自本视频评论分析结果。"
+            ),
+            "- 代表原话优先由 evidence_item_id 回填；开放主题可补充归并时的代表原话。",
+            f"- 已归入主题：{covered} 条；仅有低信息互动：{low_information} 条；未聚类但有效：{unclustered_valid} 条。",
+            f"- 跑题：{summary.get('off_topic_comments', 0)}；机器生成：{summary.get('machine_generated_comments', 0)}；垃圾内容：{summary.get('spam_comments', 0)}；乱码：{summary.get('garbled_comments', 0)}。",
+        ]
     )
     if dropped:
-        lines.append(f"- 结构警告：跳过无效证据引用 {len(dropped)} 条（不补写原话）")
-    if performance:
-        lines.append(
-            f"- 性能：extract={performance.get('extract_elapsed_seconds')}s，"
-            f"research={performance.get('research_elapsed_seconds')}s，"
-            f"cph={performance.get('comments_per_hour')}，"
-            f"concurrency={performance.get('concurrency')}，"
-            f"cost={performance.get('actual_cost')}"
-        )
-    lines.append("")
-    lines.append("## 11. 证据明细")
-    lines.append("")
-    lines.append("完整 `evidence_items` 与原评论见任务目录 `evidence_cards.jsonl`，不在正文堆叠 JSON。")
-    lines.append("")
+        lines.append(f"- 跳过无效证据引用 {len(dropped)} 条，未补写或猜测原话。")
+    lines.extend(
+        [
+            "- 单一视频评论样本存在选择偏差；自我报告不能视为客观训练效果。",
+            "",
+            "## 7. 证据附录",
+            "",
+            "完整标准 evidence_items 与原评论保存在任务目录 `evidence_cards.jsonl`；正文不重复堆叠 JSON。",
+            "",
+        ]
+    )
     return "\n".join(lines)

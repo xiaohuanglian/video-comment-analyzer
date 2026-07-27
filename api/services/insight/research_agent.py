@@ -294,6 +294,44 @@ def _filter_ids(ids: Iterable[str], known: Set[str], *, ordered_ids: Optional[Li
     return resolved
 
 
+def _coerce_str_list(raw: Any, *, limit: int = 5) -> List[str]:
+    """Normalize LLM note lists; models sometimes return dict refs instead of strings."""
+    out: List[str] = []
+    for item in raw or []:
+        text = ""
+        if isinstance(item, str):
+            text = item.strip()
+        elif isinstance(item, dict):
+            for key in (
+                "text",
+                "note",
+                "quote",
+                "evidence_quote",
+                "finding",
+                "summary",
+                "content",
+            ):
+                val = item.get(key)
+                if isinstance(val, str) and val.strip():
+                    text = val.strip()
+                    break
+            if not text:
+                # Common mistaken shape: {"record_id": "...", "<something>": "练一周无效果"}
+                for key, val in item.items():
+                    if key in {"record_id", "evidence_item_id", "id"}:
+                        continue
+                    if isinstance(val, str) and val.strip():
+                        text = val.strip()
+                        break
+        elif item is not None:
+            text = str(item).strip()
+        if text and text not in out:
+            out.append(text)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def recount_research_analysis(
     draft: dict,
     *,
@@ -315,13 +353,24 @@ def recount_research_analysis(
 
     record_by_id = {r.internal_record_id: r for r in records}
     item_index = _index_evidence_items(card_rows)
+    cluster_members = {
+        str(cluster.get("cluster_id") or ""): list(cluster.get("_record_ids") or [])
+        for cluster in build_research_clusters(records, card_rows, include_members=True)
+    }
     dropped_refs: List[dict] = []
 
     themes: List[ResearchTheme] = []
     for raw in draft.get("themes") or []:
         if not isinstance(raw, dict):
             continue
-        ids = _filter_ids(raw.get("comment_record_ids") or [], known, ordered_ids=ordered_ids)
+        cluster_record_ids: List[str] = []
+        for cluster_id in raw.get("cluster_ids") or []:
+            cluster_record_ids.extend(cluster_members.get(str(cluster_id), []))
+        ids = _filter_ids(
+            [*(raw.get("comment_record_ids") or []), *cluster_record_ids],
+            known,
+            ordered_ids=ordered_ids,
+        )
         users: Set[str] = set()
         sources: Set[str] = set()
         for rid in ids:
@@ -357,9 +406,9 @@ def recount_research_analysis(
                 source_count=len(sources),
                 representative_evidence_refs=refs[:5],
                 representative_quotes=[],
-                current_solutions=list(raw.get("current_solutions") or [])[:5],
-                impact_or_cost=list(raw.get("impact_or_cost") or [])[:5],
-                counter_evidence=list(raw.get("counter_evidence") or [])[:5],
+                current_solutions=_coerce_str_list(raw.get("current_solutions"), limit=5),
+                impact_or_cost=_coerce_str_list(raw.get("impact_or_cost"), limit=5),
+                counter_evidence=_coerce_str_list(raw.get("counter_evidence"), limit=5),
                 confidence=float(raw.get("confidence") or 0.0),
             )
         )
@@ -401,7 +450,7 @@ def recount_research_analysis(
                 supporting_evidence_refs=s_refs,
                 weakening_evidence_refs=w_refs,
                 reasoning_summary=str(raw.get("reasoning_summary") or ""),
-                unknowns=list(raw.get("unknowns") or []),
+                unknowns=_coerce_str_list(raw.get("unknowns"), limit=8),
             )
         )
     for hid in ("H1", "H2", "H3"):
@@ -458,20 +507,20 @@ def recount_research_analysis(
         opportunities.append(
             OpportunityHypothesis(
                 opportunity_name=str(raw["opportunity_name"]),
-                supporting_evidence=list(raw.get("supporting_evidence") or [])[:5],
+                supporting_evidence=_coerce_str_list(raw.get("supporting_evidence"), limit=5),
                 supporting_evidence_refs=s_refs[:5],
-                counter_evidence=list(raw.get("counter_evidence") or [])[:5],
+                counter_evidence=_coerce_str_list(raw.get("counter_evidence"), limit=5),
                 counter_evidence_refs=c_refs[:5],
-                possible_product_form=list(raw.get("possible_product_form") or []),
-                possible_content_form=list(raw.get("possible_content_form") or []),
-                current_unknowns=list(raw.get("current_unknowns") or []),
-                recommended_validation=list(raw.get("recommended_validation") or []),
+                possible_product_form=_coerce_str_list(raw.get("possible_product_form"), limit=8),
+                possible_content_form=_coerce_str_list(raw.get("possible_content_form"), limit=8),
+                current_unknowns=_coerce_str_list(raw.get("current_unknowns"), limit=8),
+                recommended_validation=_coerce_str_list(raw.get("recommended_validation"), limit=8),
                 supporting_record_ids=_filter_ids(
                     raw.get("supporting_record_ids") or [], known, ordered_ids=ordered_ids
                 ),
                 target_users=str(raw.get("target_users") or ""),
                 concrete_problem=str(raw.get("concrete_problem") or ""),
-                current_alternatives=list(raw.get("current_alternatives") or [])[:5],
+                current_alternatives=_coerce_str_list(raw.get("current_alternatives"), limit=5),
                 behavior_evidence_refs=b_refs[:5],
             )
         )
@@ -497,25 +546,190 @@ def recount_research_analysis(
     )
 
 
-def _card_summary_for_prompt(card_rows: Sequence[dict], *, limit: int = 120) -> List[dict]:
-    from .evidence_adapter import card_to_research_summary
+_CLUSTER_TYPE_LABELS = {
+    "problem": "具体问题",
+    "barrier": "训练障碍",
+    "behavior": "训练行为",
+    "result": "训练结果",
+    "context": "用户背景",
+    "solution": "当前解决方式",
+    "action_gap": "行动差距",
+    "engagement": "内容互动",
+    "opinion": "一般观点",
+    "quantitative": "量化信息",
+}
 
-    summaries: List[dict] = []
-    for row in card_rows[:limit]:
-        card = row.get("card") or row
+_CLUSTER_SUBTYPE_LABELS = {
+    "attempted": "已开始尝试",
+    "completed_once": "已完成一次",
+    "continued": "正在持续训练",
+    "ongoing_period": "正在持续训练",
+    "sustained_practice": "正在持续训练",
+    "persistence": "正在持续训练",
+    "completed_repeated": "正在持续训练",
+    "completed_repeatedly": "正在持续训练",
+    "progress": "已经获得结果",
+    "improved": "已经获得结果",
+    "stopped": "尝试后停止",
+    "tried_but_gave_up": "尝试后停止",
+    "planned": "有计划但未执行",
+    "paid_but_no_result": "付费但无结果",
+    "sought_paid_help": "寻求付费帮助",
+    "saved_but_not_started": "收藏但未行动",
+    "watched_but_not_practiced": "观看但未行动",
+}
+
+_RESEARCH_SUBTYPE_WHITELIST = {
+    "attempted",
+    "completed_once",
+    "completed",
+    "continued",
+    "ongoing_period",
+    "sustained_practice",
+    "persistence",
+    "completed_repeated",
+    "completed_repeatedly",
+    "progress",
+    "result",
+    "improved",
+    "stopped",
+    "tried_but_gave_up",
+    "planned",
+    "paid_but_no_result",
+    "sought_paid_help",
+    "self_reported_ability",
+    "saved_but_not_started",
+    "watched_but_not_practiced",
+    "saved",
+    "viewed",
+    "checked_in",
+    "duration",
+    "count",
+    "reps",
+    "price",
+    "weight",
+    "distance",
+}
+
+_SEMANTIC_RULES = (
+    ("方向判断困难", ("左旋", "右旋", "方向", "判断", "怎么测", "怎么看")),
+    ("动作执行与发力不确定", ("动作不标准", "发力", "感觉不到", "找不到感觉", "练到", "酸痛")),
+    ("特殊身体情况与适用性", ("受伤", "损伤", "腰突", "术后", "疼痛", "适合我", "可不可以练")),
+    ("训练安排与下一步疑问", ("怎么练", "练哪", "下一步", "多久", "几次", "多少组", "降阶")),
+    ("短期正向结果", ("立竿见影", "改善", "舒服", "有效果", "回正", "好转")),
+    ("训练后无效或负向结果", ("没效果", "无效", "没有改善", "更疼", "加重")),
+)
+
+
+def _semantic_cluster_label(item: dict) -> str:
+    text = f"{item.get('text') or ''} {item.get('evidence_quote') or ''}"
+    for label, keywords in _SEMANTIC_RULES:
+        if any(keyword in text for keyword in keywords):
+            return label
+    subtype = str(item.get("subtype") or "")
+    if subtype in _CLUSTER_SUBTYPE_LABELS:
+        return _CLUSTER_SUBTYPE_LABELS[subtype]
+    item_type = str(item.get("type") or "")
+    return _CLUSTER_TYPE_LABELS.get(item_type, item_type or "其他证据")
+
+
+def build_research_clusters(
+    records: Sequence[SourceRecord],
+    card_rows: Sequence[dict],
+    *,
+    include_members: bool = False,
+) -> List[dict]:
+    """Aggregate every evidence item into compact, code-counted research groups."""
+    record_by_id = {record.internal_record_id: record for record in records}
+    grouped: Dict[tuple[str, str, str], dict] = {}
+    for row in card_rows:
+        raw_card = row.get("card") or row
         try:
-            summary = card_to_research_summary(card)
+            card = assign_evidence_item_ids(EvidenceCard.model_validate(raw_card))
         except Exception:
-            summary = {
-                "record_id": row.get("record_id") or card.get("record_id"),
-                "record_status": card.get("record_status") or card.get("validity"),
-                "evidence_items": card.get("evidence_items") or [],
-            }
-        source = row.get("source") or {}
-        # Prefer evidence quotes; do not resend full raw comments by default
-        summary["video_title"] = (source.get("video_title") or "")[:40]
-        summaries.append(summary)
-    return summaries
+            continue
+        rid = card.record_id
+        source = record_by_id.get(rid)
+        source_user = (
+            user_key(
+                {
+                    "user_id": source.user_id,
+                    "username": source.username,
+                    "user_homepage_url": source.user_homepage_url,
+                }
+            )
+            if source
+            else ""
+        )
+        for item in card.evidence_items or []:
+            payload = item.model_dump(mode="json")
+            label = _semantic_cluster_label(payload)
+            item_type = item.type.value
+            raw_subtype = str(item.subtype or "")
+            subtype = raw_subtype if raw_subtype in _RESEARCH_SUBTYPE_WHITELIST else ""
+            key = (label, item_type, subtype)
+            group = grouped.setdefault(
+                key,
+                {
+                    "label": label,
+                    "type": item_type,
+                    "subtype": subtype,
+                    "_record_ids": [],
+                    "_users": set(),
+                    "_scope_records": defaultdict(set),
+                    "_certainty_records": defaultdict(set),
+                    "_refs": [],
+                },
+            )
+            if rid not in group["_record_ids"]:
+                group["_record_ids"].append(rid)
+            group["_users"].add(source_user or rid)
+            group["_scope_records"][item.speaker_scope.value].add(rid)
+            group["_certainty_records"][item.certainty.value].add(rid)
+            ref = {"record_id": rid, "evidence_item_id": item.evidence_item_id}
+            ref_score = (
+                2 if item.speaker_scope.value == "self" else 0,
+                2 if item.certainty.value == "high" else 1 if item.certainty.value == "medium" else 0,
+            )
+            group["_refs"].append((ref_score, ref))
+
+    clusters: List[dict] = []
+    ordered = sorted(
+        grouped.values(),
+        key=lambda group: (-len(group["_record_ids"]), group["label"], group["type"], group["subtype"]),
+    )
+    for index, group in enumerate(ordered, 1):
+        ranked_refs = sorted(group["_refs"], key=lambda pair: pair[0], reverse=True)
+        refs: List[dict] = []
+        seen_ref_ids: Set[str] = set()
+        ref_limit = 3 if len(group["_record_ids"]) >= 15 else 2 if len(group["_record_ids"]) >= 5 else 1
+        for _score, ref in ranked_refs:
+            if ref["record_id"] in seen_ref_ids:
+                continue
+            seen_ref_ids.add(ref["record_id"])
+            refs.append(ref)
+            if len(refs) >= ref_limit:
+                break
+        cluster = {
+            "cluster_id": f"C{index}",
+            "label": group["label"],
+            "type": group["type"],
+            "subtype": group["subtype"],
+            "comment_count": len(group["_record_ids"]),
+            "user_count": len(group["_users"]),
+            "self_count": len(group["_scope_records"].get("self", set())),
+            "general_observation_count": len(
+                group["_scope_records"].get("general_observation", set())
+            ),
+            "other_user_count": len(group["_scope_records"].get("other_user", set())),
+            "high_certainty_count": len(group["_certainty_records"].get("high", set())),
+            "medium_certainty_count": len(group["_certainty_records"].get("medium", set())),
+            "representative_refs": refs,
+        }
+        if include_members:
+            cluster["_record_ids"] = list(group["_record_ids"])
+        clusters.append(cluster)
+    return clusters
 
 
 def _first_item_refs(card_rows: Sequence[dict], record_ids: Sequence[str], *, limit: int = 5) -> List[dict]:
@@ -659,6 +873,112 @@ def research_analysis_mock(
     return recount_research_analysis(draft, known_ids=known, records=records, card_rows=card_rows)
 
 
+def _alias_research_cluster_refs(
+    clusters: Sequence[dict],
+) -> tuple[List[dict], Dict[str, dict]]:
+    """Replace repeated long evidence IDs with request-local aliases."""
+    alias_by_eid: Dict[str, str] = {}
+    refs_by_alias: Dict[str, dict] = {}
+    compact_clusters: List[dict] = []
+    for cluster in clusters:
+        compact = dict(cluster)
+        aliases: List[str] = []
+        for ref in cluster.get("representative_refs") or []:
+            eid = str(ref.get("evidence_item_id") or "")
+            if not eid:
+                continue
+            alias = alias_by_eid.get(eid)
+            if not alias:
+                alias = f"R{len(alias_by_eid) + 1}"
+                alias_by_eid[eid] = alias
+                refs_by_alias[alias] = {
+                    "record_id": str(ref.get("record_id") or ""),
+                    "evidence_item_id": eid,
+                }
+            aliases.append(alias)
+        compact.pop("representative_refs", None)
+        compact["representative_ref_ids"] = aliases
+        compact_clusters.append(compact)
+    return compact_clusters, refs_by_alias
+
+
+def _expand_research_ref_aliases(draft: dict, refs_by_alias: Dict[str, dict]) -> dict:
+    """Restore compact research refs before Pydantic/recount validation."""
+    expanded = dict(draft)
+
+    def plain_refs(raw_refs: Any) -> List[dict]:
+        out: List[dict] = []
+        for raw in raw_refs or []:
+            alias = raw if isinstance(raw, str) else raw.get("r") if isinstance(raw, dict) else ""
+            ref = refs_by_alias.get(str(alias or ""))
+            if ref:
+                out.append(dict(ref))
+        return out
+
+    def hypothesis_refs(raw_refs: Any) -> List[dict]:
+        strengths = {"d": "direct", "b": "behavioral", "w": "weak_context"}
+        out: List[dict] = []
+        for raw in raw_refs or []:
+            if isinstance(raw, str):
+                alias, strength = raw, "weak_context"
+            elif isinstance(raw, dict):
+                alias = str(raw.get("r") or "")
+                strength = strengths.get(str(raw.get("s") or ""), str(raw.get("s") or "weak_context"))
+            else:
+                continue
+            ref = refs_by_alias.get(alias)
+            if ref:
+                out.append({**ref, "strength": strength})
+        return out
+
+    themes: List[dict] = []
+    for raw in draft.get("themes") or []:
+        if not isinstance(raw, dict):
+            continue
+        themes.append(
+            {
+                **raw,
+                "representative_evidence_refs": plain_refs(
+                    raw.get("representative_evidence_refs")
+                    or raw.get("representative_ref_ids")
+                ),
+            }
+        )
+    expanded["themes"] = themes
+
+    hypotheses: List[dict] = []
+    for raw in draft.get("hypothesis_assessment") or []:
+        if not isinstance(raw, dict):
+            continue
+        supporting = hypothesis_refs(raw.get("supporting_evidence_refs"))
+        weakening = hypothesis_refs(raw.get("weakening_evidence_refs"))
+        hypotheses.append(
+            {
+                **raw,
+                "supporting_evidence_refs": supporting,
+                "weakening_evidence_refs": weakening,
+                "supporting_record_ids": [ref["record_id"] for ref in supporting],
+                "weakening_record_ids": [ref["record_id"] for ref in weakening],
+            }
+        )
+    expanded["hypothesis_assessment"] = hypotheses
+
+    findings: List[dict] = []
+    for raw in draft.get("unexpected_findings") or []:
+        if not isinstance(raw, dict):
+            continue
+        refs = plain_refs(raw.get("supporting_evidence_refs"))
+        findings.append(
+            {
+                **raw,
+                "supporting_evidence_refs": refs,
+                "record_ids": [ref["record_id"] for ref in refs],
+            }
+        )
+    expanded["unexpected_findings"] = findings
+    return expanded
+
+
 def run_research_analysis(
     records: Sequence[SourceRecord],
     card_rows: Sequence[dict],
@@ -675,14 +995,15 @@ def run_research_analysis(
 
     assert config is not None
     llm = client or build_openai_client(config.base_url, api_key)
-    summaries = _card_summary_for_prompt(card_rows)
+    clusters = build_research_clusters(records, card_rows)
+    compact_clusters, refs_by_alias = _alias_research_cluster_refs(clusters)
     code_summary = compute_dataset_summary(records, list(card_rows)).model_dump()
     messages = [
         {"role": "system", "content": RESEARCH_SYSTEM_PROMPT},
         {
             "role": "user",
             "content": build_research_user_message(
-                card_summaries=summaries,
+                evidence_clusters=compact_clusters,
                 known_record_ids=known_ids,
                 dataset_summary=code_summary,
                 project_context=(
@@ -698,6 +1019,8 @@ def run_research_analysis(
         messages=messages,
         response_format={"type": "json_object"},
         temperature=0.2,
+        max_tokens=6000,
+        extra_body={"thinking": {"type": "disabled"}},
     )
     usage = parse_usage(getattr(completion, "usage", None))
     raw = completion.choices[0].message.content or ""
@@ -707,6 +1030,7 @@ def run_research_analysis(
         raise ValueError(f"研究分析 JSON 无法解析: {exc}") from exc
     if not isinstance(draft, dict):
         raise ValueError("研究分析输出必须是 JSON 对象")
+    draft = _expand_research_ref_aliases(draft, refs_by_alias)
     analysis = recount_research_analysis(
         draft, known_ids=known_set, records=records, card_rows=card_rows
     )

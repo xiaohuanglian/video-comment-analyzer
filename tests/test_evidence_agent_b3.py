@@ -29,7 +29,7 @@ def _rec(rid: str, text: str) -> SourceRecord:
 
 
 def test_prompt_version_b3():
-    assert EVIDENCE_PROMPT_VERSION == "evidence_extract_v5"
+    assert EVIDENCE_PROMPT_VERSION == "evidence_extract_v9_compact"
 
 
 def test_meaningful_empty_downgrades():

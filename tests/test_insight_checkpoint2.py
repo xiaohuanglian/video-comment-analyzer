@@ -4,17 +4,14 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 
 import pytest
 
 from api.services.insight.analyzer import run_analysis_batch
 from api.services.insight.ingestion import ingest_files
-from api.services.insight.llm_analyzer import LlmAnalysisResponse, LlmUsage, estimate_cost
+from api.services.insight.llm_analyzer import estimate_cost
 from api.services.insight.schemas import (
-    CommentAnalysisResult,
     FieldMapping,
-    PrimaryIntent,
     RunConfig,
 )
 from api.services.insight.storage import create_run, load_config, load_progress
@@ -83,63 +80,6 @@ def test_config_json_never_contains_api_key(sample_csv, tmp_path):
     config_path = _run_dir(run_id) / "config.json"
     raw = json.loads(config_path.read_text(encoding="utf-8"))
     assert "api_key" not in raw
-
-
-def test_llm_analysis_tracks_tokens(sample_csv, monkeypatch):
-    run_id = _make_run(sample_csv)
-
-    @dataclass
-    class FakeUsage:
-        prompt_tokens: int = 800
-        completion_tokens: int = 200
-
-    class FakeCompletion:
-        usage = FakeUsage()
-
-    def fake_llm(record, config, api_key, *, client=None):
-        return LlmAnalysisResponse(
-            analysis=CommentAnalysisResult(
-                record_id=record.internal_record_id,
-                primary_intent=PrimaryIntent.QUESTION,
-                evidence_quotes=[record.comment_text[:20]],
-                confidence=0.9,
-            ),
-            usage=LlmUsage(prompt_tokens=800, completion_tokens=200),
-        )
-
-    monkeypatch.setattr("api.services.insight.analyzer.analyze_record_llm", fake_llm)
-    monkeypatch.setattr("api.services.insight.analyzer.build_openai_client", lambda *args, **kwargs: object())
-
-    result = run_analysis_batch(run_id, limit=2, use_mock=False, api_key="sk-test")
-    assert result["processed"] == 2
-    progress = load_progress(run_id)
-    assert progress.prompt_tokens == 1600
-    assert progress.completion_tokens == 400
-    assert progress.estimated_cost > 0
-
-
-def test_budget_limit_pauses(sample_csv, monkeypatch):
-    run_id = _make_run(sample_csv, budget_limit=0.001)
-
-    def fake_llm(record, config, api_key, *, client=None):
-        return LlmAnalysisResponse(
-            analysis=CommentAnalysisResult(
-                record_id=record.internal_record_id,
-                primary_intent=PrimaryIntent.OTHER_VALID,
-                evidence_quotes=[record.comment_text[:10]] if record.comment_text else [],
-                confidence=0.7,
-            ),
-            usage=LlmUsage(prompt_tokens=5000, completion_tokens=2000),
-        )
-
-    monkeypatch.setattr("api.services.insight.analyzer.analyze_record_llm", fake_llm)
-    monkeypatch.setattr("api.services.insight.analyzer.build_openai_client", lambda *args, **kwargs: object())
-
-    result = run_analysis_batch(run_id, limit=5, use_mock=False, api_key="sk-test")
-    assert result["budget_paused"] is True
-    assert result["processed"] == 1
-    progress = load_progress(run_id)
-    assert "预算" in progress.last_error
 
 
 def test_real_mode_requires_api_key(sample_csv):

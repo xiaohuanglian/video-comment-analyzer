@@ -37,7 +37,7 @@ def _rec(rid: str, text: str) -> SourceRecord:
 
 
 def test_versions():
-    assert EVIDENCE_PROMPT_VERSION == "evidence_extract_v5"
+    assert EVIDENCE_PROMPT_VERSION == "evidence_extract_v9_compact"
     assert ANALYSIS_VERSION_EVIDENCE == "evidence_items_v1"
 
 
@@ -167,7 +167,8 @@ def test_readable_report_has_sections():
     md = build_readable_report(research=research, records=records, card_rows=rows, run_id="t")
     assert "执行摘要" in md
     assert "行为与行动差距" in md
-    assert "假设判断" in md
+    assert "假设判断" not in md
+    assert "值得验证的机会" in md
 
 
 def test_quote_near_miss_repaired():

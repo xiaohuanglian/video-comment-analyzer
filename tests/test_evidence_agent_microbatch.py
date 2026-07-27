@@ -75,6 +75,145 @@ def test_parse_batch_payload_requires_full_coverage():
     assert "r2" not in mapped
 
 
+def test_compact_payload_restores_record_ids_and_ignores_order():
+    expected = ["full:r1", "full:r2"]
+    payload = {
+        "r": [
+            [2, "ur", [["r", "", "s", "h", "练完舒服多了"]]],
+            [1, "uh", [["p", "direction", "s", "h", "分不清左右"]]],
+        ]
+    }
+    mapped = parse_batch_payload(payload, expected)
+    assert list(mapped) == ["full:r2", "full:r1"]
+    assert mapped["full:r1"].record_id == "full:r1"
+    assert mapped["full:r1"].evidence_items[0].type.value == "problem"
+    assert mapped["full:r1"].evidence_items[0].text == "分不清左右"
+
+
+def test_compact_payload_expands_behavior_and_barrier_codes():
+    mapped = parse_batch_payload(
+        {
+            "r": [
+                [
+                    1,
+                    "uh",
+                    [
+                        ["b", "c", "s", "h", "做完一次"],
+                        ["d", "", "s", "h", "动作太难"],
+                    ],
+                ]
+            ]
+        },
+        ["r1"],
+    )
+    items = mapped["r1"].evidence_items
+    assert [(item.type.value, item.subtype) for item in items] == [
+        ("barrier", ""),
+        ("behavior", "completed_once"),
+    ]
+
+
+def test_compact_payload_accepts_common_model_variants():
+    mapped = parse_batch_payload(
+        {
+            "r": [
+                {
+                    "i": 1,
+                    "sx": "uh",
+                    "e": [["behavior", "a", "self", "high", "已经试过"]],
+                },
+                [2, "usable", "question", [["p", "", "s", "h", "怎么判断"]]],
+                # Model leaked check_in code into status; recover as usable + check_in.
+                [3, "k", "o", []],
+                # Swapped status/expression codes.
+                [4, "h", "u", []],
+            ]
+        },
+        ["r1", "r2", "r3", "r4"],
+    )
+    assert mapped["r1"].evidence_items[0].type.value == "behavior"
+    assert mapped["r2"].primary_expression.value == "question"
+    assert mapped["r3"].record_status.value == "usable"
+    assert mapped["r3"].primary_expression.value == "check_in"
+    assert mapped["r4"].record_status.value == "usable"
+    assert mapped["r4"].primary_expression.value == "help_request"
+
+
+def test_compact_payload_rejects_invalid_enum_and_duplicate_index():
+    # Completely unknown type still fails; status typos are recovered.
+    with pytest.raises(ValueError, match="非法紧凑枚举 type"):
+        parse_batch_payload(
+            {"r": [{"i": 1, "s": "u", "x": "o", "e": [["z", "", "s", "h", "x"]]}]},
+            ["r1"],
+        )
+    recovered = parse_batch_payload({"r": [{"i": 1, "s": "z", "x": "o", "e": []}]}, ["r1"])
+    assert recovered["r1"].record_status.value == "usable"
+    assert recovered["r1"].primary_expression.value == "other"
+    with pytest.raises(ValueError, match="重复短编号"):
+        parse_batch_payload(
+            {"r": [{"i": 1, "s": "u", "x": "o", "e": []}, {"i": 1, "s": "u", "x": "o", "e": []}]},
+            ["r1"],
+        )
+
+
+def test_compact_payload_recovers_expression_codes_in_status_slot():
+    mapped = parse_batch_payload(
+        {
+            "r": [
+                [1, "k", "o", []],
+                [2, "q", "o", []],
+                [3, "k", []],  # single-char sx
+            ]
+        },
+        ["r1", "r2", "r3"],
+    )
+    assert mapped["r1"].record_status.value == "usable"
+    assert mapped["r1"].primary_expression.value == "check_in"
+    assert mapped["r2"].primary_expression.value == "question"
+    assert mapped["r3"].primary_expression.value == "check_in"
+
+
+def test_compact_payload_allows_empty_and_limits_non_complex_to_two():
+    empty = parse_batch_payload({"r": [{"i": 1, "s": "u", "x": "o", "e": []}]}, ["r1"])
+    assert empty["r1"].evidence_items == []
+    payload = {
+        "r": [
+            {
+                "i": 1,
+                "s": "u",
+                "x": "q",
+                "e": [
+                    ["o", "", "s", "m", "观点一"],
+                    ["c", "", "s", "m", "背景二"],
+                    ["e", "saved", "s", "h", "收藏三"],
+                ],
+            }
+        ]
+    }
+    mapped = parse_batch_payload(payload, ["r1"])
+    assert len(mapped["r1"].evidence_items) == 2
+
+
+def test_compact_payload_allows_four_for_complex_comment():
+    payload = {
+        "r": [
+            {
+                "i": 1,
+                "s": "u",
+                "x": "h",
+                "e": [
+                    ["p", "", "s", "h", "膝盖疼"],
+                    ["b", "a", "s", "h", "已经练了一周"],
+                    ["r", "", "s", "m", "还是没有改善"],
+                    ["q", "duration", "s", "h", "一周"],
+                ],
+            }
+        ]
+    }
+    mapped = parse_batch_payload(payload, ["r1"])
+    assert len(mapped["r1"].evidence_items) == 4
+
+
 def test_mock_batch_20_returns_20_aligned():
     records = [_rec(f"id{i}", f"这个动作怎么做{i}？") for i in range(20)]
     result = extract_batch_with_split(records, use_mock=True, batch_size=20)
@@ -113,6 +252,39 @@ def test_sanitize_drops_fabricated_quotes():
     # B2: fabricated / empty quotes are dropped entirely
     assert cleaned.explicit_facts == []
     assert cleaned.problem_or_need[0].evidence_quote == "我练了三天"
+
+
+def test_sanitize_does_not_treat_cost_saving_as_paid_failure():
+    record = _rec(
+        "paid-offer",
+        "之前有个健身教练让我报2万块钱的课，矫正骨盆旋转，做这个操让我省钱了",
+    )
+    card = EvidenceCard(
+        record_id=record.internal_record_id,
+        evidence_items=[
+            {
+                "type": "behavior",
+                "subtype": "sought_paid_help",
+                "text": "教练让我报课",
+                "evidence_quote": "之前有个健身教练让我报2万块钱的课",
+                "speaker_scope": "self",
+                "certainty": "high",
+            },
+            {
+                "type": "action_gap",
+                "subtype": "paid_but_no_result",
+                "text": "省钱了",
+                "evidence_quote": "做这个操让我省钱了",
+                "speaker_scope": "self",
+                "certainty": "high",
+            },
+        ],
+    )
+    cleaned = sanitize_evidence_card(record, card)
+    assert any(item.type.value == "solution" and item.subtype == "paid_offer" for item in cleaned.evidence_items)
+    assert any(item.type.value == "result" and item.subtype == "saved_cost" for item in cleaned.evidence_items)
+    assert not any(item.subtype == "paid_but_no_result" for item in cleaned.evidence_items)
+    assert not any(item.subtype == "sought_paid_help" for item in cleaned.evidence_items)
 
 
 def test_planned_tried_continued_distinction():

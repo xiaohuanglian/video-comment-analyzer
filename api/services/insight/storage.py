@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import json
+import os
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set
@@ -15,17 +18,43 @@ from .schemas import CommentAnalysisResult, RunConfig, RunProgress, SourceRecord
 
 APP_DIR = Path(__file__).resolve().parents[3]
 
+_write_locks_guard = threading.Lock()
+_write_locks: Dict[str, threading.Lock] = {}
+
 
 def _run_dir(run_id: str) -> Path:
     return run_dir_for_id(run_id)
 
 
-def _write_json(path: Path, payload: Any) -> None:
+def _path_lock(path: Path) -> threading.Lock:
+    key = str(path.resolve()) if path.parent.exists() else str(path)
+    with _write_locks_guard:
+        lock = _write_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _write_locks[key] = lock
+        return lock
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write text atomically; safe under concurrent writers for the same path."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    with _path_lock(path):
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.{time.time_ns()}.tmp")
+        try:
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, path)
+        finally:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+
+
+def _write_json(path: Path, payload: Any) -> None:
     text = json.dumps(payload, ensure_ascii=False, indent=2)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    tmp.replace(path)
+    _atomic_write_text(path, text)
 
 
 def _read_json(path: Path) -> Any:
@@ -115,12 +144,93 @@ def save_progress(run_id: str, progress: RunProgress) -> None:
 def sync_progress_from_results(run_id: str) -> RunProgress:
     """Reconcile completed count from results.jsonl (e.g. after forced stop)."""
     progress = load_progress(run_id)
-    done_count = len(completed_record_ids(run_id))
+    done_ids = completed_record_ids(run_id)
+    done_count = len(done_ids)
+    changed = False
     if done_count > progress.completed:
         progress.completed = done_count
-    progress.skipped = max(0, progress.total_records - progress.completed - progress.failed)
-    save_progress(run_id, progress)
+        changed = True
+    # Drop stale failures that already have successful results.
+    if progress.failed_record_ids:
+        stale = [rid for rid in progress.failed_record_ids if rid in done_ids]
+        if stale:
+            stale_set = set(stale)
+            progress.failed_record_ids = [
+                rid for rid in progress.failed_record_ids if rid not in stale_set
+            ]
+            for rid in stale:
+                progress.failed_errors.pop(rid, None)
+            progress.failed = len(progress.failed_record_ids)
+            changed = True
+    skipped = max(0, progress.total_records - progress.completed - progress.failed)
+    if skipped != progress.skipped:
+        progress.skipped = skipped
+        changed = True
+    # Avoid rewriting progress.json on every 5s poll while the worker is also writing.
+    if changed:
+        save_progress(run_id, progress)
     return progress
+
+
+def prune_stale_failures(progress: RunProgress, done_ids: Set[str]) -> bool:
+    """Remove failed IDs that already have results. Returns True if mutated."""
+    if not progress.failed_record_ids or not done_ids:
+        return False
+    stale = [rid for rid in progress.failed_record_ids if rid in done_ids]
+    if not stale:
+        return False
+    stale_set = set(stale)
+    progress.failed_record_ids = [
+        rid for rid in progress.failed_record_ids if rid not in stale_set
+    ]
+    for rid in stale:
+        progress.failed_errors.pop(rid, None)
+    progress.failed = len(progress.failed_record_ids)
+    return True
+
+
+def remove_results_for_records(run_id: str, record_ids: Set[str]) -> int:
+    """Drop existing result rows for the given record_ids so they can be re-analyzed."""
+    if not record_ids:
+        return 0
+    path = _run_dir(run_id) / "results.jsonl"
+    if not path.exists():
+        return 0
+    kept: List[str] = []
+    removed = 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        rid = payload.get("record_id") or payload.get("analysis", {}).get("record_id")
+        if rid in record_ids:
+            removed += 1
+            continue
+        kept.append(line)
+    path.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+    return removed
+
+
+def remove_evidence_for_records(run_id: str, record_ids: Set[str]) -> int:
+    """Drop evidence cards for record_ids so force_reanalyze can truly re-extract."""
+    if not record_ids:
+        return 0
+    path = _run_dir(run_id) / "evidence_cards.jsonl"
+    if not path.exists():
+        return 0
+    kept: List[str] = []
+    removed = 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        rid = payload.get("record_id") or (payload.get("card") or {}).get("record_id")
+        if rid in record_ids:
+            removed += 1
+            continue
+        kept.append(line)
+    path.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+    return removed
 
 
 def load_source_records(run_id: str) -> List[SourceRecord]:
@@ -185,28 +295,6 @@ def load_results(run_id: str, limit: Optional[int] = None) -> List[Dict[str, Any
     return rows
 
 
-def remove_results_for_records(run_id: str, record_ids: Set[str]) -> int:
-    """Drop existing result rows for the given record_ids so they can be re-analyzed."""
-    if not record_ids:
-        return 0
-    path = _run_dir(run_id) / "results.jsonl"
-    if not path.exists():
-        return 0
-    kept: List[str] = []
-    removed = 0
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        payload = json.loads(line)
-        rid = payload.get("record_id") or payload.get("analysis", {}).get("record_id")
-        if rid in record_ids:
-            removed += 1
-            continue
-        kept.append(line)
-    path.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
-    return removed
-
-
 def save_summary(run_id: str, summary: Dict[str, object]) -> None:
     _write_json(_run_dir(run_id) / "summary.json", summary)
 
@@ -265,6 +353,36 @@ def load_themes(run_id: str):
 def save_themes(run_id: str, doc) -> None:
     _write_json(_run_dir(run_id) / "themes.json", doc.model_dump())
     _DOCUMENT_LOAD_ERRORS.pop(str(_run_dir(run_id) / "themes.json"), None)
+
+
+def save_open_theme_artifacts(run_id: str, doc, semantic_payload: Dict[str, Any]) -> None:
+    """Commit themes and their semantic review from one atomic source of truth."""
+    bundle = {
+        "version": 1,
+        "themes": doc.model_dump(mode="json"),
+        "semantic_review": semantic_payload,
+    }
+    _write_json(_run_dir(run_id) / "open_theme_bundle.json", bundle)
+    # Compatibility projections for existing reporting and export readers.
+    save_themes(run_id, doc)
+    save_semantic_review(run_id, semantic_payload)
+
+
+def load_open_theme_artifacts(run_id: str) -> Optional[Dict[str, Any]]:
+    path = _run_dir(run_id) / "open_theme_bundle.json"
+    if not path.exists():
+        return None
+    try:
+        payload = _read_json(path)
+        if not isinstance(payload, dict):
+            return None
+        if not isinstance(payload.get("themes"), dict) or not isinstance(
+            payload.get("semantic_review"), dict
+        ):
+            return None
+        return payload
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 def load_candidates(run_id: str):
@@ -358,7 +476,7 @@ def list_runs() -> List[Dict[str, Any]]:
     return runs
 
 
-# --- evidence_agent_v1 artifacts ---
+# --- evidence_items_v1 artifacts ---
 
 
 def completed_evidence_record_ids(run_id: str) -> Set[str]:
@@ -404,11 +522,20 @@ def append_evidence_card(
 def replace_evidence_cards(run_id: str, rows: List[Dict[str, Any]]) -> None:
     """Atomically rewrite evidence_cards.jsonl (dedupe-friendly finalization)."""
     path = _run_dir(run_id) / "evidence_cards.jsonl"
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-    tmp.replace(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _path_lock(path):
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.{time.time_ns()}.tmp")
+        try:
+            with tmp.open("w", encoding="utf-8") as handle:
+                for row in rows:
+                    handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+            os.replace(tmp, path)
+        finally:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
 
 
 def load_evidence_cards(run_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -436,7 +563,7 @@ def load_evidence_cards(run_id: str, limit: Optional[int] = None) -> List[Dict[s
 
 def results_for_candidates(run_id: str) -> List[Dict[str, Any]]:
     """Merge legacy results.jsonl with evidence_cards.jsonl for third-column build."""
-    from .evidence_adapter import outreach_analysis_from_card
+    from .evidence_adapter import merge_projected_analysis, outreach_analysis_from_card
 
     results = load_results(run_id)
     by_id: Dict[str, Dict[str, Any]] = {}
@@ -457,10 +584,8 @@ def results_for_candidates(run_id: str) -> List[Dict[str, Any]]:
         projected = outreach_analysis_from_card(card)
         if rid in by_id:
             existing = dict(by_id[rid])
-            analysis = dict(existing.get("analysis") or {})
-            for key, value in projected.items():
-                if key in {"action_gap", "paid_help"} or not analysis.get(key):
-                    analysis[key] = value
+            analysis = merge_projected_analysis(existing.get("analysis") or {}, projected)
+            analysis["paid_help"] = bool(analysis.get("paid_help") or projected.get("paid_help"))
             existing["analysis"] = analysis
             existing["card"] = card
             by_id[rid] = existing
@@ -497,6 +622,21 @@ def save_conclusion_review(run_id: str, payload: Dict[str, Any]) -> None:
 
 def load_conclusion_review(run_id: str) -> Dict[str, Any]:
     path = _run_dir(run_id) / "conclusion_review.json"
+    if not path.exists():
+        return {}
+    try:
+        data = _read_json(path)
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_semantic_review(run_id: str, payload: Dict[str, Any]) -> None:
+    _write_json(_run_dir(run_id) / "semantic_review.json", payload)
+
+
+def load_semantic_review(run_id: str) -> Dict[str, Any]:
+    path = _run_dir(run_id) / "semantic_review.json"
     if not path.exists():
         return {}
     try:

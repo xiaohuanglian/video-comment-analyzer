@@ -52,7 +52,7 @@ SINGLE_VIDEO_LABELS = {
     "one_reply_sufficient": "一次回复即可",
     "personalized_judgment_needed": "需个性化判断",
     "realtime_observation_needed": "需实时观察",
-    "unclear": "信息不足",
+    "unclear": "证据不足，无法判断",
 }
 
 PRODUCT_FIT_LABELS = {
@@ -65,7 +65,7 @@ PRODUCT_FIT_LABELS = {
 HYPOTHESIS_RELATION_LABELS = {
     "supports": "支持",
     "weakens": "削弱",
-    "insufficient": "证据不足",
+    "insufficient": "证据不足，无法判断",
     "irrelevant": "无关",
 }
 

@@ -8,7 +8,7 @@ from typing import Callable, Optional
 
 
 def slugify_run_name(name: str) -> str:
-    base = (name or "评论洞察任务").strip()
+    base = (name or "评论分析").strip()
     slug = re.sub(r"\s+", "_", base)
     slug = re.sub(r"[^\w\u4e00-\u9fff\-_]", "", slug)
     slug = re.sub(r"_+", "_", slug).strip("_")[:48]

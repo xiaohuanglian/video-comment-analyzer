@@ -4,14 +4,17 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>视频评论分析</title>
-  <link rel="stylesheet" href="/static/style.css?v=26" />
+  <link rel="stylesheet" href="/static/style.css?v=27" />
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
       <div class="logo">VC</div>
-      <div>
-        <h1>视频评论分析</h1>
+      <div class="brand-copy">
+        <div class="brand-title-row">
+          <h1>视频评论分析</h1>
+          <div class="progress-chip" id="envChip">检查环境中…</div>
+        </div>
         <p>从真实评论中发现需求、验证假设、找到值得深聊的调研对象</p>
       </div>
     </div>
@@ -21,7 +24,6 @@
         <button type="button" class="stage-tab" id="stageTabInsight" data-stage="insight">2 评论洞察</button>
         <button type="button" class="stage-tab" id="stageTabOutreach" data-stage="outreach">3 找人聊聊</button>
       </nav>
-      <div class="progress-chip" id="envChip">检查环境中…</div>
       <button class="btn ghost" id="btnBackSetup" hidden>← 返回设置</button>
     </div>
   </header>
@@ -322,17 +324,6 @@
             <button class="btn ghost sm" type="button" id="btnInsightVerifyModel">验证 API 连接</button>
             <p class="inline-status" id="insightVerifyStatus"></p>
           </div>
-          <details class="insight-advanced-settings">
-            <summary>高级设置</summary>
-            <label class="setting-field" style="margin-top:0.75rem">
-              <span class="field-label">分析引擎</span>
-              <select id="insightAnalysisEngine">
-                <option value="evidence_items_v1" selected>新版证据分析（推荐）</option>
-                <option value="legacy_per_record">旧版逐条分析（兼容）</option>
-              </select>
-            </label>
-            <p class="hint">普通任务默认使用新版证据分析；仅在调试或单任务回退时选择旧版。</p>
-          </details>
         </div>
       </article>
 
@@ -347,7 +338,7 @@
         <div class="insight-run-controls">
           <label class="setting-field insight-run-name-field">
             <span class="field-label">任务名称</span>
-            <input id="insightRunName" type="text" value="评论洞察任务" />
+            <input id="insightRunName" type="text" value="评论分析" />
           </label>
           <label class="setting-field insight-run-history-field">
             <span class="field-label">历史任务</span>
@@ -379,7 +370,7 @@
           <p class="insight-progress-label" id="insightProgressLabel">0 / 0</p>
         </div>
         <p class="inline-status" id="insightRunStatus"></p>
-        <p class="hint" id="insightRunHint" hidden>分析在后台运行，进度每 5 秒自动刷新；可随时点击「停止分析」。</p>
+        <p class="hint" id="insightRunHint" hidden>分析进行中 · 每 5 秒刷新进度；可随时点击「停止分析」。</p>
         <div class="insight-completion-summary" id="insightCompletionSummary" hidden></div>
         <dl class="status-grid insight-metrics" id="insightMetrics">
           <div class="status-item"><dt>任务</dt><dd id="insightRunId">—</dd></div>
@@ -413,15 +404,31 @@
       </article>
 
       <article class="card flow-card insight-themes-card">
-        <div class="step-header">
+        <div class="step-header insight-themes-header">
           <div class="step-number">D2</div>
           <div class="step-header-copy">
             <h3>开放发现</h3>
             <p class="hint">基于已分析评论中的 new_signals 做二阶段主题归并；完成后再导出报告。证据路径任务另见「研究报告」。</p>
           </div>
-          <button class="btn secondary sm" type="button" id="btnInsightClusterThemes">生成开放主题</button>
+          <div class="step-header-actions insight-theme-actions">
+            <label class="theme-engine-control">
+              <span>归并方式</span>
+              <select id="insightThemeEngine" class="input sm" aria-label="开放主题归并引擎">
+                <option value="legacy_llm_v1">旧版 LLM（维护）</option>
+                <option value="hybrid_cluster_v1">混合本地聚类（实验）</option>
+              </select>
+            </label>
+            <div class="theme-action-buttons">
+              <button class="btn secondary sm" type="button" id="btnInsightClusterThemes">生成开放主题</button>
+              <button class="btn danger sm" type="button" id="btnInsightCancelClusterThemes" hidden>停止归并</button>
+            </div>
+          </div>
         </div>
         <p class="inline-status" id="insightThemesStatus"></p>
+        <div id="insightThemeProgressWrap" class="insight-progress-wrap" hidden>
+          <div class="insight-progress-track"><div id="insightThemeProgressFill" class="insight-progress-fill"></div></div>
+          <div id="insightThemeProgressLabel" class="insight-progress-label">等待开始</div>
+        </div>
         <div id="insightThemesPanel" class="insight-themes-panel">
           <p class="hint">完成评论分析后，点击「生成开放主题」归并 new_signals。</p>
         </div>
@@ -443,7 +450,7 @@
           <div class="step-number">E</div>
           <div class="step-header-copy">
             <h3>评论明细</h3>
-            <p class="hint">旧任务显示假设/信号；证据路径任务显示状态、主表达与证据项。</p>
+            <p class="hint">按目的、信号、视频关系筛选；证据路径任务显示主表达与证据项。</p>
           </div>
         </div>
         <div class="insight-filter-bar" id="insightFilterBar">
@@ -451,7 +458,6 @@
           <select id="insightFilterIntent"><option value="">全部目的</option></select>
           <select id="insightFilterVideo"><option value="">全部视频关系</option></select>
           <select id="insightFilterFit"><option value="">全部适配度</option></select>
-          <select id="insightFilterHypothesis"><option value="">全部假设关系</option></select>
           <button class="btn ghost sm" type="button" id="btnInsightClearFilters">清除筛选</button>
         </div>
         <p class="inline-status" id="insightFilterStatus"></p>
@@ -584,7 +590,7 @@
   </main>
 
   <script src="/static/comment.js?v=28"></script>
-  <script src="/static/insight.js?v=19"></script>
+  <script src="/static/insight.js?v=27"></script>
   <script src="/static/outreach.js?v=1"></script>
 </body>
 </html>

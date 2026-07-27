@@ -53,8 +53,13 @@
   const insightContradictions = $("insightContradictions");
   const insightDashboard = $("insightDashboard");
   const btnInsightClusterThemes = $("btnInsightClusterThemes");
+  const insightThemeEngine = $("insightThemeEngine");
+  const btnInsightCancelClusterThemes = $("btnInsightCancelClusterThemes");
   const insightThemesPanel = $("insightThemesPanel");
   const insightThemesStatus = $("insightThemesStatus");
+  const insightThemeProgressWrap = $("insightThemeProgressWrap");
+  const insightThemeProgressFill = $("insightThemeProgressFill");
+  const insightThemeProgressLabel = $("insightThemeProgressLabel");
   const insightResultsTable = $("insightResultsTable");
   const insightResultsPager = $("insightResultsPager");
   const insightResearchCard = $("insightResearchCard");
@@ -115,12 +120,21 @@
     currentRunStatus: "",
     pollTimer: null,
     pollBusy: false,
+    themePollTimer: null,
+    themePollBusy: false,
+    analysisWasActive: false,
+    audioCtx: null,
+    analysisBusy: false,
+    analysisAbortController: null,
     lastProgress: {},
+    lastConfig: {},
     allResults: [],
     resultsPage: { page: 1, pageSize: 100, total: 0, items: [] },
     evidenceMode: false,
     evidencePage: { page: 1, pageSize: 50, total: 0, items: [] },
     themesDoc: null,
+    themeClusterRunning: false,
+    themeClusterStatus: "idle",
     filters: {
       keyword: "",
       intent: "",
@@ -171,16 +185,33 @@
     return Math.max(0, Math.floor((Date.now() - started) / 1000));
   }
 
-  function canContinueRun(progress) {
-    if (!progress) return false;
+  function selectedPathsMatchRun(config) {
+    const runPaths = config?.file_paths;
+    if (!runPaths?.length) return state.selectedPaths.size === 0;
+    if (state.selectedPaths.size === 0) return true;
+    if (state.selectedPaths.size !== runPaths.length) return false;
+    return runPaths.every((path) => state.selectedPaths.has(path));
+  }
+
+  function canContinueRun(progress, config) {
+    if (!progress || !state.currentRunId) return false;
+    if (!selectedPathsMatchRun(config)) return false;
+    const researchFailed = (progress.last_error || "").startsWith("研究阶段");
+    if (researchFailed && progress.status === "completed") {
+      return true;
+    }
     const total = progress.total_records || 0;
     const completed = progress.completed || 0;
     if (!total || completed >= total) return false;
-    if (state.selectedPaths.size > 0) return false;
     return ["ready", "paused", "cancelled", "failed"].includes(progress.status);
   }
 
-  function updateStartButtonLabel(progress, active) {
+  function updateStopButton(active) {
+    if (!btnInsightStopRun) return;
+    btnInsightStopRun.disabled = !active && !state.analysisBusy;
+  }
+
+  function updateStartButtonLabel(progress, active, config) {
     if (!btnInsightStartRun) return;
     if (progress?.status === "cancelling") {
       btnInsightStartRun.textContent = "正在停止…";
@@ -193,19 +224,24 @@
       return;
     }
     btnInsightStartRun.disabled = false;
-    btnInsightStartRun.textContent = canContinueRun(progress) ? "继续分析" : "开始分析";
+    btnInsightStartRun.textContent = canContinueRun(progress, config) ? "继续分析" : "开始分析";
+    updateStopButton(active);
   }
 
   function updateProgressBar(progress, active) {
     if (!insightProgressWrap || !insightProgressFill || !insightProgressLabel) return;
     const total = progress?.total_records || 0;
     const completed = progress?.completed || 0;
+    const extracting = progress?.extracting_count || 0;
     const show = active || completed > 0;
     insightProgressWrap.hidden = !show;
     if (!show) return;
-    const pct = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+    const inFlight = completed + extracting;
+    const pct = total > 0 ? Math.min(100, Math.round((inFlight / total) * 100)) : 0;
     insightProgressFill.style.width = `${pct}%`;
-    insightProgressLabel.textContent = `${completed.toLocaleString()} / ${total.toLocaleString()}（${pct}%）`;
+    const extractingHint =
+      active && extracting > 0 ? ` · 提取中 ${extracting.toLocaleString()} 条` : "";
+    insightProgressLabel.textContent = `${completed.toLocaleString()} / ${total.toLocaleString()}（${pct}%）${extractingHint}`;
   }
 
   function updateCompletionSummary(progress, config) {
@@ -217,8 +253,16 @@
       return;
     }
     const elapsed = formatDuration(computeElapsedSeconds(progress, false));
+    const failed = progress.failed || 0;
+    const researchFailed = (progress.last_error || "").startsWith("研究阶段");
+    let headline = "分析完成";
+    if (researchFailed) {
+      headline = "评论提取完成，研究报告失败";
+    } else if (failed > 0) {
+      headline = `分析完成（${failed} 条失败）`;
+    }
     insightCompletionSummary.hidden = false;
-    insightCompletionSummary.innerHTML = `<strong>分析完成</strong> · 共 ${progress.completed.toLocaleString()} 条 · 耗时 ${elapsed} · 实际费用 ${formatCost(actualCost(progress), config?.currency || "CNY")}`;
+    insightCompletionSummary.innerHTML = `<strong>${headline}</strong> · 共 ${progress.completed.toLocaleString()} 条 · 耗时 ${elapsed} · 实际费用 ${formatCost(actualCost(progress), config?.currency || "CNY")}`;
   }
 
   function updateExportLinks(runId, progress, summary) {
@@ -266,12 +310,46 @@
     }
   }
 
+  function clearDerivedInsightPanels({ message } = {}) {
+    /** Clear themes / research / detail views that belong to another run. */
+    stopThemePolling();
+    state.themeClusterRunning = false;
+    state.themeClusterStatus = "idle";
+    state.themesDoc = null;
+    state.filters.themeRecordIds = null;
+    state.allResults = [];
+    state.resultsPage = { page: 1, pageSize: 100, total: 0, items: [] };
+    state.evidencePage = { page: 1, pageSize: 50, total: 0, items: [] };
+    if (insightThemesPanel) {
+      insightThemesPanel.innerHTML = `<p class="hint">${escapeHtml(
+        message || "当前任务尚未完成；开放发现将在分析完成并生成主题后显示。"
+      )}</p>`;
+    }
+    if (insightThemesStatus) {
+      insightThemesStatus.textContent = "";
+      insightThemesStatus.className = "inline-status";
+    }
+    if (insightThemeProgressWrap) insightThemeProgressWrap.hidden = true;
+    if (insightThemeProgressFill) insightThemeProgressFill.style.width = "0%";
+    if (insightThemeProgressLabel) insightThemeProgressLabel.textContent = "0 / 0";
+    if (insightResearchCard) insightResearchCard.hidden = true;
+    if (insightResearchReport) insightResearchReport.innerHTML = "";
+    if (insightResultsTable) {
+      insightResultsTable.innerHTML = `<p class="hint center">${escapeHtml(
+        message || "当前任务尚未完成；评论明细将在分析完成后显示。"
+      )}</p>`;
+    }
+    if (insightResultsPager) insightResultsPager.innerHTML = "";
+  }
+
   async function selectRunFromHistory(runId) {
     if (!runId) return;
     state.selectedPaths.clear();
     state.currentRunId = runId;
     sessionStorage.setItem(RUN_ID_STORAGE, runId);
     stopPolling();
+    clearDerivedInsightPanels({ message: "正在加载任务…" });
+    renderSummary({});
     const data = await refreshRunDisplay(runId);
     if (data?.config?.name && insightRunName) insightRunName.value = data.config.name;
     if (data?.config?.analysis_limit != null) setAnalysisLimit(data.config.analysis_limit);
@@ -280,6 +358,9 @@
     const progress = state.lastProgress || {};
     if (progress.status === "failed" && (progress.failed || 0) > 0) {
       insightRunStatus.textContent = `任务加载完成：${progress.failed} 条失败，可点「重试失败项」或「继续分析」处理剩余评论`;
+      insightRunStatus.className = "inline-status error";
+    } else if ((progress.last_error || "").startsWith("研究阶段")) {
+      insightRunStatus.textContent = "评论提取已完成，但研究报告失败。可点「继续分析」仅重跑研究阶段（不会重复计费已提取评论）";
       insightRunStatus.className = "inline-status error";
     } else {
       insightRunStatus.textContent = "";
@@ -309,12 +390,6 @@
     };
   }
 
-  function getAnalysisEngine() {
-    const el = document.getElementById("insightAnalysisEngine");
-    const value = el?.value?.trim() || "evidence_items_v1";
-    return value === "legacy_per_record" ? "legacy_per_record" : "evidence_items_v1";
-  }
-
   function getApiKey() {
     persistApiKey();
     return insightApiKey?.value?.trim() || "";
@@ -337,12 +412,46 @@
     return parts.join(" ") || "少于 1 分钟";
   }
 
+  function ensureAudioContext() {
+    if (state.audioCtx) return state.audioCtx;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    state.audioCtx = new Ctx();
+    return state.audioCtx;
+  }
+
+  function playCompletionChime() {
+    try {
+      const ctx = ensureAudioContext();
+      if (!ctx) return;
+      if (ctx.state === "suspended") ctx.resume().catch(() => {});
+      const now = ctx.currentTime;
+      const notes = [523.25, 659.25, 783.99];
+      notes.forEach((freq, index) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        const startAt = now + index * 0.12;
+        gain.gain.setValueAtTime(0.0001, startAt);
+        gain.gain.exponentialRampToValueAtTime(0.08, startAt + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.35);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(startAt);
+        osc.stop(startAt + 0.4);
+      });
+    } catch (_) {
+      /* ignore audio errors */
+    }
+  }
+
   function formatRunLabel(runId, configName) {
     if (configName && configName !== runId) return `${configName}（${runId}）`;
     return runId || "—";
   }
 
-  function statusLabel(status) {
+  function statusLabel(status, progress) {
     const labels = {
       ready: "就绪",
       running: "分析中",
@@ -352,6 +461,9 @@
       completed: "已完成",
       failed: "失败",
     };
+    if (status === "completed" && (progress?.last_error || "").startsWith("研究阶段")) {
+      return "已完成（研究报告失败）";
+    }
     return labels[status] || status || "—";
   }
 
@@ -477,7 +589,7 @@
     one_reply_sufficient: "一次回复即可",
     personalized_judgment_needed: "需个性化判断",
     realtime_observation_needed: "需实时观察",
-    unclear: "信息不足",
+    unclear: "证据不足，无法判断",
   };
 
   const HYPOTHESIS_LABELS = {
@@ -489,15 +601,15 @@
   const HYPOTHESIS_RELATION_LABELS = {
     supports: "支持",
     weakens: "削弱",
-    insufficient: "证据不足",
+    insufficient: "证据不足，无法判断",
     irrelevant: "无关",
   };
 
   const THEME_RELATION_LABELS = {
-    supports_existing: "支持已有假设的新证据",
-    extends_existing: "扩展已有假设的新发现",
-    weakens_existing: "削弱已有假设的新发现",
-    unrelated_notable: "与已有假设无关但值得注意",
+    supports_existing: "与已有主题一致",
+    extends_existing: "新发现",
+    weakens_existing: "与常见判断不一致",
+    unrelated_notable: "独立值得关注",
   };
 
   const THEME_RELATION_ORDER = [
@@ -827,19 +939,38 @@
     insightErrorSummary.title = summary.map((item) => `${item.count}× ${item.message || ""}`).join("\n");
   }
 
+  function showLocalRunMetrics(progress, config, { active = false } = {}) {
+    updateRunMetrics({
+      progress: progress || state.lastProgress || {},
+      config: config || state.lastConfig || { run_id: state.currentRunId },
+      is_running: active,
+    });
+  }
+
   function updateRunMetrics(data) {
     const progress = data.progress || {};
     const config = data.config || {};
     state.lastProgress = progress;
+    state.lastConfig = config;
     state.currentRunStatus = progress.status || "";
     insightRunId.textContent = formatRunLabel(data.config?.run_id || state.currentRunId, config.name);
     insightRunId.title = config.run_id || state.currentRunId || "";
     insightTotal.textContent = String(progress.total_records ?? "—");
     insightCompleted.textContent = String(progress.completed ?? "—");
-    insightStatus.textContent = statusLabel(progress.status);
+    insightStatus.textContent = statusLabel(progress.status, progress);
     const active = isActiveRunStatus(progress.status) || Boolean(data.is_running);
     insightElapsed.textContent = formatDuration(computeElapsedSeconds(progress, active));
-    insightFailed.textContent = progress.failed != null ? String(progress.failed) : "—";
+    const failedCount = progress.failed != null ? Number(progress.failed) : null;
+    const researchFailed = (progress.last_error || "").startsWith("研究阶段");
+    if (failedCount != null && failedCount > 0) {
+      insightFailed.textContent = String(failedCount);
+    } else if (researchFailed) {
+      insightFailed.textContent = "研究失败";
+      insightFailed.title = progress.last_error || "研究报告生成失败";
+    } else {
+      insightFailed.textContent = failedCount != null ? String(failedCount) : "—";
+      insightFailed.title = "";
+    }
     renderErrorSummary(progress);
     insightPromptTokens.textContent = progress.prompt_tokens != null ? progress.prompt_tokens.toLocaleString() : "—";
     if (insightCacheHitTokens) {
@@ -862,7 +993,16 @@
         insightRunHint.innerHTML =
           "当前任务因达到预算上限暂停。请提高预算上限后点击「继续分析」，已完成结果不会重复调用和计费。";
       } else if (!insightRunHint.hidden) {
-        insightRunHint.textContent = "分析在后台运行，进度每 5 秒自动刷新；可随时点击「停止分析」。";
+        const label = progress.current_source_label || "";
+        const chunk =
+          progress.current_chunk_total > 1
+            ? `（第 ${progress.current_chunk_index || "—"}/${progress.current_chunk_total} 段）`
+            : "";
+        const head = label ? `正在分析：${label}${chunk}` : "分析进行中";
+        const extracting = progress.extracting_count || 0;
+        const extractingHint =
+          extracting > 0 ? ` · 本段已提取 ${extracting.toLocaleString()} 条（写入中）` : "";
+        insightRunHint.textContent = `${head} · 已完成 ${(progress.completed || 0).toLocaleString()} / ${(progress.total_records || 0).toLocaleString()} 条${extractingHint} · 每 5 秒刷新`;
       }
     }
     if (insightCostProjection) {
@@ -873,9 +1013,9 @@
     }
 
     const hasFailed = (progress.failed_record_ids || []).length > 0 || (progress.failed || 0) > 0;
-    updateStartButtonLabel(progress, active);
+    updateStartButtonLabel(progress, active, config);
     btnInsightRetryFailed.disabled = !hasFailed || active || !state.currentRunId;
-    btnInsightStopRun.disabled = !active;
+    updateStopButton(active);
     updateProgressBar(progress, active);
     updateCompletionSummary(progress, config);
     updateExportLinks(state.currentRunId, progress, data.summary || {});
@@ -888,6 +1028,20 @@
     state.pollBusy = true;
     try {
       const data = await apiFetch(`/api/analysis/runs/${encodeURIComponent(runId)}`);
+      const progress = data.progress || {};
+      const active = isActiveRunStatus(progress.status) || Boolean(data.is_running);
+      if (state.analysisWasActive && !active) {
+        if (progress.status === "completed") {
+          playCompletionChime();
+          if (insightRunStatus) {
+            insightRunStatus.textContent = "评论分析已完成";
+            insightRunStatus.className = "inline-status success";
+          }
+        } else if (progress.status === "cancelled") {
+          playCompletionChime();
+        }
+      }
+      state.analysisWasActive = active;
       updateRunMetrics(data);
       renderSummary(data.summary || {});
       if (data.document_warnings && Object.keys(data.document_warnings).length) {
@@ -898,7 +1052,6 @@
         }
       }
       if (shouldLoadResults) await loadResultsLight(runId);
-      const progress = data.progress || {};
       if (!isActiveRunStatus(progress.status) && !data.is_running) {
         stopPolling();
         // One-shot refresh of paginated results + themes after run settles
@@ -934,9 +1087,18 @@
       insightOverview.innerHTML = '<p class="hint">暂无统计，请先运行分析。</p>';
       return;
     }
+    const liveCompleted = Number(state.lastProgress?.completed || 0);
+    const snapshot = Number(summary.total_analyzed || 0);
+    const active = isActiveRunStatus(state.currentRunStatus);
+    const stale = active && liveCompleted > snapshot;
+    const analyzedLabel = stale ? "统计快照" : "已分析";
+    const staleHint = stale
+      ? `<p class="hint">下方仪表盘是上次汇总快照（${snapshot.toLocaleString()} 条）；上方「已分析」才是实时进度（${liveCompleted.toLocaleString()} 条）。本批全部跑完后会自动刷新统计。</p>`
+      : "";
     insightOverview.innerHTML = `
+      ${staleHint}
       <div class="insight-metric-grid">
-        ${metricCard("已分析", summary.total_analyzed)}
+        ${metricCard(analyzedLabel, summary.total_analyzed)}
         ${metricCard("有效评论", summary.valid_comments, "intent_valid", "1")}
         ${metricCard("独立用户", summary.unique_users)}
         ${metricCard("已训练用户", summary.trained_users)}
@@ -953,14 +1115,32 @@
       </div>`;
   }
 
-  function renderThemes(themesDoc) {
+  function renderThemes(themesDoc, { running } = {}) {
     if (!insightThemesPanel) return;
     const themes = themesDoc?.themes || [];
+    const isRunning =
+      running != null
+        ? Boolean(running)
+        : Boolean(
+            state.themeClusterRunning ||
+              themesDoc?.cluster_running ||
+              themesDoc?.cluster_progress?.status === "running"
+          );
     if (!themes.length) {
+      if (isRunning) {
+        insightThemesPanel.innerHTML =
+          '<p class="hint">开放主题正在生成中，结果尚未就绪；完成后会自动显示。请以上方进度为准，无需重复点击。</p>';
+        return;
+      }
+      if (state.themeClusterStatus === "failed") {
+        insightThemesPanel.innerHTML =
+          '<p class="hint">本次开放主题归并失败。已完成的视频会断点续跑；请点击「生成开放主题」继续，无需从头开始。</p>';
+        return;
+      }
       const rawCount = themesDoc?.raw_signal_count || 0;
       insightThemesPanel.innerHTML = rawCount
-        ? `<p class="hint">已收集 ${rawCount} 条原始新信号，但未形成主题。请检查分析结果或重新生成。</p>`
-        : '<p class="hint">暂无开放主题。请先生成开放主题，或确认分析结果中包含 new_signals。</p>';
+        ? `<p class="hint">已收集 ${rawCount} 条原始新信号，但未形成主题。可点击「生成开放主题」重试。</p>`
+        : '<p class="hint">尚未生成开放主题。分析完成后再点击「生成开放主题」；若已生成仍为空，请确认结果中包含 new_signals。</p>';
       return;
     }
     const grouped = {};
@@ -1000,7 +1180,7 @@
       })
       .join("");
     const meta = themesDoc?.created_at
-      ? `<p class="hint">共 ${themes.length} 个主题 · ${themesDoc.raw_signal_count || 0} 条原始信号 · 归并费用 ${formatCost(themesDoc.cost, themesDoc.currency || "CNY")}</p>`
+      ? `<p class="hint">共 ${themes.length} 个主题 · ${themesDoc.raw_signal_count || 0} 条原始信号 · 多视频任务按每个视频独立归并 · 归并费用 ${formatCost(themesDoc.cost, themesDoc.currency || "CNY")}</p>`
       : "";
     insightThemesPanel.innerHTML = meta + sections;
   }
@@ -1017,6 +1197,136 @@
     insightResultsTable?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  function updateThemeProgressUI(progress, { running = false } = {}) {
+    state.themeClusterRunning = Boolean(running);
+    // While the worker is alive, never keep a previous failed/cancelled status
+    // (stale theme_progress.json can briefly lag behind start_background).
+    const rawStatus = progress?.status || (running ? "running" : "idle");
+    state.themeClusterStatus = running ? "running" : rawStatus;
+    if (btnInsightCancelClusterThemes) {
+      btnInsightCancelClusterThemes.hidden = !running;
+      if (running) btnInsightCancelClusterThemes.disabled = false;
+    }
+    if (!insightThemeProgressWrap || !insightThemeProgressFill || !insightThemeProgressLabel) return;
+    const total = Number(progress?.total || 0);
+    const current = Number(progress?.current || 0);
+    const show =
+      running || ["running", "completed", "completed_with_warnings", "failed", "cancelled", "interrupted"].includes(rawStatus);
+    insightThemeProgressWrap.hidden = !show || total <= 0;
+    if (running && !(state.themesDoc?.themes || []).length) {
+      renderThemes(state.themesDoc, { running: true });
+    }
+    if (!show || total <= 0) return;
+    const weightedPct = Number(progress?.progress_pct);
+    const pct = Number.isFinite(weightedPct)
+      ? Math.min(100, Math.max(0, Math.round(weightedPct)))
+      : Math.min(100, Math.round((current / Math.max(total, 1)) * 100));
+    insightThemeProgressFill.style.width = `${pct}%`;
+    const batchCurrent = Number(progress?.batch_current || 0);
+    const batchTotal = Number(progress?.batch_total || 0);
+    const batch =
+      running && batchTotal > 0 ? ` · 批次 ${batchCurrent}/${batchTotal}` : "";
+    const eta =
+      running && progress?.eta_seconds != null
+        ? ` · 预计剩余 ${formatDuration(progress.eta_seconds)}`
+        : "";
+    const label = progress?.current_source_label ? ` · ${progress.current_source_label}` : "";
+    const stageProgress = progress?.progress_scope === "stages";
+    const sourceTotal = Number(progress?.source_total || 0);
+    const sourceCompleted = Number(progress?.source_completed || 0);
+    const scope = stageProgress ? `阶段 ${current} / ${total}` : `${current} / ${total} 个视频`;
+    const videos =
+      stageProgress && sourceTotal > 0
+        ? ` · 视频 ${sourceCompleted} / ${sourceTotal}`
+        : "";
+    insightThemeProgressLabel.textContent = `${scope}（${pct}%）${videos}${batch}${label}${eta}`;
+  }
+
+  function stopThemePolling() {
+    if (state.themePollTimer) {
+      clearInterval(state.themePollTimer);
+      state.themePollTimer = null;
+    }
+  }
+
+  async function pollThemeProgress(runId) {
+    if (!runId || state.themePollBusy) return null;
+    state.themePollBusy = true;
+    try {
+      const data = await apiFetch(
+        `/api/analysis/runs/${encodeURIComponent(runId)}/themes/cluster-progress`
+      );
+      const progress = data.progress || {};
+      // Trust worker liveness; stale theme_progress.json may still say "running"/failed.
+      const running = Boolean(data.is_running);
+      updateThemeProgressUI(progress, { running });
+      if (insightThemesStatus) {
+        if (running) {
+          const staleFailure =
+            ["failed", "cancelled", "interrupted"].includes(progress.status) ||
+            /失败|中断|已停止/.test(String(progress.message || ""));
+          insightThemesStatus.textContent = staleFailure
+            ? "正在归并开放主题…"
+            : progress.message || "正在归并开放主题…";
+          insightThemesStatus.className = "inline-status loading";
+        } else if (["completed", "completed_with_warnings"].includes(progress.status)) {
+          stopThemePolling();
+          state.themeClusterRunning = false;
+          playCompletionChime();
+          const themes = await apiFetch(`/api/analysis/runs/${encodeURIComponent(runId)}/themes`);
+          state.themesDoc = themes;
+          renderThemes(themes, { running: false });
+          await loadResearchReport(runId);
+          const counts = progress.per_source_theme_counts || themes.per_source_theme_counts || {};
+          const sourceCount = Object.keys(counts).length;
+          const perVideoNote =
+            sourceCount > 1
+              ? `（${sourceCount} 个视频各自独立归并：${Object.values(counts)
+                  .map((n) => `${n} 个`)
+                  .join(" + ")}）`
+              : "";
+          insightThemesStatus.textContent = `完成：${progress.theme_count ?? (themes.themes || []).length} 个主题${perVideoNote}，费用 ${formatCost(progress.cost ?? themes.cost, progress.currency || themes.currency || "CNY")}`;
+          insightThemesStatus.className = "inline-status success";
+          if (btnInsightClusterThemes) btnInsightClusterThemes.disabled = false;
+        } else if (progress.status === "failed" || progress.status === "interrupted") {
+          stopThemePolling();
+          state.themeClusterRunning = false;
+          renderThemes(state.themesDoc, { running: false });
+          insightThemesStatus.textContent = progress.message || progress.last_error || "归并失败";
+          insightThemesStatus.className = "inline-status error";
+          if (btnInsightClusterThemes) btnInsightClusterThemes.disabled = false;
+          if (btnInsightCancelClusterThemes) btnInsightCancelClusterThemes.hidden = true;
+        } else if (progress.status === "cancelled") {
+          stopThemePolling();
+          state.themeClusterRunning = false;
+          renderThemes(state.themesDoc, { running: false });
+          insightThemesStatus.textContent = "开放主题归并已停止";
+          insightThemesStatus.className = "inline-status success";
+          if (btnInsightClusterThemes) btnInsightClusterThemes.disabled = false;
+          if (btnInsightCancelClusterThemes) btnInsightCancelClusterThemes.hidden = true;
+        }
+      }
+      return data;
+    } catch (err) {
+      if (insightThemesStatus) {
+        insightThemesStatus.textContent = `进度读取失败：${err.message}`;
+        insightThemesStatus.className = "inline-status error";
+      }
+      return null;
+    } finally {
+      state.themePollBusy = false;
+    }
+  }
+
+  function startThemePolling(runId) {
+    stopThemePolling();
+    if (!runId) return;
+    state.themePollTimer = setInterval(() => {
+      pollThemeProgress(runId).catch(() => {});
+    }, 2000);
+    pollThemeProgress(runId).catch(() => {});
+  }
+
   async function clusterThemes() {
     if (!state.currentRunId) {
       insightThemesStatus.textContent = "请先选择或创建一个分析任务";
@@ -1024,23 +1334,82 @@
       return;
     }
     if (!requireApiKey()) return;
+    ensureAudioContext();
+    stopThemePolling();
     btnInsightClusterThemes.disabled = true;
-    insightThemesStatus.textContent = "正在归并开放主题…";
+    state.themeClusterRunning = true;
+    state.themeClusterStatus = "running";
+    insightThemesStatus.textContent = "正在启动开放主题归并…";
     insightThemesStatus.className = "inline-status loading";
+    renderThemes(state.themesDoc, { running: true });
+    updateThemeProgressUI({ current: 0, total: 1, status: "running", message: "启动中…" }, { running: true });
     try {
-      const doc = await apiFetch(`/api/analysis/runs/${encodeURIComponent(state.currentRunId)}/themes/cluster`, {
+      const started = await apiFetch(`/api/analysis/runs/${encodeURIComponent(state.currentRunId)}/themes/cluster`, {
         method: "POST",
-        body: JSON.stringify({ api_key: getApiKey(), use_mock: false }),
+        body: JSON.stringify({
+          api_key: getApiKey(),
+          use_mock: false,
+          background: true,
+          themes_engine: insightThemeEngine?.value || "legacy_llm_v1",
+        }),
       });
-      state.themesDoc = doc;
-      renderThemes(doc);
-      insightThemesStatus.textContent = `完成：${(doc.themes || []).length} 个主题，费用 ${formatCost(doc.cost, doc.currency || "CNY")}`;
+      if (started.background) {
+        insightThemesStatus.textContent = started.message || "开放主题归并进行中…";
+        insightThemesStatus.className = "inline-status loading";
+        const progress = {
+          ...(started.progress || {}),
+          status: "running",
+          message: started.message || started.progress?.message || "开放主题归并进行中…",
+          last_error: "",
+        };
+        updateThemeProgressUI(progress, { running: true });
+        renderThemes(state.themesDoc, { running: true });
+        startThemePolling(state.currentRunId);
+        return;
+      }
+      // Sync fallback (tests / background=false)
+      state.themeClusterRunning = false;
+      state.themesDoc = started;
+      renderThemes(started, { running: false });
+      await loadResearchReport(state.currentRunId);
+      playCompletionChime();
+      const perSource = started.per_source_theme_counts || {};
+      const sourceCount = Object.keys(perSource).length;
+      const perVideoNote =
+        sourceCount > 1
+          ? `（${sourceCount} 个视频各自独立归并：${Object.values(perSource)
+              .map((n) => `${n} 个`)
+              .join(" + ")}）`
+          : "";
+      insightThemesStatus.textContent = `完成：${(started.themes || []).length} 个主题${perVideoNote}，费用 ${formatCost(started.cost, started.currency || "CNY")}`;
       insightThemesStatus.className = "inline-status success";
+      updateThemeProgressUI(
+        { current: sourceCount || 1, total: sourceCount || 1, status: "completed" },
+        { running: false }
+      );
+      btnInsightClusterThemes.disabled = false;
     } catch (err) {
+      stopThemePolling();
+      state.themeClusterRunning = false;
+      renderThemes(state.themesDoc, { running: false });
       insightThemesStatus.textContent = `归并失败：${err.message}`;
       insightThemesStatus.className = "inline-status error";
-    } finally {
       btnInsightClusterThemes.disabled = false;
+    }
+  }
+
+  async function cancelThemeCluster() {
+    if (!state.currentRunId) return;
+    try {
+      await apiFetch(`/api/analysis/runs/${encodeURIComponent(state.currentRunId)}/themes/cluster-cancel`, {
+        method: "POST",
+      });
+      insightThemesStatus.textContent = "正在停止开放主题归并，将在当前批次完成后生效…";
+      insightThemesStatus.className = "inline-status loading";
+      if (btnInsightCancelClusterThemes) btnInsightCancelClusterThemes.disabled = true;
+    } catch (err) {
+      insightThemesStatus.textContent = `停止失败：${err.message}`;
+      insightThemesStatus.className = "inline-status error";
     }
   }
 
@@ -1223,53 +1592,42 @@
   }
 
   async function loadResultsLight(runId) {
-    // Themes + paged results — prefer evidence_items path when artifacts exist
+    // Themes + paged evidence results
     const themes = await apiFetch(`/api/analysis/runs/${encodeURIComponent(runId)}/themes`).catch(() => null);
     if (themes) {
       state.themesDoc = themes;
-      renderThemes(state.themesDoc);
+      const clusterRunning = Boolean(themes.cluster_running);
+      state.themeClusterRunning = clusterRunning;
+      state.themeClusterStatus = themes.cluster_progress?.status || "idle";
+      renderThemes(state.themesDoc, { running: clusterRunning });
+      if (clusterRunning) {
+        updateThemeProgressUI(themes.cluster_progress || {}, { running: true });
+        startThemePolling(runId);
+        if (btnInsightClusterThemes) btnInsightClusterThemes.disabled = true;
+        if (insightThemesStatus) {
+          insightThemesStatus.textContent =
+            themes.cluster_progress?.message || "正在归并开放主题…";
+          insightThemesStatus.className = "inline-status loading";
+        }
+      } else if (["failed", "cancelled", "interrupted"].includes(state.themeClusterStatus)) {
+        updateThemeProgressUI(themes.cluster_progress || {}, { running: false });
+        if (insightThemesStatus) {
+          insightThemesStatus.textContent =
+            themes.cluster_progress?.message || "开放主题归并未完成，可重新开始";
+          insightThemesStatus.className =
+            state.themeClusterStatus === "failed" ? "inline-status error" : "inline-status success";
+        }
+      }
     }
     await loadResearchReport(runId);
-    try {
-      const ev = await apiFetch(
-        `/api/analysis/runs/${encodeURIComponent(runId)}/evidence/items?page=1&page_size=1`
-      );
-      if ((ev?.total || 0) > 0) {
-        state.evidenceMode = true;
-        await loadEvidencePage(1);
-        return;
-      }
-    } catch (_err) {
-      /* fall through to legacy */
-    }
-    state.evidenceMode = false;
-    await loadResultsPage(1);
+    state.evidenceMode = true;
+    await loadEvidencePage(1);
   }
 
   function renderContradictions(summary) {
     if (!insightContradictions) return;
-    const items = summary?.contradictions || [];
-    if (!items.length) {
-      insightContradictions.hidden = true;
-      insightContradictions.innerHTML = "";
-      return;
-    }
-    insightContradictions.hidden = false;
-    insightContradictions.innerHTML = `
-      <section class="insight-contradictions-section">
-        <h4>与预期不一致的发现</h4>
-        ${items
-          .map(
-            (item) => `
-          <article class="insight-contradiction-card${item.importance === "important" ? " important" : ""}">
-            <header><strong>${escapeHtml(HYPOTHESIS_LABELS[item.hypothesis_id] || item.hypothesis_id)}</strong>${item.importance === "important" ? '<span class="insight-importance-badge">重要反例</span>' : ""} · 削弱 ${item.weaken_count} 条 / 支持 ${item.support_count} 条</header>
-            <p>${escapeHtml(item.caution_note || "")}</p>
-            <ul>${(item.representative_quotes || []).map((q) => `<li>${escapeHtml(q)}</li>`).join("") || "<li>—</li>"}</ul>
-            <button type="button" class="btn ghost sm insight-filter-link" data-filter-key="hypothesis" data-filter-value="${escapeHtml(item.hypothesis_id)}:weakens">查看削弱评论</button>
-          </article>`
-          )
-          .join("")}
-      </section>`;
+    insightContradictions.hidden = true;
+    insightContradictions.innerHTML = "";
   }
 
   function renderInsightDashboard(summary) {
@@ -1296,33 +1654,6 @@
       })
       .join("");
 
-    const hypothesisHtml = ["H1", "H2", "H3"]
-      .map((hid) => {
-        const detail = summary.hypothesis_details?.[hid] || {};
-        const counts = detail.counts || {};
-        const supportQuotes = (detail.support_quotes || []).map((q) => `<li class="quote">${escapeHtml(q)}</li>`).join("");
-        const weakenQuotes = (detail.weaken_quotes || []).map((q) => `<li class="quote">${escapeHtml(q)}</li>`).join("");
-        return `
-          <div class="insight-summary-card insight-hypothesis-card">
-            <h4>${escapeHtml(HYPOTHESIS_LABELS[hid] || hid)}</h4>
-            <p class="hint">${escapeHtml(detail.label || "")}</p>
-            <div class="insight-hypothesis-counts">
-              ${["supports", "weakens", "insufficient", "irrelevant"]
-                .map(
-                  (rel) =>
-                    `<button type="button" class="insight-chip insight-filter-link" data-filter-key="hypothesis" data-filter-value="${hid}:${rel}">${HYPOTHESIS_RELATION_LABELS[rel]} ${counts[rel] || 0}</button>`
-                )
-                .join("")}
-            </div>
-            <div class="insight-quote-columns">
-              <div><strong>支持性原话</strong><ul>${supportQuotes || "<li>—</li>"}</ul></div>
-              <div><strong>削弱性原话</strong><ul>${weakenQuotes || "<li>—</li>"}</ul></div>
-            </div>
-            <p class="hint">原话按与假设相关度筛选展示；计数仍含全部标注。若个别不准，请点上方标签进明细核对。</p>
-          </div>`;
-      })
-      .join("");
-
     const videoStats = summary.single_video_stats || {};
     const videoHtml = Object.entries(SINGLE_VIDEO_LABELS)
       .map(([key, label]) => {
@@ -1334,11 +1665,14 @@
     insightDashboard.innerHTML = `
       <p class="hint insight-coverage-note">信息信号为覆盖率统计，同一评论可含多个标签，覆盖率之和可能超过 100%。</p>
       <div class="insight-summary-grid">
-        <div class="insight-summary-card"><h4>主要沟通目的</h4><ul>${intentHtml || "<li>—</li>"}</ul></div>
-        <div class="insight-summary-card"><h4>信息信号覆盖率</h4><ul class="insight-signal-list">${signalHtml || "<li>—</li>"}</ul></div>
-        <div class="insight-summary-card"><h4>单向视频关系</h4><ul>${videoHtml || "<li>—</li>"}</ul></div>
-      </div>
-      <div class="insight-hypothesis-grid">${hypothesisHtml}</div>`;
+        <div class="insight-summary-col">
+          <div class="insight-summary-card"><h4>主要沟通目的</h4><ul>${intentHtml || "<li>—</li>"}</ul></div>
+          <div class="insight-summary-card"><h4>单向视频关系</h4><ul>${videoHtml || "<li>—</li>"}</ul></div>
+        </div>
+        <div class="insight-summary-col">
+          <div class="insight-summary-card"><h4>信息信号覆盖率</h4><ul class="insight-signal-list">${signalHtml || "<li>—</li>"}</ul></div>
+        </div>
+      </div>`;
   }
 
   function populateFilterSelects(summary) {
@@ -1365,13 +1699,8 @@
           .join("");
     }
     if (insightFilterHypothesis) {
-      const opts = ['<option value="">全部假设关系</option>'];
-      ["H1", "H2", "H3"].forEach((hid) => {
-        ["supports", "weakens", "insufficient", "irrelevant"].forEach((rel) => {
-          opts.push(`<option value="${hid}:${rel}">${HYPOTHESIS_LABELS[hid]} · ${HYPOTHESIS_RELATION_LABELS[rel]}</option>`);
-        });
-      });
-      insightFilterHypothesis.innerHTML = opts.join("");
+      insightFilterHypothesis.innerHTML = '<option value="">全部假设关系</option>';
+      insightFilterHypothesis.closest("label")?.classList.add("hidden");
     }
   }
 
@@ -1472,7 +1801,7 @@
     }
     const thead = `<tr>
       <th>评论</th><th>用户</th><th>平台</th><th>视频</th><th>目的</th><th>信号</th>
-      <th>训练证据</th><th>具体问题</th><th>视频关系</th><th>假设</th><th>新发现</th><th>适配</th><th>置信度</th>
+      <th>训练证据</th><th>具体问题</th><th>视频关系</th><th>新发现</th><th>适配</th><th>置信度</th>
     </tr>`;
     const tbody = rows
       .map((row) => {
@@ -1491,7 +1820,6 @@
           <td>${escapeHtml(analysis.actual_training_evidence || "—")}</td>
           <td>${escapeHtml((analysis.specific_problems || []).join("；") || "—")}</td>
           <td>${escapeHtml(SINGLE_VIDEO_LABELS[analysis.single_video_relation] || analysis.single_video_relation || "—")}</td>
-          <td>${escapeHtml(formatHypothesisRelations(analysis.hypothesis_relations))}</td>
           <td>${escapeHtml(formatNewSignals(analysis.new_signals))}</td>
           <td>${escapeHtml(PRODUCT_FIT_LABELS[analysis.product_fit] || analysis.product_fit || "—")}</td>
           <td>${analysis.confidence != null ? `${Math.round(analysis.confidence * 100)}%` : "—"}</td>
@@ -1507,37 +1835,66 @@
     await loadResultsLight(runId);
   }
 
-  async function createRun() {
+  async function createRun({ signal } = {}) {
     const paths = Array.from(state.selectedPaths);
     if (!paths.length) {
       insightRunStatus.textContent = "请至少选择一个评论文件";
       insightRunStatus.className = "inline-status error";
       return null;
     }
-    insightRunStatus.textContent = "准备任务中…";
+    insightRunStatus.textContent = "正在创建任务…";
     insightRunStatus.className = "inline-status loading";
+    const previousRunId = state.currentRunId;
     const created = await apiFetch("/api/analysis/runs", {
       method: "POST",
+      signal,
       body: JSON.stringify({
-        name: insightRunName?.value || "评论洞察任务",
+        name: insightRunName?.value || "评论分析",
         file_paths: paths,
         use_mock: false,
         analysis_limit: getAnalysisLimit(),
-        analysis_version: getAnalysisEngine(),
         model: getModelSettings(),
       }),
     });
     state.currentRunId = created.run_id;
     sessionStorage.setItem(RUN_ID_STORAGE, created.run_id);
-    await refreshRunDisplay(created.run_id);
-    await loadRunHistory();
     if (insightRunHistory) insightRunHistory.value = created.run_id;
+    if (created.reused) {
+      const data = await apiFetch(`/api/analysis/runs/${encodeURIComponent(created.run_id)}`, { signal });
+      state.lastProgress = data.progress || {};
+      state.lastConfig = data.config || {};
+    } else {
+      state.lastProgress = {
+        total_records: created.total_records,
+        completed: 0,
+        failed: 0,
+        status: "ready",
+      };
+      state.lastConfig = { run_id: created.run_id, file_paths: paths, name: insightRunName?.value || "评论分析" };
+    }
+    // Never keep another task's themes / research / details on screen.
+    if (
+      created.reused
+      && created.run_id === previousRunId
+      && state.lastProgress.status === "completed"
+    ) {
+      await loadResultsLight(created.run_id);
+    } else {
+      clearDerivedInsightPanels();
+      renderSummary({});
+    }
+    showLocalRunMetrics(state.lastProgress, state.lastConfig);
+    loadRunHistory();
     return created;
   }
 
-  async function runAnalysisJob(runId) {
+  async function runAnalysisJob(runId, { signal } = {}) {
+    ensureAudioContext();
+    state.analysisWasActive = true;
+    showLocalRunMetrics(state.lastProgress, state.lastConfig, { active: true });
     const result = await apiFetch(`/api/analysis/runs/${encodeURIComponent(runId)}/analyze`, {
       method: "POST",
+      signal,
       body: JSON.stringify(getAnalyzeBody()),
     });
     startPolling(runId);
@@ -1557,13 +1914,18 @@
       await selectRunFromHistory(historyRunId);
     }
 
+    state.analysisAbortController = new AbortController();
+    const signal = state.analysisAbortController.signal;
+    state.analysisBusy = true;
+    updateStopButton(isActiveRunStatus(state.currentRunStatus));
     btnInsightStartRun.disabled = true;
     try {
       const latestProgress = state.lastProgress || {};
-      if (state.currentRunId && canContinueRun(latestProgress)) {
-        insightRunStatus.textContent = "继续分析中…";
+      const latestConfig = state.lastConfig || {};
+      if (state.currentRunId && canContinueRun(latestProgress, latestConfig)) {
+        insightRunStatus.textContent = "正在启动分析…";
         insightRunStatus.className = "inline-status loading";
-        await runAnalysisJob(state.currentRunId);
+        await runAnalysisJob(state.currentRunId, { signal });
         return;
       }
 
@@ -1574,15 +1936,30 @@
         return;
       }
 
-      const created = await createRun();
+      insightRunStatus.textContent = "正在创建任务并启动分析…";
+      insightRunStatus.className = "inline-status loading";
+      const created = await createRun({ signal });
       if (!created) return;
-      insightRunStatus.textContent = `已创建任务（${created.total_records} 条），正在启动分析…`;
-      await runAnalysisJob(created.run_id);
+      if (created.reused) {
+        insightRunStatus.textContent = `复用已有任务（${created.total_records} 条），正在启动分析…`;
+      }
+      await runAnalysisJob(created.run_id, { signal });
     } catch (err) {
+      if (err.name === "AbortError") {
+        insightRunStatus.textContent = "已取消启动";
+        insightRunStatus.className = "inline-status success";
+        return;
+      }
       insightRunStatus.textContent = `失败：${err.message}`;
       insightRunStatus.className = "inline-status error";
     } finally {
-      updateStartButtonLabel(state.lastProgress || {}, isActiveRunStatus(state.currentRunStatus));
+      state.analysisBusy = false;
+      state.analysisAbortController = null;
+      updateStartButtonLabel(
+        state.lastProgress || {},
+        isActiveRunStatus(state.currentRunStatus),
+        state.lastConfig || {}
+      );
     }
   }
 
@@ -1609,6 +1986,15 @@
   }
 
   async function stopAnalyze() {
+    if (state.analysisAbortController) {
+      state.analysisAbortController.abort();
+      state.analysisBusy = false;
+      state.analysisAbortController = null;
+      insightRunStatus.textContent = "已取消启动";
+      insightRunStatus.className = "inline-status success";
+      updateStartButtonLabel(state.lastProgress || {}, false, state.lastConfig || {});
+      return;
+    }
     if (!state.currentRunId) return;
     btnInsightStopRun.disabled = true;
     insightRunStatus.textContent = "正在请求停止分析…";
@@ -1623,19 +2009,27 @@
       if (state.lastProgress) {
         state.lastProgress = { ...state.lastProgress, status: nextStatus };
       }
-      updateStartButtonLabel(state.lastProgress || { status: nextStatus }, true);
+      updateStartButtonLabel(state.lastProgress || { status: nextStatus }, true, state.lastConfig || {});
       if (insightStatus) insightStatus.textContent = statusLabel(nextStatus);
       insightRunStatus.textContent =
         nextStatus === "cancelled"
           ? result.message || "分析已停止"
-          : "已请求停止，等待当前条完成…";
+          : result.message || "已请求停止，正在取消当前批次请求…";
       insightRunStatus.className = nextStatus === "cancelled" ? "inline-status success" : "inline-status loading";
       // Keep polling until backend leaves cancelling/running — do not stopPolling() here.
       startPolling(state.currentRunId);
       await pollRunProgress(state.currentRunId, { quiet: false, shouldLoadResults: true });
       if (!isActiveRunStatus(state.currentRunStatus)) {
-        insightRunStatus.textContent = "分析已停止";
+        insightRunStatus.textContent = result.message || "分析已停止";
         insightRunStatus.className = "inline-status success";
+        updateStopButton(false);
+      } else if (!result.force) {
+        insightRunStatus.textContent = "仍在停止中…可再点一次「停止分析」强制结束";
+        insightRunStatus.className = "inline-status loading";
+        btnInsightStopRun.disabled = false;
+        btnInsightStopRun.textContent = "强制停止";
+      } else {
+        updateStopButton(isActiveRunStatus(state.currentRunStatus));
       }
     } catch (err) {
       insightRunStatus.textContent = `停止失败：${err.message}`;
@@ -1653,6 +2047,7 @@
   btnInsightVerifyModel?.addEventListener("click", verifyModelConnection);
   btnInsightStartRun?.addEventListener("click", startAnalysis);
   btnInsightClusterThemes?.addEventListener("click", clusterThemes);
+  btnInsightCancelClusterThemes?.addEventListener("click", cancelThemeCluster);
   insightRunHistory?.addEventListener("change", (event) => {
     const runId = event.target.value;
     if (runId) selectRunFromHistory(runId);
@@ -1703,12 +2098,10 @@
   btnInsightStopRun?.addEventListener("click", stopAnalyze);
 
   loadStoredApiKey();
-  loadRunHistory();
-  const savedRunId = sessionStorage.getItem(RUN_ID_STORAGE);
-  if (savedRunId) {
-    state.currentRunId = savedRunId;
-    pollRunProgress(savedRunId, { quiet: true, shouldLoadResults: true }).catch(() => {});
-  }
+  loadRunHistory().then(() => {
+    const savedRunId = sessionStorage.getItem(RUN_ID_STORAGE);
+    if (savedRunId) selectRunFromHistory(savedRunId);
+  });
 
   window.VCBridge = {
     apiFetch,
