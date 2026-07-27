@@ -6,23 +6,21 @@ from __future__ import annotations
 import json
 from typing import List
 
-from .prompts import HYPOTHESIS_SHORT
 from .theme_schemas import RawSignalItem
 
-_HYP_LINE = " | ".join(f"{k} {v}" for k, v in HYPOTHESIS_SHORT.items())
+ROUND1_SYSTEM = """将 new_signals 归并为候选主题。
 
-ROUND1_SYSTEM = f"""将 new_signals 归并为候选主题。假设参考：{_HYP_LINE}
+规则：只用输入 id；included_signal_ids 必须原样复制输入 id 字符串（如 "s0001"），勿改成数字、勿省略 s 前缀；勿编造；勿强行合并不同问题；勿输出评论数。
+每主题 included_signal_ids 最多 12 个代表性 id（同义合并后取样即可，勿堆砌）；单批候选主题建议 ≤8 个。
+theme_name≤20字；theme_type 必填（可用 new_problem/new_barrier/new_scene/other 等）；definition/implication≤60字；
+relation: supports_existing|extends_existing|weakens_existing|unrelated_notable（与已有研究主题的关系类型）；confidence 0~1。
+输出JSON：{"candidate_themes":[{"theme_name":"","theme_type":"other","definition":"","included_signal_ids":["s0001"],"relation_to_existing_hypotheses":"extends_existing","implication":"","confidence":0.0}]}"""
 
-规则：只用输入 signal_id；勿编造；勿强行合并不同问题；勿输出评论数。
-theme_name≤20字；definition/implication≤60字；
-relation: supports_existing|extends_existing|weakens_existing|unrelated_notable；confidence 0~1。
-输出JSON：{{"candidate_themes":[{{"theme_name":"","theme_type":"","definition":"","included_signal_ids":[],"relation_to_existing_hypotheses":"extends_existing","implication":"","confidence":0.0}}]}}"""
+ROUND2_SYSTEM = """合并高度相似的候选开放主题。
 
-ROUND2_SYSTEM = f"""合并高度相似的候选开放主题。假设参考：{_HYP_LINE}
-
-规则：included_signal_ids 仅来自输入；措辞不同但义同则合并；本质不同勿合并。
-relation: supports_existing|extends_existing|weakens_existing|unrelated_notable。
-输出JSON：{{"themes":[{{"theme_name":"","theme_type":"","definition":"","included_signal_ids":[],"relation_to_existing_hypotheses":"extends_existing","implication":"","confidence":0.0}}]}}"""
+规则：included_signal_ids 仅填写输入候选 id（如 "c0001"），勿改成数字；措辞不同但义同则合并；本质不同勿合并。
+theme_type 必填；relation: supports_existing|extends_existing|weakens_existing|unrelated_notable。
+输出JSON：{"themes":[{"theme_name":"","theme_type":"other","definition":"","included_signal_ids":["c0001"],"relation_to_existing_hypotheses":"extends_existing","implication":"","confidence":0.0}]}"""
 
 
 def _compact_json(payload) -> str:
@@ -52,15 +50,14 @@ def build_round2_user_message(candidates: List[dict]) -> str:
     for item in candidates:
         slim.append(
             {
+                "id": item.get("candidate_id", ""),
                 "theme_name": item.get("theme_name", ""),
                 "theme_type": item.get("theme_type", ""),
                 "definition": item.get("definition", ""),
-                "included_signal_ids": item.get("included_signal_ids") or [],
+                "n": item.get("signal_count", 0),
                 "relation_to_existing_hypotheses": item.get(
                     "relation_to_existing_hypotheses", "extends_existing"
                 ),
-                "implication": (item.get("implication") or "")[:80],
-                "confidence": item.get("confidence", 0),
             }
         )
     return "合并候选主题：\n" + _compact_json(slim)

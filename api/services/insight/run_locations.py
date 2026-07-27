@@ -6,8 +6,9 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from typing import Set
 
-from .paths import INSIGHT_SUBDIR
+from .paths import DATA_DIR, INSIGHT_SUBDIR
 from .schemas import RunConfig
 
 
@@ -58,12 +59,34 @@ def csv_parent_dirs(config: RunConfig) -> list[Path]:
 
 
 def csv_parent_dir(config: RunConfig) -> Path:
-    """Primary CSV parent (first file); used for .insight/ storage."""
+    """Primary CSV parent (first file)."""
     return csv_parent_dirs(config)[0]
 
 
-def relative_storage_dir(config: RunConfig) -> str:
+def is_multi_video_config(config: RunConfig) -> bool:
+    return len(csv_parent_dirs(config)) > 1
+
+
+def canonical_storage_rel(config: RunConfig) -> str:
+    if is_multi_video_config(config):
+        return f".insight_runs/{config.run_id}"
     return (csv_parent_dir(config) / INSIGHT_SUBDIR / config.run_id).relative_to(_data_dir()).as_posix()
+
+
+def source_files_for_parent(config: RunConfig, parent: Path) -> Set[str]:
+    files: Set[str] = set()
+    for rel in config.file_paths:
+        try:
+            csv_parent = resolve_under_data(rel).parent.resolve()
+        except ValueError:
+            csv_parent = (_data_dir() / rel).parent.resolve()
+        if csv_parent == parent.resolve():
+            files.add(rel)
+    return files
+
+
+def relative_storage_dir(config: RunConfig) -> str:
+    return canonical_storage_rel(config)
 
 
 def run_dir_for_id(run_id: str, index: dict[str, str] | None = None) -> Path:
@@ -100,8 +123,43 @@ def register_run(config: RunConfig) -> None:
     save_run_index(index)
 
 
+def _normalize_file_paths(file_paths: list[str]) -> Set[str]:
+    return {p.strip() for p in file_paths if p and p.strip()}
+
+
+def find_resumable_run(file_paths: list[str]) -> str | None:
+    """Return an incomplete run with the same source files (prefer canonical id without suffix)."""
+    target = _normalize_file_paths(file_paths)
+    if not target:
+        return None
+    from .storage import load_config, load_progress, list_runs
+
+    candidates: list[str] = []
+    for item in list_runs():
+        run_id = str(item.get("run_id") or "")
+        if not run_id:
+            continue
+        try:
+            config = load_config(run_id)
+            progress = load_progress(run_id)
+        except (FileNotFoundError, OSError, ValueError):
+            continue
+        if _normalize_file_paths(list(config.file_paths)) != target:
+            continue
+        if progress.completed >= progress.total_records > 0:
+            continue
+        if progress.status == "completed" and not (progress.last_error or "").startswith("研究阶段"):
+            continue
+        candidates.append(run_id)
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda rid: (("_" in rid and rid.rsplit("_", 1)[-1].isdigit()), rid))[0]
+
+
 def run_exists_in_csv_dir(file_paths: list[str], candidate: str) -> bool:
     if (_legacy_runs_root() / candidate).exists():
+        return True
+    if (_data_dir() / ".insight_runs" / candidate).exists():
         return True
     if not file_paths:
         return False
@@ -111,7 +169,8 @@ def run_exists_in_csv_dir(file_paths: list[str], candidate: str) -> bool:
             csv_dir = resolve_under_data(rel).parent
         except ValueError:
             csv_dir = (_data_dir() / rel).parent
-        if (csv_dir / INSIGHT_SUBDIR / candidate).exists():
+        partition = csv_dir / INSIGHT_SUBDIR / candidate
+        if partition.exists() and not partition.is_symlink():
             return True
     return False
 
@@ -121,10 +180,15 @@ def safe_export_stem(name: str) -> str:
     return text[:60] or "分析"
 
 
+def export_stem_for_parent(parent: Path) -> str:
+    """Use video folder name + 评论分析 for exported artifact filenames."""
+    return f"{safe_export_stem(parent.name)}_评论分析"
+
+
 def export_artifact_paths(config: RunConfig) -> dict[str, Path]:
     """Primary export paths (first CSV parent). Multi-dir copies use export_artifact_targets."""
-    stem = safe_export_stem(config.name)
     parent = csv_parent_dir(config)
+    stem = export_stem_for_parent(parent)
     return {
         "results_csv": parent / f"{stem}_分析结果.csv",
         "report_md": parent / f"{stem}_洞察报告.md",
@@ -135,9 +199,9 @@ def export_artifact_paths(config: RunConfig) -> dict[str, Path]:
 
 def export_artifact_targets(config: RunConfig) -> list[dict[str, Path]]:
     """Export path sets for every unique CSV parent directory."""
-    stem = safe_export_stem(config.name)
     targets: list[dict[str, Path]] = []
     for parent in csv_parent_dirs(config):
+        stem = export_stem_for_parent(parent)
         targets.append(
             {
                 "results_csv": parent / f"{stem}_分析结果.csv",

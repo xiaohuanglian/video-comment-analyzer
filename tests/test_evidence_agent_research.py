@@ -14,6 +14,9 @@ from api.services.insight.evidence_schemas import (
     ReviewIssueType,
 )
 from api.services.insight.research_agent import (
+    _alias_research_cluster_refs,
+    _expand_research_ref_aliases,
+    build_research_clusters,
     compute_dataset_summary,
     recount_research_analysis,
     research_analysis_mock,
@@ -75,6 +78,129 @@ def test_recount_maps_numeric_indices_to_record_ids():
     h1 = next(a for a in analysis.hypothesis_assessment if a.hypothesis_id == "H1")
     assert h1.supporting_record_ids == ["r2"]
     assert h1.conclusion.value == "supported"
+
+
+def test_research_clusters_cover_evidence_across_full_dataset():
+    records = [_rec(f"r{i}", "普通互动") for i in range(121)]
+    rows = _rows(records)
+    for row in rows:
+        row["card"]["evidence_level"] = "weak"
+        row["card"]["primary_expression"] = "other"
+        row["card"]["evidence_items"] = []
+    rows[-1]["card"]["evidence_level"] = "strong"
+    rows[-1]["card"]["primary_expression"] = "help_request"
+    rows[-1]["card"]["evidence_items"] = [
+        {
+            "type": "action_gap",
+            "text": "动作无效",
+            "evidence_quote": "练了一周还是没效果",
+            "speaker_scope": "self",
+            "certainty": "high",
+            "subtype": "started_but_stopped",
+        }
+    ]
+
+    clusters = build_research_clusters(records, rows, include_members=True)
+    gap_cluster = next(cluster for cluster in clusters if cluster["type"] == "action_gap")
+    assert "r120" in gap_cluster["_record_ids"]
+    assert gap_cluster["comment_count"] == 1
+    assert gap_cluster["representative_refs"][0]["record_id"] == "r120"
+
+    draft = {
+        "themes": [
+            {
+                "theme_id": "T1",
+                "theme_name": "训练无效",
+                "cluster_ids": [gap_cluster["cluster_id"]],
+            }
+        ],
+        "hypothesis_assessment": [],
+        "opportunity_hypotheses": [],
+        "unexpected_findings": [],
+    }
+    analysis = recount_research_analysis(
+        draft,
+        known_ids={record.internal_record_id for record in records},
+        records=records,
+        card_rows=rows,
+    )
+    assert analysis.themes[0].comment_record_ids == ["r120"]
+
+
+def test_research_ref_aliases_round_trip_without_long_ids():
+    clusters = [
+        {
+            "cluster_id": "C1",
+            "label": "方向判断困难",
+            "representative_refs": [
+                {"record_id": "very/long/record:id", "evidence_item_id": "very/long/record:id::e0"}
+            ],
+        }
+    ]
+    compact, aliases = _alias_research_cluster_refs(clusters)
+    assert compact[0]["representative_ref_ids"] == ["R1"]
+    assert "very/long/record:id" not in str(compact)
+    expanded = _expand_research_ref_aliases(
+        {
+            "themes": [
+                {
+                    "theme_id": "T1",
+                    "cluster_ids": ["C1"],
+                    "representative_evidence_refs": ["R1"],
+                }
+            ],
+            "hypothesis_assessment": [
+                {
+                    "hypothesis_id": "H2",
+                    "supporting_evidence_refs": [{"r": "R1", "s": "d"}],
+                }
+            ],
+            "unexpected_findings": [
+                {"finding": "方向困难", "supporting_evidence_refs": ["R1"]}
+            ],
+        },
+        aliases,
+    )
+    assert expanded["themes"][0]["representative_evidence_refs"][0]["record_id"] == "very/long/record:id"
+    assert expanded["hypothesis_assessment"][0]["supporting_evidence_refs"][0]["strength"] == "direct"
+    assert expanded["unexpected_findings"][0]["record_ids"] == ["very/long/record:id"]
+
+
+def test_recount_coerces_counter_evidence_dicts_to_strings():
+    """LLM sometimes returns evidence-ref objects in counter_evidence note lists."""
+    records = [_rec("r1", "练一周无效果"), _rec("r2", "还行")]
+    rows = _rows(records)
+    draft = {
+        "themes": [
+            {
+                "theme_id": "T1",
+                "theme_name": "效果差",
+                "comment_record_ids": ["r1"],
+                "counter_evidence": [
+                    {"record_id": "健身类/x", "note": "练一周无效果"},
+                    "部分用户反馈有效",
+                ],
+                "current_solutions": [{"text": "自己搜替代动作"}],
+            }
+        ],
+        "hypothesis_assessment": [],
+        "opportunity_hypotheses": [
+            {
+                "opportunity_name": "训练效果追踪",
+                "counter_evidence": [{"record_id": "r2", "evidence_quote": "还行"}],
+            }
+        ],
+        "research_conclusions": [],
+        "recommended_interviews": [],
+        "recommended_experiments": [],
+        "unexpected_findings": [],
+    }
+    analysis = recount_research_analysis(
+        draft, known_ids={"r1", "r2"}, records=records, card_rows=rows
+    )
+    assert analysis.themes[0].counter_evidence == ["练一周无效果", "部分用户反馈有效"]
+    assert analysis.themes[0].current_solutions == ["自己搜替代动作"]
+    assert analysis.opportunity_hypotheses[0].counter_evidence == ["还行"]
 
 
 def test_recount_filters_unknown_ids_and_recomputes_theme_counts():

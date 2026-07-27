@@ -4,14 +4,12 @@
 from collections import Counter
 from enum import Enum
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, computed_field, field_validator
 
+from .evidence_schemas import EVIDENCE_PROMPT_VERSION
 from .pricing import DEFAULT_BASE_URL, DEFAULT_MODEL
-
-
-PROMPT_VERSION = "comment_analysis_v4"
 
 
 def coerce_boolish(value: Any) -> bool:
@@ -46,6 +44,11 @@ def summarize_error_message(message: str) -> str:
         return "未知错误"
     if is_status_only_message(text):
         return text
+    pipeline_prefix = ""
+    if text.startswith("研究阶段"):
+        pipeline_prefix = "研究阶段失败: "
+    elif text.startswith("自动导出失败"):
+        pipeline_prefix = "自动导出失败: "
     match = re.search(
         r"validation error for \w+\s+(\w+)\s+.*?\[type=(\w+)",
         text,
@@ -54,8 +57,10 @@ def summarize_error_message(message: str) -> str:
     if match:
         field, err_type = match.group(1), match.group(2)
         if field == "help_seeking" and err_type in {"bool_parsing", "bool_type"}:
-            return "LLM 字段校验失败: help_seeking 应为 true/false（模型偶发填了字符串或数组）"
-        return f"LLM 字段校验失败: {field} ({err_type})"
+            detail = "LLM 字段校验失败: help_seeking 应为 true/false（模型偶发填了字符串或数组）"
+        else:
+            detail = f"LLM 字段校验失败: {field} ({err_type})"
+        return f"{pipeline_prefix}{detail}" if pipeline_prefix else detail
     if "Extra data" in text and "JSON" in text:
         return "进度文件读写冲突（已可自动恢复，请重试）"
     if len(text) > 220:
@@ -165,44 +170,6 @@ class CommentAnalysisResult(BaseModel):
     evidence_quotes: List[str] = Field(default_factory=list)
     confidence: float = 0.0
 
-    @field_validator("confidence")
-    @classmethod
-    def clamp_confidence(cls, value: float) -> float:
-        return max(0.0, min(1.0, float(value)))
-
-    @field_validator("known_scene_matches")
-    @classmethod
-    def validate_known_scenes(cls, value: List[str]) -> List[str]:
-        for scene in value:
-            if scene not in {"S1", "S2", "S3"}:
-                raise ValueError("known_scene_matches 只能是 S1、S2 或 S3")
-        return value
-
-
-class CommentAnalysisLLMOutput(BaseModel):
-    """LLM structured output (record_id assigned after response)."""
-
-    primary_intent: PrimaryIntent
-    signals: List[str] = Field(default_factory=list)
-    explicit_user_context: List[str] = Field(default_factory=list)
-    exercise_mentions: List[str] = Field(default_factory=list)
-    specific_problems: List[str] = Field(default_factory=list)
-    actual_training_evidence: TrainingEvidence = TrainingEvidence.NONE
-    current_workarounds: List[str] = Field(default_factory=list)
-    help_seeking: bool = False
-    behavior_costs: List[str] = Field(default_factory=list)
-    training_impact: TrainingImpact = TrainingImpact.NONE
-    single_video_relation: SingleVideoRelation = SingleVideoRelation.UNCLEAR
-    single_video_limitation_summary: str = ""
-    hypothesis_relations: List[HypothesisRelation] = Field(default_factory=list)
-    known_scene_matches: List[str] = Field(default_factory=list)
-    new_signals: List[NewSignal] = Field(default_factory=list)
-    potential_needs: List[str] = Field(default_factory=list)
-    product_fit: ProductFit = ProductFit.UNCLEAR
-    product_fit_reason: str = ""
-    evidence_quotes: List[str] = Field(default_factory=list)
-    confidence: float = 0.0
-
     @field_validator("help_seeking", mode="before")
     @classmethod
     def coerce_help_seeking(cls, value: Any) -> bool:
@@ -267,7 +234,7 @@ class RunConfig(BaseModel):
     name: str
     file_paths: List[str]
     field_mapping: FieldMapping
-    prompt_version: str = PROMPT_VERSION
+    prompt_version: str = EVIDENCE_PROMPT_VERSION
     model_name: str = DEFAULT_MODEL
     base_url: str = DEFAULT_BASE_URL
     input_price: float = 0.001
@@ -279,9 +246,7 @@ class RunConfig(BaseModel):
     created_at: str = ""
     research_targets: List[str] = Field(default_factory=list)
     storage_dir: str = ""
-    # evidence_items_v1 is the product default; legacy_per_record kept for task-level fallback
-    analysis_version: str = "evidence_items_v1"
-    analysis_mode: str = "full_llm"
+    analysis_version: Literal["evidence_items_v1"] = "evidence_items_v1"
     batch_size: int = Field(default=20, ge=1, le=50)
     concurrency: int = Field(default=8, ge=1, le=16)
     project_id: str = "kineo"
@@ -289,7 +254,19 @@ class RunConfig(BaseModel):
     project_context_compact: str = ""
     project_context: str = ""  # full context for research agent; extract uses compact
     use_llm_review: bool = False  # default: code-only structural review
-    allow_legacy_fallback: bool = True  # permit per-task analysis_version=legacy_per_record
+    # Keep legacy for existing runs until hybrid quality gates are approved.
+    themes_engine: Literal["legacy_llm_v1", "hybrid_cluster_v1"] = "legacy_llm_v1"
+    allow_legacy_theme_fallback: bool = True
+    theme_embedding_model: str = "BAAI/bge-m3"
+    theme_embedding_batch_size: int = Field(default=16, ge=1, le=64)
+    theme_embedding_device: str = "auto"
+    theme_cluster_min_samples: int = Field(default=3, ge=1, le=20)
+
+    @field_validator("analysis_version", mode="before")
+    @classmethod
+    def force_evidence_analysis_version(cls, _value: Any) -> str:
+        """Migrate old run configs to the only supported analysis engine."""
+        return "evidence_items_v1"
 
 
 class RunProgress(BaseModel):
@@ -310,6 +287,12 @@ class RunProgress(BaseModel):
     cancel_requested: bool = False
     failed_record_ids: List[str] = Field(default_factory=list)
     retry_counts: Dict[str, int] = Field(default_factory=dict)
+    # Human-readable label for the CSV/video folder currently being analyzed.
+    current_source_label: Optional[str] = None
+    current_chunk_index: int = 0
+    current_chunk_total: int = 0
+    # Cards extracted in the current chunk but not yet written to results.jsonl.
+    extracting_count: int = 0
     # record_id -> latest error message for that failed item
     failed_errors: Dict[str, str] = Field(default_factory=dict)
 
@@ -317,13 +300,22 @@ class RunProgress(BaseModel):
     @property
     def error_summary(self) -> List[Dict[str, Any]]:
         """Unique failure reasons with counts (for UI; not only the latest)."""
+        items: List[Dict[str, Any]] = []
         if self.failed_errors:
             counts = Counter(summarize_error_message(msg) for msg in self.failed_errors.values())
-            return [
+            items = [
                 {"message": message, "count": count}
                 for message, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
             ]
-        # Legacy fallback: never treat stop/budget notices as per-item failure reasons.
-        if self.last_error and self.failed > 0 and not is_status_only_message(self.last_error):
-            return [{"message": summarize_error_message(self.last_error), "count": self.failed}]
-        return []
+        elif self.last_error and self.failed > 0 and not is_status_only_message(self.last_error):
+            # Legacy fallback: never treat stop/budget notices as per-item failure reasons.
+            items = [{"message": summarize_error_message(self.last_error), "count": self.failed}]
+
+        # Pipeline-level errors (research/export) must surface even when per-item failed=0.
+        if self.last_error and (
+            self.last_error.startswith("研究阶段") or self.last_error.startswith("自动导出失败")
+        ):
+            pipeline_msg = summarize_error_message(self.last_error)
+            if not any((item.get("message") or "") == pipeline_msg for item in items):
+                items.insert(0, {"message": pipeline_msg, "count": 1})
+        return items

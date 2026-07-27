@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from urllib.parse import quote
 
@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from api.services.insight.analyzer import build_summary, run_analysis_batch
+from api.services.insight.analyzer import build_summary, reconcile_stale_progress, run_analysis_batch
 from api.services.insight.export import (
     auto_export_candidates_outreach,
     build_candidates_csv,
@@ -38,6 +38,7 @@ from api.services.insight.storage import (
     load_progress,
     load_research_analysis,
     load_results,
+    load_semantic_review,
     load_source_records,
     load_summary,
     load_themes,
@@ -49,17 +50,18 @@ from api.services.insight.storage import (
     save_config,
     save_outreach,
     save_progress,
+    save_semantic_review,
+    save_themes,
     save_trial_sample,
     sync_progress_from_results,
 )
-from api.services.insight.run_locations import run_exists_in_csv_dir
-from api.services.insight.task_runner import is_running, request_cancel, start_background
+from api.services.insight.run_locations import find_resumable_run, run_exists_in_csv_dir
+from api.services.insight.task_runner import is_running, reconcile_thread_state, request_cancel, start_background
 from api.services.insight.research_matching import parse_research_targets
 from api.services.insight.candidates import build_candidates, merge_candidate_updates
 from api.services.insight.outreach import generate_outreach_drafts, merge_outreach_update
 from api.services.insight.outreach_prompts import DEFAULT_BASE_TEMPLATE
 from api.services.insight.query_filters import paginate_candidates, paginate_results
-from api.services.insight.theme_clustering import run_theme_clustering
 from api.services.insight.trial_report import build_trial_report
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -79,7 +81,7 @@ class ModelSettings(BaseModel):
 
 
 class CreateRunRequest(BaseModel):
-    name: str = "评论洞察任务"
+    name: str = "评论分析"
     file_paths: List[str] = Field(min_length=1)
     field_mapping: Optional[FieldMapping] = None
     fixed_creator_type: Optional[str] = None
@@ -88,8 +90,6 @@ class CreateRunRequest(BaseModel):
     use_mock: bool = False
     research_targets: str = ""
     model: ModelSettings = Field(default_factory=ModelSettings)
-    # Product default is evidence_items_v1; legacy_per_record only for advanced fallback
-    analysis_version: str = "evidence_items_v1"
 
 
 class AnalyzeRequest(BaseModel):
@@ -105,6 +105,8 @@ class AnalyzeRequest(BaseModel):
 class ThemeClusterRequest(BaseModel):
     api_key: Optional[str] = None
     use_mock: Optional[bool] = None
+    background: bool = True
+    themes_engine: Optional[Literal["legacy_llm_v1", "hybrid_cluster_v1"]] = None
 
 
 class OutreachGenerateRequest(BaseModel):
@@ -204,7 +206,8 @@ async def post_estimate(body: EstimateRequest) -> Dict[str, Any]:
 @router.post("/verify-model")
 async def post_verify_model(body: VerifyModelRequest) -> Dict[str, Any]:
     """One-shot LLM connectivity check; api_key is not stored."""
-    from api.services.insight.llm_analyzer import analyze_record_llm
+    from api.services.insight.evidence_adapter import outreach_analysis_from_card
+    from api.services.insight.evidence_extractor import call_evidence_batch_llm
     from api.services.insight.schemas import RunConfig, SourceRecord
 
     pricing = normalize_model_settings(base_url=body.model.base_url, model_name=body.model.model_name)
@@ -228,14 +231,17 @@ async def post_verify_model(body: VerifyModelRequest) -> Dict[str, Any]:
         platform="bilibili",
     )
     try:
-        response = analyze_record_llm(record, config, body.api_key.strip())
-        analysis = response.analysis
+        cards, usage = call_evidence_batch_llm(
+            [record], config, body.api_key.strip()
+        )
+        card = cards[record.internal_record_id]
+        analysis = outreach_analysis_from_card(card)
         cost = estimate_cost(
-            response.usage.prompt_tokens,
-            response.usage.completion_tokens,
+            usage.prompt_tokens,
+            usage.completion_tokens,
             input_price=config.input_price,
             output_price=config.output_price,
-            prompt_cache_hit_tokens=response.usage.prompt_cache_hit_tokens,
+            prompt_cache_hit_tokens=usage.prompt_cache_hit_tokens,
             input_price_cache_hit=float(pricing["input_price_cache_hit"]),
         )
         return {
@@ -243,12 +249,12 @@ async def post_verify_model(body: VerifyModelRequest) -> Dict[str, Any]:
             "provider_label": pricing["provider_label"],
             "model_name": config.model_name,
             "model_display": pricing.get("model_display"),
-            "primary_intent": analysis.primary_intent.value if hasattr(analysis.primary_intent, "value") else analysis.primary_intent,
-            "single_video_relation": analysis.single_video_relation.value if hasattr(analysis.single_video_relation, "value") else analysis.single_video_relation,
-            "confidence": analysis.confidence,
-            "prompt_tokens": response.usage.prompt_tokens,
-            "prompt_cache_hit_tokens": response.usage.prompt_cache_hit_tokens,
-            "completion_tokens": response.usage.completion_tokens,
+            "primary_intent": analysis.get("primary_intent"),
+            "single_video_relation": analysis.get("single_video_relation"),
+            "confidence": analysis.get("confidence"),
+            "prompt_tokens": usage.prompt_tokens,
+            "prompt_cache_hit_tokens": usage.prompt_cache_hit_tokens,
+            "completion_tokens": usage.completion_tokens,
             "estimated_cost": cost,
             "currency": config.currency,
             "message": "API 连接正常，结构化输出校验通过",
@@ -262,6 +268,22 @@ async def post_verify_model(body: VerifyModelRequest) -> Dict[str, Any]:
 
 @router.post("/runs")
 async def post_create_run(body: CreateRunRequest) -> Dict[str, Any]:
+    existing_id = find_resumable_run(body.file_paths)
+    if existing_id:
+        config = load_config(existing_id)
+        progress = load_progress(existing_id)
+        config_dump = ensure_run_config(config).model_dump()
+        config_dump.pop("api_key", None)
+        pricing = resolve_pricing(config_dump.get("base_url", ""), config_dump.get("model_name", ""))
+        return {
+            "run_id": existing_id,
+            "total_records": progress.total_records,
+            "analysis_limit": config.analysis_limit,
+            "use_mock": config.use_mock,
+            "analysis_version": "evidence_items_v1",
+            "pricing": pricing,
+            "reused": True,
+        }
     try:
         records = ingest_files(
             body.file_paths,
@@ -277,12 +299,6 @@ async def post_create_run(body: CreateRunRequest) -> Dict[str, Any]:
     mapping = body.field_mapping or FieldMapping.model_validate(suggested["suggested_mapping"])
     run_id = build_run_id(body.name, exists=lambda candidate: run_exists_in_csv_dir(body.file_paths, candidate))
     pricing = normalize_model_settings(base_url=body.model.base_url, model_name=body.model.model_name)
-    version = (body.analysis_version or "evidence_items_v1").strip()
-    if version not in {"evidence_items_v1", "legacy_per_record"}:
-        raise HTTPException(
-            status_code=400,
-            detail="analysis_version 仅支持 evidence_items_v1 或 legacy_per_record",
-        )
     config = RunConfig(
         run_id=run_id,
         name=body.name,
@@ -298,8 +314,7 @@ async def post_create_run(body: CreateRunRequest) -> Dict[str, Any]:
         use_mock=body.use_mock,
         research_targets=parse_research_targets(body.research_targets),
         created_at=datetime.now(timezone.utc).isoformat(),
-        analysis_version=version,
-        allow_legacy_fallback=True,
+        analysis_version="evidence_items_v1",
     )
     create_run(config, records)
     return {
@@ -307,8 +322,9 @@ async def post_create_run(body: CreateRunRequest) -> Dict[str, Any]:
         "total_records": len(records),
         "analysis_limit": body.analysis_limit,
         "use_mock": body.use_mock,
-        "analysis_version": version,
+        "analysis_version": "evidence_items_v1",
         "pricing": pricing,
+        "reused": False,
     }
 
 
@@ -316,7 +332,22 @@ async def post_create_run(body: CreateRunRequest) -> Dict[str, Any]:
 async def get_run(run_id: str) -> Dict[str, Any]:
     try:
         config = load_config(run_id)
-        progress = sync_progress_from_results(run_id) if is_running(run_id) else load_progress(run_id)
+        reconcile_thread_state(run_id)
+        worker_alive = is_running(run_id)
+        progress = sync_progress_from_results(run_id)
+        before_status = progress.status
+        progress = reconcile_stale_progress(progress, worker_alive=worker_alive)
+        if (
+            not worker_alive
+            and progress.completed >= progress.total_records
+            and progress.failed == 0
+            and progress.status in {"paused", "ready"}
+            and not str(progress.last_error or "").startswith("研究阶段")
+        ):
+            progress.status = "completed"
+            progress.last_error = ""
+        if progress.status != before_status:
+            save_progress(run_id, progress)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="任务不存在") from exc
     summary = {}
@@ -388,11 +419,21 @@ def _run_background_analysis(
         progress = load_progress(run_id)
         progress.status = "failed"
         progress.last_error = str(exc)
+        progress.extracting_count = 0
+        progress.current_source_label = None
         save_progress(run_id, progress)
 
 
 def _start_analyze_job(run_id: str, body: AnalyzeRequest, use_mock: bool) -> Dict[str, Any]:
-    if is_running(run_id):
+    reconcile_thread_state(run_id)
+    worker_alive = is_running(run_id)
+    progress = load_progress(run_id)
+    before_status = progress.status
+    progress = reconcile_stale_progress(progress, worker_alive=worker_alive)
+    if not worker_alive and progress.status != before_status:
+        save_progress(run_id, progress)
+        worker_alive = False
+    if worker_alive:
         progress = load_progress(run_id)
         return {
             "run_id": run_id,
@@ -418,13 +459,18 @@ def _start_analyze_job(run_id: str, body: AnalyzeRequest, use_mock: bool) -> Dic
 
     if not start_background(run_id, job):
         raise HTTPException(status_code=409, detail="任务正在分析中")
+    # Worker sets status=running at start. Only mirror it while the worker is alive
+    # so a fast no-op job cannot be overwritten back to running after it finishes.
+    if is_running(run_id):
+        progress = load_progress(run_id)
+        if progress.status not in {"completed", "cancelled", "failed"}:
+            progress.status = "running"
+            save_progress(run_id, progress)
     progress = load_progress(run_id)
-    progress.status = "running"
-    save_progress(run_id, progress)
     return {
         "run_id": run_id,
         "background": True,
-        "status": "running",
+        "status": progress.status if is_running(run_id) else progress.status,
         "completed": progress.completed,
         "total_records": progress.total_records,
         "message": "分析已在后台启动，请查看下方进度",
@@ -552,26 +598,43 @@ async def post_cancel(run_id: str) -> Dict[str, Any]:
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="任务不存在") from exc
 
+    already_cancelling = progress.status == "cancelling" and progress.cancel_requested
     progress.cancel_requested = True
-    if progress.status == "running":
+    if progress.status in {"running", "cancelling"}:
         progress.status = "cancelling"
     save_progress(run_id, progress)
 
+    reconcile_thread_state(run_id)
     cancelled_in_memory = request_cancel(run_id)
-    if not cancelled_in_memory and progress.status not in {"cancelled", "completed"}:
+    worker_alive = is_running(run_id)
+
+    # Second stop click (or worker already gone): force local cancelled so UI unblocks.
+    force_local = already_cancelling or (not cancelled_in_memory and not worker_alive)
+    if force_local:
         progress = sync_progress_from_results(run_id)
         progress.status = "cancelled"
+        progress.cancel_requested = False
         progress.last_error = "用户已停止分析"
+        progress.extracting_count = 0
+        progress.current_source_label = None
         save_progress(run_id, progress)
+        worker_alive = is_running(run_id)
 
     progress = load_progress(run_id)
+    message = (
+        "已强制停止（后台若仍有残留请求会自行结束，已完成结果会保留）"
+        if force_local
+        else "已请求停止，正在取消当前批次请求…"
+    )
     return {
         "run_id": run_id,
         "status": progress.status,
         "completed": progress.completed,
         "total_records": progress.total_records,
         "cancelled_in_memory": cancelled_in_memory,
-        "message": "已请求停止分析，当前批次处理完一条后会暂停",
+        "force": force_local,
+        "worker_alive": worker_alive,
+        "message": message,
     }
 
 
@@ -654,7 +717,35 @@ async def get_themes(run_id: str) -> Dict[str, Any]:
         load_config(run_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="任务不存在") from exc
-    return load_themes(run_id).model_dump()
+    from api.services.insight.theme_job import reconcile_theme_progress, theme_job_id
+    from api.services.insight.task_runner import is_running as job_is_running
+
+    doc = load_themes(run_id).model_dump()
+    progress = reconcile_theme_progress(run_id)
+    return {
+        **doc,
+        "cluster_progress": progress,
+        "cluster_running": job_is_running(theme_job_id(run_id)),
+    }
+
+
+@router.get("/runs/{run_id}/themes/cluster-progress")
+async def get_theme_cluster_progress(run_id: str) -> Dict[str, Any]:
+    try:
+        load_config(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="任务不存在") from exc
+    from api.services.insight.theme_job import reconcile_theme_progress, theme_job_id
+    from api.services.insight.task_runner import is_running as job_is_running
+
+    job_id = theme_job_id(run_id)
+    progress = reconcile_theme_progress(run_id)
+    running = job_is_running(job_id)
+    return {
+        "run_id": run_id,
+        "progress": progress,
+        "is_running": running,
+    }
 
 
 @router.post("/runs/{run_id}/themes/cluster")
@@ -663,19 +754,93 @@ async def post_cluster_themes(run_id: str, body: ThemeClusterRequest) -> Dict[st
         config = load_config(run_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="任务不存在") from exc
+    if body.themes_engine and body.themes_engine != config.themes_engine:
+        config = config.model_copy(update={"themes_engine": body.themes_engine})
+        save_config(run_id, config)
     use_mock = config.use_mock if body.use_mock is None else body.use_mock
     if not use_mock and not (body.api_key or "").strip():
         raise HTTPException(status_code=400, detail="主题归并需要填写 API Key")
+    analysis_progress = load_progress(run_id)
+    if (
+        analysis_progress.status in {"running", "cancelling"}
+        or analysis_progress.completed < analysis_progress.total_records
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="评论分析尚未完成，无法基于不完整结果生成开放主题",
+        )
+
+    from api.services.insight.theme_job import (
+        execute_theme_cluster,
+        load_theme_progress,
+        mark_theme_cluster_starting,
+        theme_job_id,
+    )
+    from api.services.insight.task_runner import is_running as job_is_running
+    from api.services.insight.task_runner import reconcile_thread_state, start_background
+
+    job_id = theme_job_id(run_id)
+    reconcile_thread_state(job_id)
+    if job_is_running(job_id):
+        progress = load_theme_progress(run_id)
+        return {
+            "background": True,
+            "already_running": True,
+            "run_id": run_id,
+            "status": progress.get("status") or "running",
+            "progress": progress,
+            "message": "开放主题归并已在进行中",
+        }
+
+    if not body.background:
+        try:
+            return execute_theme_cluster(
+                run_id,
+                api_key=body.api_key or "",
+                use_mock=use_mock,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    api_key = body.api_key or ""
+    # Clear stale failed UI text before the background thread starts planning.
+    progress = mark_theme_cluster_starting(run_id)
+
+    def job(cancel_event) -> None:
+        try:
+            execute_theme_cluster(
+                run_id,
+                api_key=api_key,
+                use_mock=use_mock,
+                cancel_event=cancel_event,
+            )
+        except Exception:
+            # Progress file already records failure inside execute_theme_cluster.
+            pass
+
+    if not start_background(job_id, job):
+        raise HTTPException(status_code=409, detail="开放主题归并正在进行中")
+    return {
+        "background": True,
+        "run_id": run_id,
+        "status": "running",
+        "progress": progress,
+        "message": "开放主题归并已在后台启动，请查看进度",
+    }
+
+
+@router.post("/runs/{run_id}/themes/cluster-cancel")
+async def cancel_cluster_themes(run_id: str) -> Dict[str, Any]:
     try:
-        doc = run_theme_clustering(run_id, api_key=body.api_key, use_mock=use_mock)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    # Refresh markdown report so themes appear in auto-exported report
-    try:
-        build_summary(run_id)
-    except Exception:
-        pass
-    return doc.model_dump()
+        load_config(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="任务不存在") from exc
+    from api.services.insight.theme_job import theme_job_id
+    from api.services.insight.task_runner import request_cancel
+
+    if not request_cancel(theme_job_id(run_id)):
+        raise HTTPException(status_code=409, detail="当前没有可停止的开放主题归并任务")
+    return {"run_id": run_id, "status": "cancelling", "message": "将在当前批次完成后停止"}
 
 
 @router.get("/runs/{run_id}/results")
@@ -969,16 +1134,32 @@ async def get_evidence_items(
 async def get_research_report(run_id: str) -> Dict[str, Any]:
     """Readable research markdown + structured analysis for evidence path."""
     try:
-        load_config(run_id)
+        config = load_config(run_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="任务不存在") from exc
-    from api.services.insight.storage import load_research_report
-
-    markdown = load_research_report(run_id)
+    semantic = load_semantic_review(run_id)
+    themes_generated = bool(
+        getattr(load_themes(run_id), "created_at", "")
+        and semantic.get("open_themes")
+    )
+    if not themes_generated:
+        return {
+            "run_id": run_id,
+            "markdown": "",
+            "research": {},
+            "has_report": False,
+            "waiting_for_open_themes": True,
+        }
+    # Use the assembled report so newly generated open themes are visible
+    # immediately without mutating the base research_report.md artifact.
+    markdown = build_report_markdown(run_id)
     research = load_research_analysis(run_id)
+    global_review = semantic.get("global") or {}
     return {
         "run_id": run_id,
         "markdown": markdown,
         "research": research,
         "has_report": bool(markdown or research),
+        "semantic_removed_count": len(global_review.get("removed_claim_ids") or []),
+        "semantic_downgraded_count": len(global_review.get("downgraded_claim_ids") or []),
     }

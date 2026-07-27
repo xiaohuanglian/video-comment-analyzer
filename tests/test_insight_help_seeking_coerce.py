@@ -2,7 +2,7 @@
 """Coerce messy LLM help_seeking values and aggregate error reasons."""
 
 from api.services.insight.schemas import (
-    CommentAnalysisLLMOutput,
+    CommentAnalysisResult,
     PrimaryIntent,
     RunProgress,
     coerce_boolish,
@@ -23,8 +23,9 @@ def test_coerce_boolish_handles_common_llm_mistakes():
     assert coerce_boolish("0") is False
 
 
-def test_llm_output_accepts_non_bool_help_seeking():
+def test_projected_output_accepts_non_bool_help_seeking():
     payload = {
+        "record_id": "r1",
         "primary_intent": PrimaryIntent.QUESTION.value,
         "help_seeking": [],
         "hypothesis_relations": [
@@ -33,22 +34,22 @@ def test_llm_output_accepts_non_bool_help_seeking():
             {"hypothesis_id": "H3", "relation": "irrelevant", "evidence_quote": ""},
         ],
     }
-    out = CommentAnalysisLLMOutput.model_validate(payload)
+    out = CommentAnalysisResult.model_validate(payload)
     assert out.help_seeking is False
 
     payload["help_seeking"] = "question"
-    out2 = CommentAnalysisLLMOutput.model_validate(payload)
+    out2 = CommentAnalysisResult.model_validate(payload)
     assert out2.help_seeking is False
 
 
 def test_error_summary_groups_help_seeking_failures():
     msg_a = (
-        "LLM 返回 JSON 无法解析: 1 validation error for CommentAnalysisLLMOutput\n"
+        "投影结果无法解析: 1 validation error for CommentAnalysisResult\n"
         "help_seeking\n  Input should be a valid boolean, unable to interpret input "
         "[type=bool_parsing, input_value='question', input_type=str]"
     )
     msg_b = (
-        "LLM 返回 JSON 无法解析: 1 validation error for CommentAnalysisLLMOutput\n"
+        "投影结果无法解析: 1 validation error for CommentAnalysisResult\n"
         "help_seeking\n  Input should be a valid boolean [type=bool_type, input_value=[], input_type=list]"
     )
     key_a = summarize_error_message(msg_a)
@@ -75,3 +76,20 @@ def test_error_summary_ignores_stop_message_without_failed_errors():
         last_error="用户已停止分析",
     )
     assert progress.error_summary == []
+
+
+def test_error_summary_surfaces_research_stage_failure_when_failed_is_zero():
+    progress = RunProgress(
+        failed=0,
+        last_error=(
+            "研究阶段失败: 1 validation error for ResearchTheme\n"
+            "counter_evidence.0\n"
+            "  Input should be a valid string [type=string_type, input_value={'record_id': 'x'}, "
+            "input_type=dict]"
+        ),
+    )
+    summary = progress.error_summary
+    assert len(summary) == 1
+    assert summary[0]["count"] == 1
+    assert "研究阶段失败" in summary[0]["message"]
+    assert "counter_evidence" in summary[0]["message"]

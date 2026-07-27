@@ -9,12 +9,17 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from openai import AsyncOpenAI
 from pydantic import ValidationError
 
-from .evidence_adapter import finalize_card
+from .evidence_adapter import (
+    finalize_card,
+    has_explicit_paid_action,
+    has_paid_failure,
+    is_cost_saving_result,
+)
 from .evidence_cache import evidence_fingerprint, get_cached_evidence, put_cached_evidence
 from .evidence_prompts import EVIDENCE_SYSTEM_PROMPT, build_evidence_batch_user_message
 from .evidence_schemas import (
@@ -32,10 +37,12 @@ from .evidence_schemas import (
 )
 from .llm_analyzer import LlmUsage, build_openai_client, parse_usage
 from .schemas import RunConfig, SourceRecord
+from .semantic_validator import sanitize_item_semantics
 from .validation import quote_exists, source_text_pool
 
 SPLIT_SIZES = (20, 10, 5, 1)
 DEFAULT_CONCURRENCY = 8
+BATCH_WAVE_SIZE = 32
 
 
 class AdaptiveGate:
@@ -170,6 +177,8 @@ def sanitize_evidence_card(
     pool = source_text_pool(record)
     text = (record.comment_text or "").strip()
     card.evidence_items = _sanitize_items(card.evidence_items or [], pool)
+    card.evidence_items = _correct_paid_semantics(text, card.evidence_items)
+    card.evidence_items = sanitize_item_semantics(record, card.evidence_items)
 
     if not text:
         card.record_status = RecordStatus.GARBLED
@@ -206,6 +215,24 @@ def sanitize_evidence_card(
     card.contact_value_reason = ""
     card.possible_new_signal = []
     return finalize_card(card)
+
+
+def _correct_paid_semantics(text: str, items: List[EvidenceItem]) -> List[EvidenceItem]:
+    """Require actual payment and a negative outcome before paid-failure labels."""
+    corrected: List[EvidenceItem] = []
+    for item in items:
+        if item.subtype == "sought_paid_help" and not has_explicit_paid_action(text):
+            item.type = EvidenceItemType.SOLUTION
+            item.subtype = "paid_offer"
+        elif item.subtype == "paid_but_no_result" and not has_paid_failure(text):
+            if is_cost_saving_result(item.evidence_quote or text):
+                item.type = EvidenceItemType.RESULT
+                item.subtype = "saved_cost"
+            else:
+                item.type = EvidenceItemType.OPINION
+                item.subtype = ""
+        corrected.append(item)
+    return corrected
 
 
 def _enrich_missing_signal_items(record: SourceRecord, items: List[EvidenceItem]) -> List[EvidenceItem]:
@@ -358,6 +385,9 @@ def extract_evidence_card_mock(record: SourceRecord, *, finalize: bool = True) -
     if any(k in text for k in ("帮我", "求教", "怎么办")):
         expression = PrimaryExpression.HELP_REQUEST
         add(EvidenceItemType.PROBLEM, "主动求助")
+    if any(k in text for k in ("看不懂镜像", "左右腿分不清", "镜像把我搞晕", "同侧还是反侧")):
+        expression = PrimaryExpression.HELP_REQUEST
+        add(EvidenceItemType.PROBLEM, "镜像方向理解困难")
     if any(k in text for k in ("计划", "打算练", "准备练", "明天继续")):
         add(EvidenceItemType.BEHAVIOR, "计划训练", subtype="planned")
     if any(k in text for k in ("可以", "会做")) and any(k in text for k in ("倒立", "俯卧撑", "引体")):
@@ -369,6 +399,9 @@ def extract_evidence_card_mock(record: SourceRecord, *, finalize: bool = True) -
         add(EvidenceItemType.BEHAVIOR, "已尝试训练", subtype="attempted")
         if expression == PrimaryExpression.OTHER:
             expression = PrimaryExpression.RESULT_FEEDBACK
+    if any(k in text for k in ("就会了", "学会了", "看第二遍就会")):
+        add(EvidenceItemType.RESULT, "理解或学会动作")
+        expression = PrimaryExpression.RESULT_FEEDBACK
     if any(k in text for k in ("坚持", "每天", "继续练")) and any(k in text for k in ("周", "月", "年", "现在", "一周")):
         add(EvidenceItemType.BEHAVIOR, "持续训练", subtype="continued")
     if any(k in text for k in ("办卡", "健身房")):
@@ -438,7 +471,281 @@ def align_batch_cards(
     return mapped
 
 
-def parse_batch_payload(payload: dict, expected_ids: Sequence[str]) -> Dict[str, EvidenceCardLLMItem]:
+_COMPACT_STATUS = {
+    "u": "usable",
+    "o": "off_topic",
+    "m": "machine_generated",
+    "s": "spam",
+    "g": "garbled",
+    "c": "unclear",
+    "usable": "usable",
+    "off_topic": "off_topic",
+    "machine_generated": "machine_generated",
+    "spam": "spam",
+    "garbled": "garbled",
+    "unclear": "unclear",
+}
+_COMPACT_EXPRESSION = {
+    "q": "question",
+    "h": "help_request",
+    "c": "complaint",
+    "r": "result_feedback",
+    "k": "check_in",
+    "p": "praise",
+    "o": "other",
+    "question": "question",
+    "help_request": "help_request",
+    "complaint": "complaint",
+    "result_feedback": "result_feedback",
+    "check_in": "check_in",
+    "praise": "praise",
+    "other": "other",
+}
+_COMPACT_EVIDENCE_TYPE = {
+    "p": "problem",
+    "d": "barrier",
+    "b": "behavior",
+    "r": "result",
+    "c": "context",
+    "s": "solution",
+    "a": "action_gap",
+    "e": "engagement",
+    "o": "opinion",
+    "q": "quantitative",
+    "v": "behavior",
+    "problem": "problem",
+    "barrier": "barrier",
+    "behavior": "behavior",
+    "result": "result",
+    "context": "context",
+    "solution": "solution",
+    "action_gap": "action_gap",
+    "engagement": "engagement",
+    "opinion": "opinion",
+    "quantitative": "quantitative",
+}
+_COMPACT_SCOPE = {
+    "s": "self",
+    "g": "general_observation",
+    "o": "other_user",
+    "u": "unclear",
+    "self": "self",
+    "general_observation": "general_observation",
+    "other_user": "other_user",
+    "unclear": "unclear",
+}
+_COMPACT_CERTAINTY = {
+    "h": "high",
+    "m": "medium",
+    "l": "low",
+    "high": "high",
+    "medium": "medium",
+    "low": "low",
+}
+_COMPACT_SUBTYPE = {
+    "behavior": {
+        "a": "attempted",
+        "c": "completed_once",
+        "n": "continued",
+        "p": "planned",
+        "x": "stopped",
+        "f": "sought_paid_help",
+        "y": "self_reported_ability",
+    },
+    "action_gap": {
+        "s": "saved_but_not_started",
+        "w": "watched_but_not_practiced",
+        "f": "paid_but_no_result",
+    },
+}
+_EVIDENCE_PRIORITY = {
+    "problem": 0,
+    "barrier": 0,
+    "behavior": 1,
+    "action_gap": 2,
+    "result": 3,
+    "quantitative": 5,
+    "solution": 6,
+    "context": 7,
+    "opinion": 8,
+    "engagement": 9,
+}
+
+
+def _compact_enum(mapping: Dict[str, str], value: Any, field_name: str) -> str:
+    key = str(value or "").strip()
+    if key not in mapping:
+        raise ValueError(f"非法紧凑枚举 {field_name}: {key}")
+    return mapping[key]
+
+
+def _resolve_status_expression(status_raw: Any, expression_raw: Any) -> tuple[str, str]:
+    """Resolve compact s/x, tolerating common model swaps (e.g. status=k/q for expression).
+
+    Note: codes `o`/`c` exist in both maps (off_topic/other, unclear/complaint).
+    Prefer positional meaning unless the status slot is unambiguously an expression code.
+    """
+    s_key = str(status_raw or "").strip().lower()
+    x_key = str(expression_raw or "").strip().lower()
+    # Models sometimes emit full words or accidental punctuation.
+    s_key = s_key.strip("\"'` ")
+    x_key = x_key.strip("\"'` ")
+    s_as_status = s_key in _COMPACT_STATUS
+    s_as_expr = s_key in _COMPACT_EXPRESSION
+    x_as_status = x_key in _COMPACT_STATUS
+    x_as_expr = x_key in _COMPACT_EXPRESSION
+
+    if s_as_status and x_as_expr:
+        return _COMPACT_STATUS[s_key], _COMPACT_EXPRESSION[x_key]
+    # x is unambiguously a status code → treat as swapped s/x.
+    if s_as_expr and x_as_status and not x_as_expr:
+        return _COMPACT_STATUS[x_key], _COMPACT_EXPRESSION[s_key]
+    # status slot is unambiguously an expression code (common: k=check_in, q=question).
+    if s_as_expr and not s_as_status:
+        if x_as_expr:
+            if x_key in {"o", "other"} and s_key not in {"o", "other"}:
+                return "usable", _COMPACT_EXPRESSION[s_key]
+            return "usable", _COMPACT_EXPRESSION[x_key]
+        if not x_key:
+            return "usable", _COMPACT_EXPRESSION[s_key]
+        # Unknown expression slot: keep leaked expression, default usable.
+        return "usable", _COMPACT_EXPRESSION[s_key]
+    if s_as_status:
+        # Status ok but expression unknown → keep status, default other.
+        return _COMPACT_STATUS[s_key], "other"
+    # Last resort: do not fail the whole batch for a single bad status code.
+    if s_as_expr:
+        return "usable", _COMPACT_EXPRESSION[s_key]
+    if x_as_expr:
+        return "usable", _COMPACT_EXPRESSION[x_key]
+    return "unclear", "other"
+
+
+def _limit_compact_items(items: List[dict]) -> List[dict]:
+    """Default to two items; retain 3–4 only for explicitly complex evidence."""
+    deduped: List[dict] = []
+    seen_quotes: Set[str] = set()
+    for item in sorted(items, key=lambda row: _EVIDENCE_PRIORITY.get(str(row.get("type")), 99)):
+        quote = str(item.get("evidence_quote") or "")
+        if not quote or quote in seen_quotes:
+            continue
+        seen_quotes.add(quote)
+        deduped.append(item)
+    if len(deduped) <= 2:
+        return deduped
+
+    types = {str(item.get("type") or "") for item in deduped}
+    subtypes = {str(item.get("subtype") or "") for item in deduped}
+    allow_extended = (
+        {"problem", "behavior", "result"}.issubset(types)
+        or ("sought_paid_help" in subtypes and "paid_but_no_result" in subtypes)
+        or ("quantitative" in types and bool(types & {"problem", "barrier"}))
+        or len(types) >= 4
+    )
+    return deduped[:4] if allow_extended else deduped[:2]
+
+
+def _parse_compact_payload(
+    payload: Any,
+    expected_ids: Sequence[str],
+) -> Dict[str, EvidenceCardLLMItem]:
+    rows = payload if isinstance(payload, list) else payload.get("r") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("紧凑输出必须是数组或含 r 数组的对象")
+
+    mapped: Dict[str, EvidenceCardLLMItem] = {}
+    for raw in rows:
+        if isinstance(raw, list):
+            if len(raw) == 3:
+                raw_index, status_expression, raw_evidence = raw
+                status_expression = str(status_expression or "").strip()
+                # Tolerate single expression code in sx slot: "k" → usable+check_in.
+                if len(status_expression) == 1 and status_expression in _COMPACT_EXPRESSION:
+                    normalized = {
+                        "i": raw_index,
+                        "s": "u",
+                        "x": status_expression,
+                        "e": raw_evidence,
+                    }
+                elif len(status_expression) != 2:
+                    raise ValueError(f"sx 必须为两个短枚举: {status_expression}")
+                else:
+                    normalized = {
+                        "i": raw_index,
+                        "s": status_expression[0],
+                        "x": status_expression[1],
+                        "e": raw_evidence,
+                    }
+            elif len(raw) == 4:
+                raw_index, status, expression, raw_evidence = raw
+                normalized = {"i": raw_index, "s": status, "x": expression, "e": raw_evidence}
+            else:
+                raise ValueError("紧凑输出项数组必须为 [i,sx,e] 或 [i,s,x,e]")
+        elif isinstance(raw, dict):
+            normalized = dict(raw)
+            status_expression = str(normalized.get("sx") or "")
+            if status_expression and len(status_expression) == 2:
+                normalized.setdefault("s", status_expression[0])
+                normalized.setdefault("x", status_expression[1])
+        else:
+            raise ValueError("紧凑输出项必须是对象或三元素数组")
+        try:
+            index = int(normalized.get("i"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"非法批次短编号: {normalized.get('i')}") from exc
+        if index < 1 or index > len(expected_ids):
+            raise ValueError(f"批次短编号越界: {index}")
+        record_id = expected_ids[index - 1]
+        if record_id in mapped:
+            raise ValueError(f"输出含重复短编号: {index}")
+
+        evidence_items: List[dict] = []
+        compact_items = normalized.get("e") or []
+        if not isinstance(compact_items, list):
+            raise ValueError(f"e 必须是数组: i={index}")
+        if len(compact_items) > 4:
+            raise ValueError(f"单条证据项超过 4 个: i={index}")
+        for compact in compact_items:
+            if not isinstance(compact, list) or len(compact) != 5:
+                raise ValueError(f"证据项必须为五元素数组: i={index}")
+            item_type, subtype, scope, certainty, quote = compact
+            quote_text = str(quote or "").strip()
+            if not quote_text:
+                continue
+            full_type = _compact_enum(_COMPACT_EVIDENCE_TYPE, item_type, "type")
+            raw_subtype = str(subtype or "").strip()
+            full_subtype = _COMPACT_SUBTYPE.get(full_type, {}).get(raw_subtype, raw_subtype)
+            evidence_items.append(
+                {
+                    "type": full_type,
+                    "subtype": full_subtype,
+                    "speaker_scope": _compact_enum(_COMPACT_SCOPE, scope, "scope"),
+                    "certainty": _compact_enum(_COMPACT_CERTAINTY, certainty, "certainty"),
+                    "text": quote_text,
+                    "evidence_quote": quote_text,
+                }
+            )
+        evidence_items = _limit_compact_items(evidence_items)
+        record_status, primary_expression = _resolve_status_expression(
+            normalized.get("s"), normalized.get("x")
+        )
+        mapped[record_id] = EvidenceCardLLMItem.model_validate(
+            {
+                "record_id": record_id,
+                "record_status": record_status,
+                "primary_expression": primary_expression,
+                "evidence_items": evidence_items,
+            }
+        )
+    return mapped
+
+
+def parse_batch_payload(payload: Any, expected_ids: Sequence[str]) -> Dict[str, EvidenceCardLLMItem]:
+    if isinstance(payload, list) or (isinstance(payload, dict) and "r" in payload):
+        return _parse_compact_payload(payload, expected_ids)
+    if not isinstance(payload, dict):
+        raise ValueError("批次输出必须是 JSON 对象或数组")
+    # Backward-compatible reader for previously recorded fixtures/responses.
     if "cards" not in payload and isinstance(payload.get("results"), list):
         payload = {"cards": payload["results"]}
     batch = EvidenceBatchLLMOutput.model_validate(payload)
@@ -487,6 +794,8 @@ def call_evidence_batch_llm(
             messages=messages,
             response_format={"type": "json_object"},
             temperature=0.2,
+            max_tokens=5000,
+            extra_body={"thinking": {"type": "disabled"}},
         )
         usage = parse_usage(getattr(completion, "usage", None))
         usage_total.prompt_tokens += usage.prompt_tokens
@@ -509,8 +818,8 @@ def call_evidence_batch_llm(
                         "role": "user",
                         "content": (
                             f"上次输出无法对齐（{type(exc).__name__}: {exc}）。"
-                            f"请返回含 cards 数组的 JSON，且恰好覆盖这些 record_id："
-                            f"{json.dumps(expected_ids, ensure_ascii=False)}"
+                            f"请返回紧凑 JSON 的 r 数组，恰好覆盖短编号 1—{len(expected_ids)}；"
+                            "不要返回完整 record_id。"
                         ),
                     }
                 ]
@@ -529,7 +838,12 @@ async def call_evidence_batch_llm_async(
         return {}, LlmUsage()
     expected_ids = [r.internal_record_id for r in records]
     owns_client = client is None
-    llm = client or AsyncOpenAI(api_key=api_key, base_url=(config.base_url or None) or None)
+    llm = client or AsyncOpenAI(
+        api_key=api_key,
+        base_url=(config.base_url or None) or None,
+        timeout=90.0,
+        max_retries=0,
+    )
     compact = getattr(config, "project_context_compact", "") or ""
     messages = [
         {"role": "system", "content": EVIDENCE_SYSTEM_PROMPT},
@@ -550,6 +864,8 @@ async def call_evidence_batch_llm_async(
                         messages=messages,
                         response_format={"type": "json_object"},
                         temperature=0.2,
+                        max_tokens=5000,
+                        extra_body={"thinking": {"type": "disabled"}},
                     )
                     break
                 except Exception as rate_exc:
@@ -586,8 +902,8 @@ async def call_evidence_batch_llm_async(
                             "role": "user",
                             "content": (
                                 f"上次输出无法对齐（{type(exc).__name__}: {exc}）。"
-                                f"请返回含 cards 的 JSON，覆盖："
-                                f"{json.dumps(expected_ids, ensure_ascii=False)}"
+                                f"请返回紧凑 JSON 的 r 数组，覆盖短编号 1—{len(expected_ids)}；"
+                                "不要返回完整 record_id。"
                             ),
                         }
                     ]
@@ -635,6 +951,8 @@ async def _extract_batches_concurrent(
     concurrency: int,
     stats: BatchExtractStats,
     call_fn=None,
+    cancel_check: Optional[Callable[[], bool]] = None,
+    on_wave_complete: Optional[Callable[[BatchExtractStats], None]] = None,
 ) -> Dict[str, EvidenceCard]:
     done: Dict[str, EvidenceCard] = {}
     gate = AdaptiveGate(max(1, concurrency), maximum=16)
@@ -644,7 +962,12 @@ async def _extract_batches_concurrent(
     lock = asyncio.Lock()
     client: Optional[AsyncOpenAI] = None
     if not use_mock and config is not None:
-        client = AsyncOpenAI(api_key=api_key, base_url=(config.base_url or None) or None)
+        client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=(config.base_url or None) or None,
+            timeout=90.0,
+            max_retries=0,
+        )
 
     def _fp(record: SourceRecord) -> str:
         return evidence_fingerprint(
@@ -656,8 +979,12 @@ async def _extract_batches_concurrent(
 
     async def one_batch(chunk: List[SourceRecord]) -> None:
         nonlocal adaptive, success_streak, fail_streak
+        if cancel_check and cancel_check():
+            return
         need_llm: List[SourceRecord] = []
         for record in chunk:
+            if cancel_check and cancel_check():
+                return
             short = _short_circuit_card(record)
             if short is not None:
                 async with lock:
@@ -681,6 +1008,8 @@ async def _extract_batches_concurrent(
             return
 
         async with gate:
+            if cancel_check and cancel_check():
+                return
             started = time.perf_counter()
             try:
                 if use_mock:
@@ -726,6 +1055,16 @@ async def _extract_batches_concurrent(
             except Exception as exc:
                 msg = str(exc).lower()
                 is_429 = "429" in msg or "rate limit" in msg or "rate_limit" in msg
+                is_connection = (
+                    "connection" in msg
+                    or "timeout" in msg
+                    or "timed out" in msg
+                    or "temporarily unavailable" in msg
+                    or "server disconnected" in msg
+                )
+                is_format_error = isinstance(
+                    exc, (json.JSONDecodeError, ValidationError, ValueError)
+                )
                 drop = False
                 async with lock:
                     stats.format_failures += 1
@@ -737,8 +1076,28 @@ async def _extract_batches_concurrent(
                         drop = True
                 if drop:
                     await gate.set_limit(adaptive)
-                if is_429:
+                if is_429 or is_connection:
                     await asyncio.sleep(2.0)
+                # Only treat structural shape errors as systemic; enum typos like
+                # status=k (check_in leaked into s) should split/retry.
+                is_systemic_protocol_error = (
+                    "sx 必须" in str(exc) or "紧凑输出项数组必须" in str(exc)
+                )
+                # Transient network errors: split before failing the whole batch.
+                if is_connection and len(need_llm) > 1:
+                    async with lock:
+                        stats.splits += 1
+                    next_size = max(1, len(need_llm) // 2)
+                    for i in range(0, len(need_llm), next_size):
+                        await one_batch(need_llm[i : i + next_size])
+                    return
+                if not is_format_error or is_systemic_protocol_error:
+                    for record in need_llm:
+                        async with lock:
+                            stats.failed += 1
+                            stats.failed_ids.append(record.internal_record_id)
+                            stats.failed_errors[record.internal_record_id] = str(exc)
+                    return
                 if len(need_llm) <= 1:
                     for record in need_llm:
                         async with lock:
@@ -753,7 +1112,26 @@ async def _extract_batches_concurrent(
                     await one_batch(need_llm[i : i + next_size])
 
     try:
-        await asyncio.gather(*(one_batch(b) for b in batches))
+        for wave_start in range(0, len(batches), BATCH_WAVE_SIZE):
+            if cancel_check and cancel_check():
+                break
+            wave = batches[wave_start : wave_start + BATCH_WAVE_SIZE]
+            tasks = [asyncio.create_task(one_batch(batch)) for batch in wave]
+            pending: set[asyncio.Task] = set(tasks)
+            while pending:
+                if cancel_check and cancel_check():
+                    for task in pending:
+                        task.cancel()
+                    await asyncio.gather(*pending, return_exceptions=True)
+                    pending.clear()
+                    break
+                _done, pending = await asyncio.wait(
+                    pending, timeout=0.5, return_when=asyncio.FIRST_COMPLETED
+                )
+            if cancel_check and cancel_check():
+                break
+            if on_wave_complete:
+                on_wave_complete(stats)
     finally:
         if client is not None:
             await client.close()
@@ -772,6 +1150,8 @@ def extract_batch_with_split(
     batch_size: int = 20,
     stats: Optional[BatchExtractStats] = None,
     concurrency: Optional[int] = None,
+    cancel_check: Optional[Callable[[], bool]] = None,
+    on_wave_complete: Optional[Callable[[BatchExtractStats], None]] = None,
 ) -> BatchExtractResult:
     """Extract with concurrent micro-batches; split on failure."""
     stats = stats or BatchExtractStats()
@@ -818,6 +1198,8 @@ def extract_batch_with_split(
                 concurrency=conc,
                 stats=stats,
                 call_fn=call_fn,
+                cancel_check=cancel_check,
+                on_wave_complete=on_wave_complete,
             )
         )
         ordered = [done_cards[r.internal_record_id] for r in records if r.internal_record_id in done_cards]
@@ -962,6 +1344,8 @@ def run_evidence_extraction(
     skip_ids: Optional[Set[str]] = None,
     call_fn=None,
     concurrency: Optional[int] = None,
+    cancel_check: Optional[Callable[[], bool]] = None,
+    on_wave_complete: Optional[Callable[[BatchExtractStats], None]] = None,
 ) -> BatchExtractResult:
     skip = skip_ids or set()
     pending = [r for r in records if r.internal_record_id not in skip]
@@ -973,6 +1357,8 @@ def run_evidence_extraction(
         batch_size=batch_size,
         call_fn=call_fn,
         concurrency=concurrency,
+        cancel_check=cancel_check,
+        on_wave_complete=on_wave_complete,
     )
 
 

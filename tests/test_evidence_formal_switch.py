@@ -15,7 +15,6 @@ from api.services.insight.evidence_extractor import (
 )
 from api.services.insight.evidence_schemas import (
     ANALYSIS_VERSION_EVIDENCE,
-    ANALYSIS_VERSION_LEGACY,
     EvidenceCard,
     EvidenceItem,
     EvidenceItemType,
@@ -24,7 +23,10 @@ from api.services.insight.evidence_schemas import (
     RecordStatus,
     SpeakerScope,
 )
-from api.services.insight.readable_report import build_readable_report
+from api.services.insight.readable_report import (
+    _finding_has_required_evidence,
+    build_readable_report,
+)
 from api.services.insight.research_agent import research_analysis_mock
 from api.services.insight.schemas import RunConfig, SourceRecord
 from api.services.insight.candidates import build_candidates
@@ -122,6 +124,110 @@ def test_report_backfills_quote_from_evidence_item_id_only():
     assert "ghost-quote" not in md
 
 
+def test_decision_report_has_single_action_layers_and_no_raw_subtypes():
+    records = [_rec("r1", "我记不住这么多，不知道下一步练什么")]
+    card = EvidenceCard(
+        record_id="r1",
+        record_status=RecordStatus.USABLE,
+        primary_expression=PrimaryExpression.HELP_REQUEST,
+        evidence_items=[
+            EvidenceItem(
+                type=EvidenceItemType.BEHAVIOR,
+                text="正在持续训练",
+                evidence_quote="我记不住这么多",
+                speaker_scope=SpeakerScope.SELF,
+                certainty=ItemCertainty.HIGH,
+                subtype="completed_repeatedly",
+                evidence_item_id="r1::e0",
+            )
+        ],
+    )
+    rows = [{"record_id": "r1", "source": records[0].model_dump(), "card": card.model_dump()}]
+    research = {
+        "dataset_summary": {
+            "total_comments": 1,
+            "unique_users": 1,
+            "usable_comments": 1,
+            "behavior_comments": 1,
+        },
+        "themes": [
+            {
+                "theme_id": "T1",
+                "theme_name": "训练安排与下一步疑问",
+                "theme_definition": "用户不知道下一步如何安排。",
+                "comment_record_ids": ["r1"],
+                "comment_count": 1,
+                "unique_user_count": 1,
+                "representative_evidence_refs": [
+                    {"record_id": "r1", "evidence_item_id": "r1::e0"}
+                ],
+            }
+        ],
+        "unexpected_findings": [
+            {
+                "finding": "不知道下一步",
+                "record_ids": ["r1"],
+                "supporting_evidence_refs": [
+                    {"record_id": "r1", "evidence_item_id": "r1::e0"}
+                ],
+                "conclusion": "可能需要规划辅助",
+                "limitations": "仅一名用户",
+                "next_step": "访谈",
+            }
+        ],
+        "hypothesis_assessment": [
+            {
+                "hypothesis_id": "H3",
+                "conclusion": "supported",
+                "supporting_evidence_refs": [
+                    {
+                        "record_id": "r1",
+                        "evidence_item_id": "r1::e0",
+                        "strength": "weak_context",
+                    }
+                ],
+            }
+        ],
+        "opportunity_hypotheses": [],
+        "model_draft": {},
+    }
+    md = build_readable_report(research=research, records=records, card_rows=rows)
+    assert md.count("## 当前优先行动") == 1
+    assert "访谈与实验" not in md
+    assert "访谈结果按首页" not in md
+    assert "【事实】" in md
+    assert "【推断】" in md
+    assert "【限制】" in md
+    assert "【建议】" in md
+    assert "H1" not in md and "H2" not in md and "H3" not in md
+    assert "值得验证的机会" in md
+    assert "completed_repeatedly" not in md
+    assert "正在持续训练" in md
+    assert md.count("### 发现 ") == 1
+
+
+def test_paid_finding_requires_paid_behavior_evidence():
+    finding = {
+        "finding": "付费但无结果",
+        "supporting_evidence_refs": [{"evidence_item_id": "r1::e0"}],
+    }
+    assert not _finding_has_required_evidence(
+        finding,
+        {"r1::e0": {"type": "result", "subtype": "", "evidence_quote": "省钱了"}},
+    )
+    assert _finding_has_required_evidence(
+        finding,
+        {
+            "r1::e0": {
+                "type": "action_gap",
+                "subtype": "paid_but_no_result",
+                "text": "我花了钱但没效果",
+                "evidence_quote": "我花了钱但没效果",
+            }
+        },
+    )
+
+
 def test_report_skips_missing_evidence_item_id():
     records = [_rec("r1", "怎么练深蹲？")]
     card = extract_evidence_card_mock(records[0])
@@ -182,22 +288,21 @@ def test_default_run_config_is_evidence_items_v1():
 
     cfg = RunConfig(run_id="x", name="n", file_paths=["a.csv"], field_mapping=FieldMapping(comment_text="c"))
     assert cfg.analysis_version == ANALYSIS_VERSION_EVIDENCE
-    assert cfg.allow_legacy_fallback is True
-    legacy = RunConfig(
+    normalized = RunConfig(
         run_id="y",
         name="n",
         file_paths=["a.csv"],
         field_mapping=FieldMapping(comment_text="c"),
-        analysis_version=ANALYSIS_VERSION_LEGACY,
+        analysis_version="removed_engine",
     )
-    assert legacy.analysis_version == ANALYSIS_VERSION_LEGACY
+    assert normalized.analysis_version == ANALYSIS_VERSION_EVIDENCE
 
 
 def test_create_run_request_default_version():
     from api.routers.analysis import CreateRunRequest
 
     body = CreateRunRequest(file_paths=["data/demo/comments.csv"])
-    assert body.analysis_version == ANALYSIS_VERSION_EVIDENCE
+    assert "analysis_version" not in body.model_dump()
 
 
 def test_mock_500_concurrency_no_id_collision_and_report():
@@ -220,7 +325,7 @@ def test_mock_500_concurrency_no_id_collision_and_report():
     analysis = research_analysis_mock(records, rows)
     md = build_readable_report(research=analysis.model_dump(), records=records, card_rows=rows)
     assert "执行摘要" in md
-    assert "核心数据" in md
+    assert "核心数字" in md
 
     import asyncio
 

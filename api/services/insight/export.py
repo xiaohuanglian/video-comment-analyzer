@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import csv
 import io
+from copy import deepcopy
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set
 
 from .candidate_schemas import CONTACT_STATUS_LABELS
 from .labels import (
@@ -15,13 +17,11 @@ from .labels import (
     SIGNAL_LABELS,
     SINGLE_VIDEO_LABELS,
     TRAINING_EVIDENCE_LABELS,
-    label_hypothesis_relation,
     label_intent,
     label_product_fit,
     label_signal,
     label_single_video,
 )
-from .prompts import HYPOTHESES
 from .statistics import candidate_priority, compute_candidate_score
 from .storage import (
     _read_json,
@@ -30,24 +30,16 @@ from .storage import (
     load_config,
     load_outreach,
     load_progress,
+    load_evidence_cards,
+    load_research_analysis,
     load_results,
+    load_semantic_review,
+    load_source_records,
     load_summary,
+    load_themes,
     save_summary,
 )
-from .run_locations import export_artifact_paths, export_artifact_targets
-
-
-def _format_hypothesis_relations(relations: Any) -> str:
-    if not relations:
-        return ""
-    parts: List[str] = []
-    for item in relations:
-        if not isinstance(item, dict):
-            continue
-        hid = item.get("hypothesis_id", "")
-        rel = item.get("relation", "")
-        parts.append(f"{hid}:{label_hypothesis_relation(str(rel))}")
-    return "；".join(parts)
+from .run_locations import export_artifact_paths, export_artifact_targets, resolve_under_data
 
 
 def _format_new_signals(signals: Any) -> str:
@@ -67,8 +59,14 @@ def _format_new_signals(signals: Any) -> str:
     return "；".join(part for part in parts if part)
 
 
-def build_results_csv(run_id: str) -> bytes:
+def build_results_csv(run_id: str, *, source_files: Optional[Set[str]] = None) -> bytes:
     rows = load_results(run_id)
+    if source_files:
+        rows = [
+            row
+            for row in rows
+            if str((row.get("source") or {}).get("source_file") or "") in source_files
+        ]
     if not rows:
         raise ValueError("尚无分析结果可导出")
 
@@ -89,7 +87,6 @@ def build_results_csv(run_id: str) -> bytes:
             "训练证据",
             "具体问题",
             "单向视频关系",
-            "假设关系",
             "新发现",
             "产品适配",
             "置信度",
@@ -116,7 +113,6 @@ def build_results_csv(run_id: str) -> bytes:
                 ),
                 "；".join(str(p) for p in (analysis.get("specific_problems") or [])),
                 label_single_video(str(analysis.get("single_video_relation") or "")),
-                _format_hypothesis_relations(analysis.get("hypothesis_relations")),
                 _format_new_signals(analysis.get("new_signals")),
                 label_product_fit(str(analysis.get("product_fit") or "")),
                 analysis.get("confidence"),
@@ -206,9 +202,297 @@ def _collect_new_signals(rows: List[Dict[str, Any]], limit: int = 10) -> List[st
     return items
 
 
-def build_report_markdown(run_id: str) -> str:
+def _source_user_count(records, record_ids: List[str]) -> int:
+    from .user_identity import user_key
+
+    wanted = set(record_ids)
+    users: Set[str] = set()
+    for record in records:
+        if record.internal_record_id not in wanted:
+            continue
+        key = user_key(
+            {
+                "user_id": record.user_id,
+                "username": record.username,
+                "user_homepage_url": record.user_homepage_url,
+            }
+        )
+        users.add(key or record.internal_record_id)
+    return len(users)
+
+
+def _scoped_research_payload(
+    run_id: str,
+    source_files: Set[str],
+) -> tuple[dict, list, list]:
+    """Filter global research conclusions to one source without another LLM call."""
+    from .research_agent import compute_dataset_summary
+
+    records = [
+        record for record in load_source_records(run_id) if record.source_file in source_files
+    ]
+    allowed_ids = {record.internal_record_id for record in records}
+    card_rows = [
+        row
+        for row in load_evidence_cards(run_id)
+        if str((row.get("source") or {}).get("source_file") or "") in source_files
+        or str(row.get("record_id") or "") in allowed_ids
+    ]
+    semantic_doc = load_semantic_review(run_id)
+    stored_research = {}
+    if len(source_files) == 1:
+        source_file = next(iter(source_files))
+        stored_research = (
+            (semantic_doc.get("per_source_research") or {}).get(source_file) or {}
+        )
+    research = deepcopy(stored_research or load_research_analysis(run_id))
+    research["dataset_summary"] = compute_dataset_summary(records, card_rows).model_dump()
+
+    scoped_themes: List[dict] = []
+    for theme in research.get("themes") or []:
+        ids = [rid for rid in theme.get("comment_record_ids") or [] if rid in allowed_ids]
+        if not ids:
+            continue
+        refs = [
+            ref
+            for ref in theme.get("representative_evidence_refs") or []
+            if isinstance(ref, dict) and ref.get("record_id") in allowed_ids
+        ]
+        scoped_themes.append(
+            {
+                **theme,
+                "comment_record_ids": ids,
+                "comment_count": len(ids),
+                "unique_user_count": _source_user_count(records, ids),
+                "source_count": len(source_files),
+                "representative_evidence_refs": refs,
+            }
+        )
+    research["themes"] = scoped_themes
+
+    scoped_hypotheses: List[dict] = []
+    for hypothesis in research.get("hypothesis_assessment") or []:
+        supporting_refs = [
+            ref
+            for ref in hypothesis.get("supporting_evidence_refs") or []
+            if isinstance(ref, dict) and ref.get("record_id") in allowed_ids
+        ]
+        weakening_refs = [
+            ref
+            for ref in hypothesis.get("weakening_evidence_refs") or []
+            if isinstance(ref, dict) and ref.get("record_id") in allowed_ids
+        ]
+        conclusion = str(hypothesis.get("conclusion") or "insufficient")
+        if conclusion == "supported" and not supporting_refs:
+            conclusion = "insufficient"
+        scoped_hypotheses.append(
+            {
+                **hypothesis,
+                "conclusion": conclusion,
+                "supporting_record_ids": [ref["record_id"] for ref in supporting_refs],
+                "weakening_record_ids": [ref["record_id"] for ref in weakening_refs],
+                "supporting_evidence_refs": supporting_refs,
+                "weakening_evidence_refs": weakening_refs,
+            }
+        )
+    research["hypothesis_assessment"] = scoped_hypotheses
+
+    scoped_findings: List[dict] = []
+    for finding in research.get("unexpected_findings") or []:
+        refs = [
+            ref
+            for ref in finding.get("supporting_evidence_refs") or []
+            if isinstance(ref, dict) and ref.get("record_id") in allowed_ids
+        ]
+        ids = [rid for rid in finding.get("record_ids") or [] if rid in allowed_ids]
+        ids = list(dict.fromkeys([*ids, *(ref["record_id"] for ref in refs)]))
+        if not ids:
+            continue
+        scoped_findings.append(
+            {**finding, "record_ids": ids, "supporting_evidence_refs": refs}
+        )
+    research["unexpected_findings"] = scoped_findings
+
+    scoped_opportunities: List[dict] = []
+    for opportunity in research.get("opportunity_hypotheses") or []:
+        support_refs = [
+            ref
+            for ref in opportunity.get("supporting_evidence_refs") or []
+            if isinstance(ref, dict) and ref.get("record_id") in allowed_ids
+        ]
+        behavior_refs = [
+            ref
+            for ref in opportunity.get("behavior_evidence_refs") or []
+            if isinstance(ref, dict) and ref.get("record_id") in allowed_ids
+        ]
+        counter_refs = [
+            ref
+            for ref in opportunity.get("counter_evidence_refs") or []
+            if isinstance(ref, dict) and ref.get("record_id") in allowed_ids
+        ]
+        ids = [
+            rid
+            for rid in opportunity.get("supporting_record_ids") or []
+            if rid in allowed_ids
+        ]
+        if not ids and not support_refs and not behavior_refs:
+            continue
+        scoped_opportunities.append(
+            {
+                **opportunity,
+                "supporting_record_ids": list(
+                    dict.fromkeys(
+                        [*ids, *(ref["record_id"] for ref in support_refs + behavior_refs)]
+                    )
+                ),
+                "supporting_evidence_refs": support_refs,
+                "behavior_evidence_refs": behavior_refs,
+                "counter_evidence_refs": counter_refs,
+            }
+        )
+    research["opportunity_hypotheses"] = scoped_opportunities
+    return research, records, card_rows
+
+
+def _scoped_open_themes(
+    run_id: str,
+    *,
+    source_files: Optional[Set[str]] = None,
+) -> List[dict]:
+    """Supported open themes, optionally scoped to one video's records/theme ids."""
+    doc = load_themes(run_id)
+    themes = getattr(doc, "themes", None) or []
+    if not themes:
+        return []
+    semantic_review = load_semantic_review(run_id)
+    open_review = semantic_review.get("open_themes") or {}
+    supported_theme_ids = {
+        str(review.get("claim_id") or "").removeprefix("open_theme:")
+        for review in open_review.get("reviews") or []
+        if review.get("verdict") == "supported"
+        and str(review.get("claim_id") or "").startswith("open_theme:")
+    }
+    allowed_ids: Optional[Set[str]] = None
+    allowed_theme_ids: Optional[Set[str]] = None
+    if source_files:
+        allowed_ids = {
+            record.internal_record_id
+            for record in load_source_records(run_id)
+            if record.source_file in source_files
+        }
+        per_source_ids = semantic_review.get("per_source_open_theme_ids") or {}
+        if any(source_file in per_source_ids for source_file in source_files):
+            allowed_theme_ids = {
+                theme_id
+                for source_file in source_files
+                for theme_id in per_source_ids.get(source_file, [])
+            }
+    scoped: List[dict] = []
+    for theme in themes:
+        theme_id = str(getattr(theme, "theme_id", "") or "")
+        if theme_id not in supported_theme_ids:
+            continue
+        if allowed_theme_ids is not None and theme_id not in allowed_theme_ids:
+            continue
+        record_ids = list(getattr(theme, "record_ids", None) or [])
+        if allowed_ids is not None:
+            record_ids = [rid for rid in record_ids if rid in allowed_ids]
+            if not record_ids:
+                continue
+        stats = getattr(theme, "stats", None)
+        scoped.append(
+            {
+                "theme_id": theme_id,
+                "theme_name": getattr(theme, "theme_name", "") or "",
+                "theme_type": getattr(theme, "theme_type", "") or "",
+                "definition": getattr(theme, "definition", "") or "",
+                "theme_definition": getattr(theme, "definition", "") or "",
+                "implication": getattr(theme, "implication", "") or "",
+                "record_ids": record_ids,
+                "comment_record_ids": record_ids,
+                "comment_count": len(record_ids)
+                if allowed_ids is not None
+                else int(getattr(stats, "comment_count", 0) or len(record_ids)),
+                "unique_user_count": int(getattr(stats, "unique_user_count", 0) or 0),
+                "representative_quotes": list(getattr(theme, "representative_quotes", None) or []),
+            }
+        )
+    return scoped
+
+
+def _scoped_qual_stats(
+    run_id: str,
+    *,
+    source_files: Optional[Set[str]] = None,
+    total_records: int = 0,
+) -> Dict[str, Any]:
+    from .statistics import build_statistics
+
+    rows = load_results(run_id)
+    if source_files:
+        rows = [
+            row
+            for row in rows
+            if str((row.get("source") or {}).get("source_file") or "") in source_files
+        ]
+    if not rows:
+        return {}
+    return build_statistics(rows, total_records=total_records or len(rows))
+
+
+def build_report_markdown(
+    run_id: str,
+    *,
+    source_files: Optional[Set[str]] = None,
+) -> str:
     config = load_config(run_id)
     progress = load_progress(run_id).model_dump()
+    if (
+        progress.get("status") == "completed"
+        and not str(progress.get("last_error") or "").startswith("研究阶段")
+    ):
+        from .readable_report import build_readable_report
+
+        if source_files:
+            research, records, card_rows = _scoped_research_payload(run_id, source_files)
+            source_label = " / ".join(
+                sorted({Path(source_file).parent.name for source_file in source_files})
+            )
+            run_label = f"{config.name} · {source_label}"
+        else:
+            research = load_research_analysis(run_id)
+            records = load_source_records(run_id)
+            card_rows = load_evidence_cards(run_id)
+            run_label = config.name
+        open_themes = _scoped_open_themes(run_id, source_files=source_files)
+        qual_stats = _scoped_qual_stats(
+            run_id,
+            source_files=source_files,
+            total_records=len(records),
+        )
+        research_report = build_readable_report(
+            research=research,
+            records=records,
+            card_rows=card_rows,
+            run_id=run_label,
+            open_themes=open_themes,
+            qual_stats=qual_stats,
+        )
+        if research_report.strip():
+            theme_lines = _collect_theme_section(run_id, source_files=source_files)
+            if theme_lines:
+                theme_markdown = "\n".join(theme_lines).strip()
+                appendix_markers = ("\n## 7. 证据附录", "\n## 8. 证据附录")
+                if "## 开放主题（归并结果）" not in research_report:
+                    for appendix_marker in appendix_markers:
+                        if appendix_marker in research_report:
+                            return research_report.replace(
+                                appendix_marker,
+                                f"\n\n{theme_markdown}\n{appendix_marker}",
+                                1,
+                            )
+                    return f"{research_report.rstrip()}\n\n{theme_markdown}\n"
+            return research_report
     summary_path = _run_dir(run_id) / "summary.json"
     summary: Dict[str, Any] = _read_json(summary_path) if summary_path.exists() else {}
     rows = load_results(run_id)
@@ -240,31 +524,13 @@ def build_report_markdown(run_id: str) -> str:
 
     lines.extend(
         [
-            f"本报告基于 **{analyzed} 条**已分析评论{coverage_note}，用于产品假设验证与用户需求洞察。",
+            f"本报告基于 **{analyzed} 条**已分析评论{coverage_note}，用于评论洞察与用户需求分析。",
             "",
             f"- **核心发现**：{summary.get('trained_users', 0)} 位用户有真实训练证据；"
             f"{summary.get('personalized_needed_count', 0)} 条评论被判断为需个性化判断；"
             f"{summary.get('realtime_needed_count', 0)} 条被判断为需实时观察；"
             f"{summary.get('high_priority_user_count', 0)} 位高优先级潜在用户"
             f"{'（来自 candidates.json）' if summary.get('high_priority_user_count_source') == 'candidates_json' else ''}。",
-            f"- **假设倾向**：H2（需实时反馈）支持 {summary.get('hypothesis_counts', {}).get('H2', {}).get('supports', 0)} 条；"
-            f"H3（需 Agent 规划）支持 {summary.get('hypothesis_counts', {}).get('H3', {}).get('supports', 0)} 条。",
-            "",
-            "## 任务概况",
-            "",
-            "| 项目 | 数值 |",
-            "| --- | --- |",
-            f"| 任务 ID | `{run_id}` |",
-            f"| 分析状态 | {_status_label(str(progress.get('status') or ''))} |",
-            f"| 已分析 / 总量 | {progress.get('completed', analyzed)} / {total_records} 条 |",
-            f"| 失败 | {progress.get('failed', 0)} 条 |",
-            f"| Prompt Tokens | {progress.get('prompt_tokens', 0):,} |",
-            f"| 缓存命中 Tokens | {progress.get('prompt_cache_hit_tokens', 0):,} |",
-            f"| Completion Tokens | {progress.get('completion_tokens', 0):,} |",
-            f"| 实际费用 | {progress.get('actual_cost') or progress.get('estimated_cost', 0):.4f} {config.currency} |",
-            f"| 耗时 | {_format_duration(_elapsed_seconds(progress))} |",
-            f"| 模型 | {config.model_name} |",
-            f"| Prompt 版本 | {config.prompt_version} |",
             "",
             "## 总体指标",
             "",
@@ -313,55 +579,11 @@ def build_report_markdown(run_id: str) -> str:
             if fit_counts.get(key, 0):
                 lines.append(f"| {label_product_fit(key)} | {fit_counts.get(key, 0)} |")
 
-    lines.extend(["", "## 假设验证", ""])
-    for hid in ("H1", "H2", "H3"):
-        detail = (summary.get("hypothesis_details") or {}).get(hid) or {}
-        label = detail.get("label") or HYPOTHESES.get(hid, hid)
-        rel_counts = detail.get("counts") or {}
-        total_h = sum(rel_counts.values()) or 1
-        lines.extend(
-            [
-                f"### {hid} · {label}",
-                "",
-                "| 关系 | 条数 | 占比 | 独立用户 |",
-                "| --- | ---: | ---: | ---: |",
-                f"| 支持 | {rel_counts.get('supports', 0)} | {_pct(rel_counts.get('supports', 0), total_h)} | {(detail.get('unique_users') or {}).get('supports', 0)} |",
-                f"| 削弱 | {rel_counts.get('weakens', 0)} | {_pct(rel_counts.get('weakens', 0), total_h)} | {(detail.get('unique_users') or {}).get('weakens', 0)} |",
-                f"| 信息不足 | {rel_counts.get('insufficient', 0)} | {_pct(rel_counts.get('insufficient', 0), total_h)} | {(detail.get('unique_users') or {}).get('insufficient', 0)} |",
-                f"| 无关 | {rel_counts.get('irrelevant', 0)} | {_pct(rel_counts.get('irrelevant', 0), total_h)} | {(detail.get('unique_users') or {}).get('irrelevant', 0)} |",
-                "",
-            ]
-        )
-        support_quotes = detail.get("support_quotes") or []
-        weaken_quotes = detail.get("weaken_quotes") or []
-        if support_quotes:
-            lines.append("**支持性原话（节选）**")
-            for quote in support_quotes[:5]:
-                lines.append(f"- 「{quote}」")
-            lines.append("")
-        if weaken_quotes:
-            lines.append("**削弱性原话（节选）**")
-            for quote in weaken_quotes[:5]:
-                lines.append(f"- 「{quote}」")
-            lines.append("")
-
-    contradictions = summary.get("contradictions") or []
-    if contradictions:
-        lines.extend(["## 与预期不一致的发现", ""])
-        for item in contradictions:
-            importance = "（重要反例）" if item.get("importance") == "important" else ""
-            lines.append(
-                f"- **{item.get('hypothesis_id', '')}**{importance}：削弱 {item.get('weaken_count', 0)} 条 / "
-                f"支持 {item.get('support_count', 0)} 条 — {item.get('caution_note', '')}"
-            )
-            for quote in (item.get("representative_quotes") or item.get("sample_quotes") or [])[:3]:
-                lines.append(f"  - 「{quote}」")
-        lines.append("")
-
-    realtime = summary.get("realtime_needed_count", 0)
-    valid = summary.get("valid_comments") or analyzed or 1
+    realtime = int(summary.get("realtime_needed_count") or 0)
+    valid = int(summary.get("valid_comments") or analyzed or 0)
     lines.extend(
         [
+            "",
             "## 当前数据无法证明的结论",
             "",
             f"- 当前样本中有 {realtime} 条评论被判断为需要实时观察，占有效评论的 {_pct(realtime, valid)}。"
@@ -407,7 +629,6 @@ def build_report_markdown(run_id: str) -> str:
             "## 使用说明",
             "",
             "- 本报告为自动汇总，**不能替代人工判读**；关键结论请结合 CSV 明细复核。",
-            "- 「支持/削弱」均要求模型给出原文证据；信息不足表示相关但无法下结论。",
             f"- 完整明细请查看同目录自动保存的 **分析结果 CSV**（任务 `{run_id}`）。",
             "",
             "---",
@@ -418,18 +639,76 @@ def build_report_markdown(run_id: str) -> str:
     return "\n".join(lines)
 
 
-def _collect_theme_section(run_id: str) -> List[str]:
+def _collect_theme_section(
+    run_id: str,
+    *,
+    source_files: Optional[Set[str]] = None,
+) -> List[str]:
     """Include clustered open themes when themes.json exists."""
-    from .storage import load_themes
     from .theme_schemas import THEME_RELATION_LABELS
 
     doc = load_themes(run_id)
     themes = getattr(doc, "themes", None) or []
     if not themes:
         return []
-    lines: List[str] = ["## 开放主题（归并结果）", "", "以下为主题归并后的结构化发现（来自「生成开放主题」）：", ""]
+    semantic_review = load_semantic_review(run_id)
+    open_review = semantic_review.get("open_themes") or {}
+    if not open_review:
+        return []
+    global_supported_theme_ids = {
+        str(review.get("claim_id") or "").removeprefix("open_theme:")
+        for review in open_review.get("reviews") or []
+        if review.get("verdict") == "supported"
+        and str(review.get("claim_id") or "").startswith("open_theme:")
+    }
+    lines: List[str] = [
+        "## 开放主题（归并结果）",
+        "",
+        "以下仅展示可行动的主题；打卡、日数、BGM、泛化收藏等互动簇不进入决策正文。",
+        "",
+    ]
+    scoped_records = []
+    allowed_ids: Optional[Set[str]] = None
+    allowed_theme_ids: Optional[Set[str]] = None
+    if source_files:
+        scoped_records = [
+            record
+            for record in load_source_records(run_id)
+            if record.source_file in source_files
+        ]
+        allowed_ids = {record.internal_record_id for record in scoped_records}
+        per_source_ids = (
+            load_semantic_review(run_id).get("per_source_open_theme_ids") or {}
+        )
+        if any(source_file in per_source_ids for source_file in source_files):
+            allowed_theme_ids = {
+                theme_id
+                for source_file in source_files
+                for theme_id in per_source_ids.get(source_file, [])
+            }
     for theme in themes:
+        if getattr(theme, "theme_id", "") not in global_supported_theme_ids:
+            continue
+        if (
+            allowed_theme_ids is not None
+            and getattr(theme, "theme_id", "") not in allowed_theme_ids
+        ):
+            continue
+        theme_record_ids = list(getattr(theme, "record_ids", None) or [])
+        scoped_ids = (
+            [rid for rid in theme_record_ids if rid in allowed_ids]
+            if allowed_ids is not None
+            else theme_record_ids
+        )
+        if allowed_ids is not None and not scoped_ids:
+            continue
         name = getattr(theme, "theme_name", "") or "未命名主题"
+        lowered = name.lower()
+        if (
+            len(name) < 3
+            or any(token in lowered for token in ("打卡", "day", "d5", "d6", "bgm", "收藏", "点赞", "真的有用"))
+        ):
+            continue
         ttype = getattr(theme, "theme_type", "") or "—"
         definition = getattr(theme, "definition", "") or ""
         implication = getattr(theme, "implication", "") or ""
@@ -437,21 +716,28 @@ def _collect_theme_section(run_id: str) -> List[str]:
         rel_label = THEME_RELATION_LABELS.get(relation, relation)
         stats = getattr(theme, "stats", None)
         count_note = ""
-        if stats is not None:
+        if allowed_ids is not None:
+            count_note = (
+                f" · {len(scoped_ids)} 条 / "
+                f"{_source_user_count(scoped_records, scoped_ids)} 用户"
+            )
+        elif stats is not None:
             count_note = f" · {getattr(stats, 'comment_count', 0)} 条 / {getattr(stats, 'unique_user_count', 0)} 用户"
         lines.append(f"### {name}（{ttype}）{count_note}")
         lines.append("")
         if definition:
             lines.append(f"- 定义：{definition}")
         if rel_label:
-            lines.append(f"- 与假设关系：{rel_label}")
+            lines.append(f"- 主题关系：{rel_label}")
         if implication:
             lines.append(f"- 产品含义：{implication}")
-        sample = getattr(theme, "representative_quotes", None) or []
+        # Theme quotes do not carry record IDs; omit global quotes in a
+        # source-scoped report to prevent cross-video contamination.
+        sample = [] if allowed_ids is not None else (getattr(theme, "representative_quotes", None) or [])
         for quote in sample[:3]:
             lines.append(f"  - 「{quote}」")
         lines.append("")
-    return lines
+    return lines if len(lines) > 4 else []
 
 
 def build_candidates_csv(run_id: str) -> bytes:
@@ -587,19 +873,15 @@ def auto_export_artifacts(run_id: str) -> Dict[str, str]:
     errors: List[str] = []
     saved: Dict[str, str] = {}
 
-    results_bytes: bytes | None = None
-    report_text: str | None = None
     candidates_bytes: bytes | None = None
     outreach_bytes: bytes | None = None
 
-    try:
-        results_bytes = build_results_csv(run_id)
-    except ValueError as exc:
-        errors.append(f"results_csv: {exc}")
-    try:
-        report_text = build_report_markdown(run_id)
-    except Exception as exc:
-        errors.append(f"report_md: {exc}")
+    themes_doc = load_themes(run_id)
+    semantic_review = load_semantic_review(run_id)
+    report_ready = (
+        bool(getattr(themes_doc, "created_at", ""))
+        and bool(semantic_review.get("open_themes"))
+    )
     try:
         if load_candidates(run_id).candidates:
             candidates_bytes = build_candidates_csv(run_id)
@@ -612,6 +894,27 @@ def auto_export_artifacts(run_id: str) -> Dict[str, str]:
         outreach_bytes = None
 
     for targets in target_sets:
+        target_parent = targets["report_md"].parent.resolve()
+        source_files = {
+            rel_path
+            for rel_path in config.file_paths
+            if resolve_under_data(rel_path).parent.resolve() == target_parent
+        }
+        try:
+            results_bytes = build_results_csv(
+                run_id, source_files=source_files or None
+            )
+        except ValueError:
+            # Other videos in a multi-video run may not have results yet.
+            results_bytes = None
+        report_text: str | None = None
+        if report_ready:
+            try:
+                report_text = build_report_markdown(
+                    run_id, source_files=source_files or None
+                )
+            except Exception as exc:
+                errors.append(f"report_md ({target_parent.name}): {exc}")
         if results_bytes is not None:
             try:
                 targets["results_csv"].parent.mkdir(parents=True, exist_ok=True)
