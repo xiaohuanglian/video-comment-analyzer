@@ -601,7 +601,9 @@ def replace_evidence_cards(run_id: str, rows: List[Dict[str, Any]]) -> None:
                     pass
 
 
-def load_evidence_cards(run_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+def load_evidence_cards(
+    run_id: str, limit: Optional[int] = None, *, include_source: bool = True
+) -> List[Dict[str, Any]]:
     # Keep last row per record_id to tolerate accidental double-appends
     by_id: Dict[str, Dict[str, Any]] = {}
     ordered: List[str] = []
@@ -610,6 +612,10 @@ def load_evidence_cards(run_id: str, limit: Optional[int] = None) -> List[Dict[s
         rid = payload.get("record_id") or (payload.get("card") or {}).get("record_id")
         if not rid:
             continue
+        if not include_source:
+            # Callers that already hold source_records can drop the duplicate
+            # embedded source, roughly halving memory for very large runs.
+            payload.pop("source", None)
         if rid not in by_id:
             ordered.append(rid)
         by_id[rid] = payload
