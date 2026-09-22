@@ -69,6 +69,59 @@ def _read_json(path: Path) -> Any:
         raise
 
 
+def _iter_jsonl(path: Path):
+    """Yield non-empty JSONL lines one at a time (streams; never loads the whole file)."""
+    if not path.exists():
+        return
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if line:
+                yield line
+
+
+def _rewrite_jsonl_excluding(
+    path: Path, record_ids: Set[str], id_paths: tuple = ()
+) -> int:
+    """Stream-rewrite a JSONL file dropping rows whose record id is in `record_ids`."""
+    if not record_ids or not path.exists():
+        return 0
+    removed = 0
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _path_lock(path):
+        tmp = path.with_name(
+            f".{path.name}.{os.getpid()}.{threading.get_ident()}.{time.time_ns()}.tmp"
+        )
+        try:
+            with path.open("r", encoding="utf-8") as src, tmp.open("w", encoding="utf-8") as dst:
+                for line in src:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    payload = json.loads(stripped)
+                    rid = payload.get("record_id")
+                    if rid is None:
+                        for dotted in id_paths:
+                            node: Any = payload
+                            for part in dotted.split("."):
+                                node = node.get(part) if isinstance(node, dict) else None
+                            if node:
+                                rid = node
+                                break
+                    if rid in record_ids:
+                        removed += 1
+                        continue
+                    dst.write(stripped + "\n")
+            os.replace(tmp, path)
+        finally:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+    return removed
+
+
 def create_run(config: RunConfig, records: List[SourceRecord]) -> None:
     storage_rel = config.storage_dir or relative_storage_dir(config)
     config = config.model_copy(update={"storage_dir": storage_rel})
@@ -194,69 +247,47 @@ def remove_results_for_records(run_id: str, record_ids: Set[str]) -> int:
     if not record_ids:
         return 0
     path = _run_dir(run_id) / "results.jsonl"
-    if not path.exists():
-        return 0
-    kept: List[str] = []
-    removed = 0
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        payload = json.loads(line)
-        rid = payload.get("record_id") or payload.get("analysis", {}).get("record_id")
-        if rid in record_ids:
-            removed += 1
-            continue
-        kept.append(line)
-    path.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
-    return removed
+    return _rewrite_jsonl_excluding(path, record_ids, ("analysis.record_id",))
 
 
 def remove_evidence_for_records(run_id: str, record_ids: Set[str]) -> int:
     """Drop evidence cards for record_ids so force_reanalyze can truly re-extract."""
-    if not record_ids:
-        return 0
     path = _run_dir(run_id) / "evidence_cards.jsonl"
-    if not path.exists():
-        return 0
-    kept: List[str] = []
-    removed = 0
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        payload = json.loads(line)
-        rid = payload.get("record_id") or (payload.get("card") or {}).get("record_id")
-        if rid in record_ids:
-            removed += 1
-            continue
-        kept.append(line)
-    path.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
-    return removed
+    return _rewrite_jsonl_excluding(path, record_ids, ("card.record_id",))
 
 
 def load_source_records(run_id: str) -> List[SourceRecord]:
     path = _run_dir(run_id) / "source_records.jsonl"
-    records: List[SourceRecord] = []
-    if not path.exists():
-        return records
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            records.append(SourceRecord.model_validate_json(line))
-    return records
+    return [SourceRecord.model_validate_json(line) for line in _iter_jsonl(path)]
 
 
 def completed_record_ids(run_id: str) -> Set[str]:
-    path = _run_dir(run_id) / "results.jsonl"
     done: Set[str] = set()
-    if not path.exists():
-        return done
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
+    for line in _iter_jsonl(_run_dir(run_id) / "results.jsonl"):
         payload = json.loads(line)
         record_id = payload.get("record_id") or payload.get("analysis", {}).get("record_id")
         if record_id:
             done.add(record_id)
     return done
+
+
+def _result_payload(
+    source: SourceRecord,
+    analysis: CommentAnalysisResult,
+    *,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+) -> Dict[str, Any]:
+    return {
+        "record_id": analysis.record_id,
+        "source": source.model_dump(),
+        "analysis": analysis.model_dump(),
+        "analyzed_at": datetime.now(timezone.utc).isoformat(),
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+        },
+    }
 
 
 def append_result(
@@ -268,30 +299,57 @@ def append_result(
     completion_tokens: int = 0,
 ) -> None:
     path = _run_dir(run_id) / "results.jsonl"
-    payload = {
-        "record_id": analysis.record_id,
-        "source": source.model_dump(),
-        "analysis": analysis.model_dump(),
-        "analyzed_at": datetime.now(timezone.utc).isoformat(),
-        "usage": {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-        },
-    }
+    payload = _result_payload(
+        source, analysis, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
+    )
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
+class BufferedResultsWriter:
+    """Batch appends to results.jsonl to avoid one open/close syscall per row.
+
+    Safe for a single writer thread. Call ``close`` (or ``flush``) to persist.
+    """
+
+    def __init__(self, run_id: str, *, buffer_size: int = 200) -> None:
+        self._path = _run_dir(run_id) / "results.jsonl"
+        self._buffer: List[str] = []
+        self._buffer_size = max(1, int(buffer_size))
+
+    def add(
+        self,
+        source: SourceRecord,
+        analysis: CommentAnalysisResult,
+        *,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+    ) -> None:
+        payload = _result_payload(
+            source, analysis, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
+        )
+        self._buffer.append(json.dumps(payload, ensure_ascii=False) + "\n")
+        if len(self._buffer) >= self._buffer_size:
+            self.flush()
+
+    def flush(self) -> None:
+        if not self._buffer:
+            return
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        with self._path.open("a", encoding="utf-8") as handle:
+            handle.write("".join(self._buffer))
+        self._buffer.clear()
+
+    def close(self) -> None:
+        self.flush()
+
+
 def load_results(run_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-    path = _run_dir(run_id) / "results.jsonl"
-    if not path.exists():
-        return []
     rows: List[Dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            rows.append(json.loads(line))
-            if limit and len(rows) >= limit:
-                break
+    for line in _iter_jsonl(_run_dir(run_id) / "results.jsonl"):
+        rows.append(json.loads(line))
+        if limit and len(rows) >= limit:
+            break
     return rows
 
 
@@ -480,13 +538,8 @@ def list_runs() -> List[Dict[str, Any]]:
 
 
 def completed_evidence_record_ids(run_id: str) -> Set[str]:
-    path = _run_dir(run_id) / "evidence_cards.jsonl"
     done: Set[str] = set()
-    if not path.exists():
-        return done
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
+    for line in _iter_jsonl(_run_dir(run_id) / "evidence_cards.jsonl"):
         payload = json.loads(line)
         rid = payload.get("record_id") or (payload.get("card") or {}).get("record_id")
         if rid:
@@ -539,15 +592,10 @@ def replace_evidence_cards(run_id: str, rows: List[Dict[str, Any]]) -> None:
 
 
 def load_evidence_cards(run_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-    path = _run_dir(run_id) / "evidence_cards.jsonl"
-    if not path.exists():
-        return []
     # Keep last row per record_id to tolerate accidental double-appends
     by_id: Dict[str, Dict[str, Any]] = {}
     ordered: List[str] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
+    for line in _iter_jsonl(_run_dir(run_id) / "evidence_cards.jsonl"):
         payload = json.loads(line)
         rid = payload.get("record_id") or (payload.get("card") or {}).get("record_id")
         if not rid:

@@ -21,7 +21,7 @@ from .run_locations import run_dir_for_id
 from .sampling import DEFAULT_SAMPLE_SEED, stratified_sample
 from .schemas import CommentAnalysisResult, RunProgress, TrainingEvidence, TrainingImpact, ProductFit, PrimaryIntent, SourceRecord
 from .storage import (
-    append_result,
+    BufferedResultsWriter,
     completed_evidence_record_ids,
     completed_record_ids,
     ensure_run_config,
@@ -196,10 +196,14 @@ def _write_extraction_cards(
     progress: RunProgress,
     *,
     cancel_event: Optional[threading.Event] = None,
+    done_ids: Optional[Set[str]] = None,
 ) -> int:
     writer = EvidenceWriterQueue(run_id)
     writer.start()
+    result_writer = BufferedResultsWriter(run_id)
     processed = 0
+    # Incremental completion set: avoids re-reading results.jsonl every N rows (O(n^2)).
+    local_done = done_ids if done_ids is not None else set()
     record_by_id = {record.internal_record_id: record for record in pending_chunk}
     try:
         for card in result.cards:
@@ -213,17 +217,20 @@ def _write_extraction_cards(
                 continue
             writer.put(source, card, from_cache=bool(card.reused_from_record_id))
             analysis = _card_to_comment_analysis(card)
-            append_result(run_id, source, analysis)
+            result_writer.add(source, analysis)
+            local_done.add(card.record_id)
             processed += 1
             rid = card.record_id
             if rid in progress.failed_record_ids:
                 progress.failed_record_ids.remove(rid)
             progress.failed_errors.pop(rid, None)
             if processed % PROGRESS_FLUSH_EVERY == 0:
-                progress.completed = len(completed_record_ids(run_id))
+                result_writer.flush()
+                progress.completed = len(local_done)
                 progress.failed = len(progress.failed_record_ids)
                 _persist_progress(run_id, progress)
     finally:
+        result_writer.close()
         writer.close()
     return processed
 
@@ -256,6 +263,7 @@ def run_evidence_analysis_batch(
     # Results are authoritative for success. Evidence-only orphans stay pending
     # so "继续分析" can backfill results (cache may avoid a full re-bill).
     done = result_done
+    done_ids: Set[str] = set(result_done)
     prune_stale_failures(progress, result_done)
     progress.completed = len(result_done)
     progress.failed = len(progress.failed_record_ids)
@@ -393,6 +401,7 @@ def run_evidence_analysis_batch(
             result,
             progress,
             cancel_event=cancel_event,
+            done_ids=done_ids,
         )
         processed += chunk_processed
 
@@ -403,7 +412,7 @@ def run_evidence_analysis_batch(
             progress.failed_errors[rid] = err
 
         _apply_progress_costs(progress, config, result.stats)
-        progress.completed = len(completed_record_ids(run_id))
+        progress.completed = len(done_ids)
         progress.failed = len(progress.failed_record_ids)
         _persist_progress(run_id, progress)
 
@@ -423,9 +432,8 @@ def run_evidence_analysis_batch(
     pricing = resolve_pricing(config.base_url, config.model_name)
 
     if progress.status != "cancelled":
-        result_done_ids = completed_record_ids(run_id)
-        prune_stale_failures(progress, result_done_ids)
-        progress.completed = len(result_done_ids)
+        prune_stale_failures(progress, done_ids)
+        progress.completed = len(done_ids)
         progress.failed = len(progress.failed_record_ids)
         if progress.completed >= progress.total_records and progress.failed == 0:
             progress.status = "completed"
@@ -544,7 +552,7 @@ def _maybe_finish_evidence_research(
 
         for source_file in source_files:
             scoped_payload, scoped_records, scoped_cards = _scoped_research_payload(
-                run_id, {source_file}
+                run_id, {source_file}, all_records=records, all_cards=card_rows
             )
             scoped_research, scoped_review = run_semantic_review(
                 ResearchAnalysis.model_validate(scoped_payload),

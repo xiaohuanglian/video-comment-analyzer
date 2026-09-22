@@ -59,8 +59,14 @@ def _format_new_signals(signals: Any) -> str:
     return "；".join(part for part in parts if part)
 
 
-def build_results_csv(run_id: str, *, source_files: Optional[Set[str]] = None) -> bytes:
-    rows = load_results(run_id)
+def build_results_csv(
+    run_id: str,
+    *,
+    source_files: Optional[Set[str]] = None,
+    rows: Optional[List[Dict[str, Any]]] = None,
+) -> bytes:
+    if rows is None:
+        rows = load_results(run_id)
     if source_files:
         rows = [
             row
@@ -224,17 +230,22 @@ def _source_user_count(records, record_ids: List[str]) -> int:
 def _scoped_research_payload(
     run_id: str,
     source_files: Set[str],
+    *,
+    all_records: Optional[Sequence[Any]] = None,
+    all_cards: Optional[Sequence[dict]] = None,
 ) -> tuple[dict, list, list]:
     """Filter global research conclusions to one source without another LLM call."""
     from .research_agent import compute_dataset_summary
 
+    source_records = all_records if all_records is not None else load_source_records(run_id)
+    source_cards = all_cards if all_cards is not None else load_evidence_cards(run_id)
     records = [
-        record for record in load_source_records(run_id) if record.source_file in source_files
+        record for record in source_records if record.source_file in source_files
     ]
     allowed_ids = {record.internal_record_id for record in records}
     card_rows = [
         row
-        for row in load_evidence_cards(run_id)
+        for row in source_cards
         if str((row.get("source") or {}).get("source_file") or "") in source_files
         or str(row.get("record_id") or "") in allowed_ids
     ]
@@ -865,7 +876,8 @@ def _rel_to_data(path: Path) -> str:
 
 def auto_export_artifacts(run_id: str) -> Dict[str, str]:
     """Write analysis CSV, report, and optional candidates/outreach beside every CSV parent dir."""
-    if not load_results(run_id):
+    all_results = load_results(run_id)
+    if not all_results:
         return {}
 
     config = load_config(run_id)
@@ -902,7 +914,7 @@ def auto_export_artifacts(run_id: str) -> Dict[str, str]:
         }
         try:
             results_bytes = build_results_csv(
-                run_id, source_files=source_files or None
+                run_id, source_files=source_files or None, rows=all_results
             )
         except ValueError:
             # Other videos in a multi-video run may not have results yet.
