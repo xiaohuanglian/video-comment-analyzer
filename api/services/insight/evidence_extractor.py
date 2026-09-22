@@ -72,6 +72,34 @@ class AdaptiveGate:
             self._cv.notify_all()
 
 
+class RateLimiter:
+    """Async token-bucket limiter: at most ``per_minute`` LLM requests/minute.
+
+    Blunt but effective at avoiding provider 429 storms on very large runs.
+    """
+
+    def __init__(self, per_minute: int) -> None:
+        self.capacity = max(1, int(per_minute))
+        self._tokens = float(self.capacity)
+        self._updated = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        refill_rate = self.capacity / 60.0
+        while True:
+            async with self._lock:
+                now = time.monotonic()
+                self._tokens = min(
+                    float(self.capacity), self._tokens + (now - self._updated) * refill_rate
+                )
+                self._updated = now
+                if self._tokens >= 1.0:
+                    self._tokens -= 1.0
+                    return
+                wait = (1.0 - self._tokens) / refill_rate
+            await asyncio.sleep(wait)
+
+
 @dataclass
 class BatchExtractStats:
     processed: int = 0
@@ -968,6 +996,8 @@ async def _extract_batches_concurrent(
             timeout=90.0,
             max_retries=0,
         )
+    rpm = int(getattr(config, "requests_per_minute", 0) or 0) if config else 0
+    limiter = RateLimiter(rpm) if (rpm > 0 and not use_mock) else None
 
     def _fp(record: SourceRecord) -> str:
         return evidence_fingerprint(
@@ -1010,6 +1040,8 @@ async def _extract_batches_concurrent(
         async with gate:
             if cancel_check and cancel_check():
                 return
+            if limiter is not None:
+                await limiter.acquire()
             started = time.perf_counter()
             try:
                 if use_mock:

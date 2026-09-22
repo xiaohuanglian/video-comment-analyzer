@@ -161,8 +161,8 @@
     if (input) input.checked = true;
   }
 
-  function getAnalyzeBody() {
-    return { background: true, api_key: getApiKey() };
+  function getAnalyzeBody({ confirmLarge = false } = {}) {
+    return { background: true, api_key: getApiKey(), confirm_large: confirmLarge };
   }
 
   function requireApiKey() {
@@ -1888,15 +1888,27 @@
     return created;
   }
 
-  async function runAnalysisJob(runId, { signal } = {}) {
+  async function runAnalysisJob(runId, { signal, confirmLarge = false } = {}) {
     ensureAudioContext();
     state.analysisWasActive = true;
     showLocalRunMetrics(state.lastProgress, state.lastConfig, { active: true });
     const result = await apiFetch(`/api/analysis/runs/${encodeURIComponent(runId)}/analyze`, {
       method: "POST",
       signal,
-      body: JSON.stringify(getAnalyzeBody()),
+      body: JSON.stringify(getAnalyzeBody({ confirmLarge })),
     });
+    if (result.needs_confirmation) {
+      const ok = window.confirm(
+        `${result.message || "这是一个较大的分析任务，将产生真实费用。"}\n\n确认开始分析吗？`
+      );
+      if (!ok) {
+        state.analysisWasActive = false;
+        insightRunStatus.textContent = "已取消（未开始分析）";
+        insightRunStatus.className = "inline-status success";
+        return result;
+      }
+      return runAnalysisJob(runId, { signal, confirmLarge: true });
+    }
     startPolling(runId);
     insightRunStatus.textContent = result.message || "分析已在后台运行";
     insightRunStatus.className = "inline-status loading";

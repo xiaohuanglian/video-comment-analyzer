@@ -11,6 +11,9 @@ from .schemas import SourceRecord
 
 _cache: Dict[str, EvidenceCard] = {}
 
+# Bound the in-process cache so very large runs cannot grow memory without limit.
+_MAX_CACHE_ENTRIES = 20000
+
 
 def evidence_fingerprint(
     record: SourceRecord,
@@ -51,6 +54,9 @@ def put_cached_evidence(fingerprint: str, card: EvidenceCard) -> None:
     stored = card.model_copy(deep=True)
     stored.reused_from_record_id = ""
     _cache[fingerprint] = stored
+    if len(_cache) > _MAX_CACHE_ENTRIES:
+        for _ in range(len(_cache) - _MAX_CACHE_ENTRIES):
+            _cache.pop(next(iter(_cache)), None)
 
 
 def clear_evidence_cache() -> None:
