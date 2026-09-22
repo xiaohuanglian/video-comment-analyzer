@@ -107,8 +107,10 @@ def test_evidence_quote_invalid_is_dropped_not_failing(sample_csv):
     assert analysis.evidence_quotes == []
 
 
-def test_api_list_sources(client, sample_csv, monkeypatch):
-    data_root = Path(sample_csv).parents[3]
+def test_api_list_sources(client, sample_csv, monkeypatch, tmp_path):
+    # sample_csv is a relative path; its parent chain is shorter than 4, so
+    # Path(...).parents[3] would resolve to the CWD. Use the fixture's tmp data dir.
+    data_root = tmp_path / "data"
     monkeypatch.setattr("api.services.insight.ingestion.DATA_DIR", data_root)
     monkeypatch.setattr("api.services.insight.storage.DATA_DIR", data_root)
     monkeypatch.setattr("api.services.insight.storage.RUNS_ROOT", data_root / "analysis_runs")

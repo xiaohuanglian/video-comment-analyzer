@@ -37,7 +37,7 @@ def _rec(rid: str, text: str) -> SourceRecord:
 
 
 def test_versions():
-    assert EVIDENCE_PROMPT_VERSION == "evidence_extract_v9_compact"
+    assert EVIDENCE_PROMPT_VERSION == "evidence_extract_v9_compact_status_fix"
     assert ANALYSIS_VERSION_EVIDENCE == "evidence_items_v1"
 
 

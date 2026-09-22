@@ -98,8 +98,8 @@ def test_report_backfills_quote_from_evidence_item_id_only():
         "research_conclusions": ["测试结论"],
         "unexpected_findings": [
             {
-                "finding": "收藏未开始",
-                "conclusion": "存在行动差距",
+                "finding": "训练找不到发力感",
+                "conclusion": "存在动作问题",
                 "why_it_matters": "可能适合访谈",
                 "record_ids": ["r1"],
                 "supporting_evidence_refs": [{"record_id": "r1", "evidence_item_id": eid}],

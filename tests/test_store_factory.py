@@ -13,8 +13,8 @@ from store.xhs._store_impl import (
     XhsDbStoreImplement,
     XhsSqliteStoreImplement,
     XhsMongoStoreImplement,
-    XhsExcelStoreImplement
 )
+from store.excel_store_base import ExcelStoreBase
 
 
 class TestXhsStoreFactory:
@@ -53,9 +53,11 @@ class TestXhsStoreFactory:
     @patch('config.SAVE_DATA_OPTION', 'excel')
     def test_create_excel_store(self):
         """Test creating Excel store"""
-        # ContextVar cannot be mocked, so we test with actual value
+        # ContextVar cannot be mocked, so we test with actual value.
+        # XhsExcelStoreImplement.__new__ returns the shared ExcelStoreBase
+        # singleton, so the created object is an ExcelStoreBase instance.
         store = XhsStoreFactory.create_store()
-        assert isinstance(store, XhsExcelStoreImplement)
+        assert isinstance(store, ExcelStoreBase)
 
     @patch('config.SAVE_DATA_OPTION', 'jsonl')
     def test_create_jsonl_store(self):
