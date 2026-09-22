@@ -34,29 +34,46 @@ from .schemas import RunConfig, SourceRecord
 from .user_identity import user_key
 
 
+def _enum_value(value: Any, default: str) -> str:
+    """Accept enum or raw string; fall back to default for empty/unknown."""
+    if value is None:
+        return default
+    raw = getattr(value, "value", None)
+    if raw is None:
+        raw = str(value)
+    return raw or default
+
+
 def _index_evidence_items(card_rows: Sequence[dict]) -> Dict[str, dict]:
-    """Map evidence_item_id -> item dict (+ record_id)."""
+    """Map evidence_item_id -> item dict (+ record_id).
+
+    Works on raw card dicts instead of materialising an EvidenceCard per row so
+    that large runs (100k comments) do not blow up memory during reporting.
+    """
     index: Dict[str, dict] = {}
     for row in card_rows:
         card_raw = row.get("card") or row
-        try:
-            card = EvidenceCard.model_validate(card_raw)
-        except Exception:
+        if not isinstance(card_raw, dict):
             continue
-        card = assign_evidence_item_ids(card)
-        for item in card.evidence_items or []:
-            eid = (item.evidence_item_id or "").strip()
-            if not eid:
+        record_id = str(card_raw.get("record_id") or "").strip()
+        items = card_raw.get("evidence_items") or []
+        if not isinstance(items, list):
+            continue
+        for idx, item in enumerate(items):
+            if not isinstance(item, dict):
                 continue
+            eid = str(item.get("evidence_item_id") or "").strip()
+            if not eid or (record_id and not eid.startswith(f"{record_id}::")):
+                eid = f"{record_id or 'unknown'}::e{idx}"
             index[eid] = {
-                "record_id": card.record_id,
+                "record_id": record_id,
                 "evidence_item_id": eid,
-                "text": item.text,
-                "evidence_quote": item.evidence_quote,
-                "speaker_scope": item.speaker_scope.value,
-                "certainty": item.certainty.value,
-                "type": item.type.value,
-                "subtype": item.subtype,
+                "text": item.get("text") or "",
+                "evidence_quote": item.get("evidence_quote") or "",
+                "speaker_scope": _enum_value(item.get("speaker_scope"), "unclear"),
+                "certainty": _enum_value(item.get("certainty"), "medium"),
+                "type": _enum_value(item.get("type"), ""),
+                "subtype": item.get("subtype") or "",
             }
     return index
 

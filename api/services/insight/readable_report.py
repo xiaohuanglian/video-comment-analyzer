@@ -7,11 +7,10 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional, Sequence
 
 from .evidence_adapter import (
-    assign_evidence_item_ids,
     has_explicit_paid_action,
     has_paid_failure,
 )
-from .evidence_schemas import EvidenceCard, EvidenceItemType
+from .evidence_schemas import EvidenceItemType
 from .labels import label_intent, label_signal, label_single_video
 from .research_agent import _index_evidence_items
 from .schemas import SourceRecord
@@ -210,15 +209,17 @@ def _priority_insight(themes: Sequence[dict]) -> dict:
     }
 
 
-def _behavior_groups(cards: Sequence[EvidenceCard]) -> Dict[str, List[str]]:
+def _behavior_groups(item_index: Dict[str, dict]) -> Dict[str, List[str]]:
     grouped: Dict[str, List[str]] = defaultdict(list)
-    for card in cards:
-        for item in card.evidence_items:
-            subtype = str(item.subtype or "")
-            for label, members in REPORT_BEHAVIOR_GROUPS.items():
-                if subtype in members and card.record_id not in grouped[label]:
-                    grouped[label].append(card.record_id)
-                    break
+    for item in item_index.values():
+        subtype = str(item.get("subtype") or "")
+        rid = item.get("record_id")
+        if not rid:
+            continue
+        for label, members in REPORT_BEHAVIOR_GROUPS.items():
+            if subtype in members and rid not in grouped[label]:
+                grouped[label].append(rid)
+                break
     return grouped
 
 
@@ -344,13 +345,13 @@ def build_readable_report(
     qual_stats: Optional[dict] = None,
 ) -> str:
     summary = research.get("dataset_summary") or {}
-    cards: List[EvidenceCard] = []
-    for row in card_rows:
-        try:
-            cards.append(assign_evidence_item_ids(EvidenceCard.model_validate(row.get("card") or row)))
-        except Exception:
-            continue
     item_index = _index_evidence_items(card_rows)
+    # Count analyzed cards from raw dicts (no EvidenceCard materialisation).
+    analyzed_count = 0
+    for row in card_rows:
+        card_raw = row.get("card") or row
+        if isinstance(card_raw, dict) and card_raw.get("record_id"):
+            analyzed_count += 1
     research_themes = list(research.get("themes") or [])
     open_theme_list = [dict(theme) for theme in (open_themes or []) if isinstance(theme, dict)]
     # The LLM research outline may contain broad labels; decision pages must
@@ -374,19 +375,22 @@ def build_readable_report(
         theme.get("cluster_ids") for theme in (model_draft.get("themes") or []) if isinstance(theme, dict)
     )
 
+    problem_type = EvidenceItemType.PROBLEM.value
+    behavior_type = EvidenceItemType.BEHAVIOR.value
+    gap_type = EvidenceItemType.ACTION_GAP.value
     problem_ids = {
-        card.record_id for card in cards if any(item.type == EvidenceItemType.PROBLEM for item in card.evidence_items)
+        v["record_id"] for v in item_index.values() if v.get("type") == problem_type and v.get("record_id")
     }
     behavior_ids = {
-        card.record_id for card in cards if any(item.type == EvidenceItemType.BEHAVIOR for item in card.evidence_items)
+        v["record_id"] for v in item_index.values() if v.get("type") == behavior_type and v.get("record_id")
     }
     gap_ids = {
-        card.record_id for card in cards if any(item.type == EvidenceItemType.ACTION_GAP for item in card.evidence_items)
+        v["record_id"] for v in item_index.values() if v.get("type") == gap_type and v.get("record_id")
     }
     themed_ids = {rid for theme in coverage_themes for rid in _theme_record_ids(theme)}
     usable = int(summary.get("usable_comments", 0) or 0)
     if usable <= 0:
-        usable = max(len(records), len(cards))
+        usable = max(len(records), analyzed_count)
     covered = len(themed_ids)
     coverage = covered / usable if usable else 0.0
     low_information = int(summary.get("low_information_comments", 0) or 0)
@@ -434,7 +438,7 @@ def build_readable_report(
         "| 指标 | 数值 |",
         "|---|---:|",
         f"| 评论总数 | {summary.get('total_comments', len(records))} |",
-        f"| 已分析评论 | {len(cards)} |",
+        f"| 已分析评论 | {analyzed_count} |",
         f"| 独立用户数 | {summary.get('unique_users', 0)} |",
         f"| 有具体问题的用户数 | {_users_for_ids(records, list(problem_ids))} |",
         f"| 有真实行为的用户数 | {_users_for_ids(records, list(behavior_ids))} |",
@@ -452,7 +456,7 @@ def build_readable_report(
         "",
         "### 结论边界",
         "",
-        f"- 本报告基于 {len(cards)} / {len(records)} 条评论的证据卡；未覆盖部分不代表没有信号。",
+        f"- 本报告基于 {analyzed_count} / {len(records)} 条评论的证据卡；未覆盖部分不代表没有信号。",
         "- 本报告识别的是评论中的问题与行为信号，不等于需求已经验证。",
         "- 规则推断的个性化/实时反馈标签仅用于候选筛选，不作为事实统计。",
         "- 当前数据不能证明付费意愿、市场规模、长期留存或医疗效果。",
@@ -543,7 +547,7 @@ def build_readable_report(
         lines.extend(["- 暂无稳定问题主题。可先生成开放主题后再看本段。", ""])
 
     lines.extend(["## 4. 用户行为与行动差距", ""])
-    grouped_behaviors = _behavior_groups(cards)
+    grouped_behaviors = _behavior_groups(item_index)
     for label, rids in sorted(grouped_behaviors.items(), key=lambda item: -len(item[1])):
         lines.append(f"- **{label}**：{len(rids)} 条 / {_users_for_ids(records, rids)} 名用户")
     if not grouped_behaviors:

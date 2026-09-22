@@ -308,7 +308,7 @@ def run_evidence_analysis_batch(
             progress.last_error = ""
             try:
                 research_perf = _maybe_finish_evidence_research(
-                    run_id, config, api_key or "", mock_mode
+                    run_id, config, api_key or "", mock_mode, records=records
                 )
                 progress.prompt_tokens += int(research_perf.get("prompt_tokens") or 0)
                 progress.completion_tokens += int(research_perf.get("completion_tokens") or 0)
@@ -441,7 +441,7 @@ def run_evidence_analysis_batch(
             # Optional dataset research when fully done
             try:
                 research_perf = _maybe_finish_evidence_research(
-                    run_id, config, api_key or "", mock_mode
+                    run_id, config, api_key or "", mock_mode, records=records
                 )
                 progress.prompt_tokens += int(research_perf.get("prompt_tokens") or 0)
                 progress.completion_tokens += int(research_perf.get("completion_tokens") or 0)
@@ -500,7 +500,7 @@ def run_evidence_analysis_batch(
 
 
 def _maybe_finish_evidence_research(
-    run_id: str, config, api_key: str, use_mock: bool
+    run_id: str, config, api_key: str, use_mock: bool, *, records=None
 ) -> Dict[str, object]:
     from .readable_report import build_readable_report
     from .research_agent import run_research_analysis
@@ -512,8 +512,9 @@ def _maybe_finish_evidence_research(
         save_semantic_review,
     )
 
-    records = load_source_records(run_id)
-    card_rows = load_evidence_cards(run_id)
+    if records is None:
+        records = load_source_records(run_id)
+    card_rows = load_evidence_cards(run_id, include_source=False)
     if not card_rows:
         return {
             "research_elapsed_seconds": 0.0,
@@ -630,7 +631,7 @@ def build_summary(run_id: str) -> Dict[str, object]:
     results = load_results(run_id)
     cards_by_id = {
         str(row.get("record_id") or ""): row
-        for row in load_evidence_cards(run_id)
+        for row in load_evidence_cards(run_id, include_source=False)
         if row.get("record_id")
     }
     # Mutate rows in place to avoid holding a second full copy of a large run.

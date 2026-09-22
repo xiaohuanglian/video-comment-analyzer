@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field
 
 from .evidence_adapter import has_explicit_paid_action, has_paid_failure
 from .evidence_schemas import (
-    EvidenceCard,
     EvidenceItem,
     EvidenceItemType,
     ItemCertainty,
@@ -183,20 +182,23 @@ def sanitize_item_semantics(
 def _item_index(card_rows: Sequence[dict]) -> Dict[str, dict]:
     index: Dict[str, dict] = {}
     for row in card_rows:
-        try:
-            card = EvidenceCard.model_validate(row.get("card") or row)
-        except Exception:
+        card_raw = row.get("card") or row
+        if not isinstance(card_raw, dict):
             continue
-        for item in card.evidence_items or []:
-            if not item.evidence_item_id:
+        record_id = str(card_raw.get("record_id") or "")
+        for item in card_raw.get("evidence_items") or []:
+            if not isinstance(item, dict):
                 continue
-            index[item.evidence_item_id] = {
-                "record_id": card.record_id,
-                "evidence_item_id": item.evidence_item_id,
-                "quote": item.evidence_quote,
-                "type": item.type.value,
-                "subtype": item.subtype,
-                "scope": item.speaker_scope.value,
+            eid = str(item.get("evidence_item_id") or "")
+            if not eid:
+                continue
+            index[eid] = {
+                "record_id": record_id,
+                "evidence_item_id": eid,
+                "quote": item.get("evidence_quote") or "",
+                "type": getattr(item.get("type"), "value", item.get("type")) or "",
+                "subtype": item.get("subtype") or "",
+                "scope": getattr(item.get("speaker_scope"), "value", item.get("speaker_scope")) or "",
             }
     return index
 
