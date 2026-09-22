@@ -99,11 +99,22 @@ def test_budget_exceeded_is_rejected(client, isolated_data, monkeypatch):
 
 def test_small_run_without_budget_starts(client, isolated_data, monkeypatch):
     monkeypatch.setattr(analysis_router, "LARGE_RUN_CONFIRM_THRESHOLD", 10_000)
-    _make_run("guard_ok", 3, use_mock=True)
+    started: dict = {}
+
+    def fake_start(run_id, body, use_mock):
+        started["run_id"] = run_id
+        return {"run_id": run_id, "background": True, "status": "running"}
+
+    # Stub the background launcher so the test does not spawn a real worker thread.
+    monkeypatch.setattr(analysis_router, "_start_analyze_job", fake_start)
+    _make_run("guard_ok", 3, use_mock=False)
 
     resp = client.post(
         "/api/analysis/runs/guard_ok/analyze",
-        json={"use_mock": True, "background": True},
+        json={"api_key": "sk-test", "background": True},
     )
     assert resp.status_code == 200
-    assert resp.json().get("needs_confirmation") is not True
+    body = resp.json()
+    assert body.get("needs_confirmation") is not True
+    assert started.get("run_id") == "guard_ok"
+    assert body["estimate"]["pending"] == 3
