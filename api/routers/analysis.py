@@ -28,6 +28,7 @@ from api.services.insight.run_naming import build_run_id
 from api.services.insight.sampling import DEFAULT_SAMPLE_SEED, stratified_sample
 from api.services.insight.schemas import FieldMapping, RunConfig
 from api.services.insight.storage import (
+    completed_record_ids,
     create_run,
     ensure_run_config,
     load_candidates,
@@ -67,6 +68,47 @@ from api.services.insight.trial_report import build_trial_report
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
 AVG_SECONDS_PER_COMMENT = 4.0
+AVG_PROMPT_TOKENS_PER_COMMENT = 900
+AVG_COMPLETION_TOKENS_PER_COMMENT = 350
+# Runs at or above this many pending comments must be explicitly confirmed.
+LARGE_RUN_CONFIRM_THRESHOLD = 2000
+
+
+def _pending_count(run_id: str) -> int:
+    """Records that still need analysis (results are authoritative for success)."""
+    records = load_source_records(run_id)
+    if not records:
+        return 0
+    done = completed_record_ids(run_id)
+    return sum(1 for record in records if record.internal_record_id not in done)
+
+
+def _estimate_batch(config, count: int) -> Dict[str, Any]:
+    """Pre-run estimate so users can see cost/time before spending money."""
+    count = max(0, int(count))
+    pricing = resolve_pricing(config.base_url, config.model_name)
+    prompt_tokens = count * AVG_PROMPT_TOKENS_PER_COMMENT
+    completion_tokens = count * AVG_COMPLETION_TOKENS_PER_COMMENT
+    cost = estimate_cost(
+        prompt_tokens,
+        completion_tokens,
+        input_price=config.input_price,
+        output_price=config.output_price,
+    )
+    concurrency = max(1, int(getattr(config, "concurrency", 8) or 8))
+    duration = int(count * AVG_SECONDS_PER_COMMENT / concurrency)
+    return {
+        "pending": count,
+        "estimated_prompt_tokens": prompt_tokens,
+        "estimated_completion_tokens": completion_tokens,
+        "estimated_cost": cost,
+        "currency": config.currency,
+        "estimated_duration_seconds": duration,
+        "estimated_duration_label": _format_duration(duration),
+        "budget_limit": config.budget_limit,
+        "within_budget": config.budget_limit <= 0 or cost <= config.budget_limit,
+        "provider_label": pricing.get("provider_label"),
+    }
 
 
 def _attachment_headers(filename: str, fallback: str) -> Dict[str, str]:
@@ -100,6 +142,7 @@ class AnalyzeRequest(BaseModel):
     api_key: Optional[str] = None
     background: bool = True
     force_reanalyze: bool = False
+    confirm_large: bool = False
 
 
 class ThemeClusterRequest(BaseModel):
@@ -480,12 +523,42 @@ def _start_analyze_job(run_id: str, body: AnalyzeRequest, use_mock: bool) -> Dic
 @router.post("/runs/{run_id}/analyze")
 async def post_analyze(run_id: str, body: AnalyzeRequest) -> Dict[str, Any]:
     try:
-        config = load_config(run_id)
+        config = ensure_run_config(load_config(run_id))
         use_mock = config.use_mock if body.use_mock is None else body.use_mock
         if not use_mock and not (body.api_key or "").strip():
             raise HTTPException(status_code=400, detail="真实 API 分析需要填写 API Key")
+
+        estimate: Optional[Dict[str, Any]] = None
+        if not use_mock and not body.retry_failed_only:
+            pending = _pending_count(run_id)
+            if body.limit:
+                pending = min(pending, int(body.limit))
+            if body.record_ids:
+                pending = min(pending, len(body.record_ids))
+            estimate = _estimate_batch(config, pending)
+            if config.budget_limit > 0 and not estimate["within_budget"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"预计费用 {estimate['estimated_cost']:.2f} {config.currency} 超过预算上限 "
+                        f"{config.budget_limit:.2f} {config.currency}；请提高预算或减少分析条数。"
+                    ),
+                )
+            if pending >= LARGE_RUN_CONFIRM_THRESHOLD and not body.confirm_large:
+                return {
+                    "run_id": run_id,
+                    "needs_confirmation": True,
+                    "estimate": estimate,
+                    "pending": pending,
+                    "message": (
+                        f"本次将分析约 {pending} 条评论，预计费用 "
+                        f"{estimate['estimated_cost']:.2f} {config.currency}、预计耗时 "
+                        f"{estimate['estimated_duration_label']}，请确认后继续。"
+                    ),
+                }
+
         if body.background:
-            return _start_analyze_job(run_id, body, use_mock)
+            return {**_start_analyze_job(run_id, body, use_mock), "estimate": estimate}
 
         id_set = set(body.record_ids) if body.record_ids else None
         result = run_analysis_batch(
@@ -497,6 +570,7 @@ async def post_analyze(run_id: str, body: AnalyzeRequest) -> Dict[str, Any]:
             api_key=body.api_key,
             force_reanalyze=body.force_reanalyze,
         )
+        result["estimate"] = estimate
         if result.get("completed", 0) > 0:
             build_summary(run_id)
         return result
