@@ -59,12 +59,59 @@ def _format_new_signals(signals: Any) -> str:
     return "；".join(part for part in parts if part)
 
 
-def build_results_csv(
+_RESULTS_CSV_HEADER = [
+    "record_id",
+    "评论",
+    "用户",
+    "用户主页",
+    "平台",
+    "视频标题",
+    "博主",
+    "分类",
+    "主要目的",
+    "信息信号",
+    "训练证据",
+    "具体问题",
+    "单向视频关系",
+    "新发现",
+    "产品适配",
+    "置信度",
+    "分析时间",
+]
+
+
+def _results_csv_row(row: Dict[str, Any]) -> List[Any]:
+    source = row.get("source") or {}
+    analysis = row.get("analysis") or {}
+    return [
+        row.get("record_id") or analysis.get("record_id") or "",
+        source.get("comment_text") or "",
+        source.get("username") or source.get("user_id") or "",
+        source.get("user_homepage_url") or "",
+        source.get("platform") or "",
+        source.get("video_title") or "",
+        source.get("creator_name") or "",
+        source.get("creator_type") or "",
+        label_intent(str(analysis.get("primary_intent") or "")),
+        "，".join(label_signal(str(s)) for s in (analysis.get("signals") or [])),
+        TRAINING_EVIDENCE_LABELS.get(
+            str(analysis.get("actual_training_evidence") or ""),
+            analysis.get("actual_training_evidence") or "",
+        ),
+        "；".join(str(p) for p in (analysis.get("specific_problems") or [])),
+        label_single_video(str(analysis.get("single_video_relation") or "")),
+        _format_new_signals(analysis.get("new_signals")),
+        label_product_fit(str(analysis.get("product_fit") or "")),
+        analysis.get("confidence"),
+        row.get("analyzed_at") or "",
+    ]
+
+
+def _select_results_rows(
     run_id: str,
-    *,
-    source_files: Optional[Set[str]] = None,
-    rows: Optional[List[Dict[str, Any]]] = None,
-) -> bytes:
+    source_files: Optional[Set[str]],
+    rows: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
     if rows is None:
         rows = load_results(run_id)
     if source_files:
@@ -75,57 +122,39 @@ def build_results_csv(
         ]
     if not rows:
         raise ValueError("尚无分析结果可导出")
+    return rows
 
+
+def build_results_csv(
+    run_id: str,
+    *,
+    source_files: Optional[Set[str]] = None,
+    rows: Optional[List[Dict[str, Any]]] = None,
+) -> bytes:
+    selected = _select_results_rows(run_id, source_files, rows)
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(
-        [
-            "record_id",
-            "评论",
-            "用户",
-            "用户主页",
-            "平台",
-            "视频标题",
-            "博主",
-            "分类",
-            "主要目的",
-            "信息信号",
-            "训练证据",
-            "具体问题",
-            "单向视频关系",
-            "新发现",
-            "产品适配",
-            "置信度",
-            "分析时间",
-        ]
-    )
-    for row in rows:
-        source = row.get("source") or {}
-        analysis = row.get("analysis") or {}
-        writer.writerow(
-            [
-                row.get("record_id") or analysis.get("record_id") or "",
-                source.get("comment_text") or "",
-                source.get("username") or source.get("user_id") or "",
-                source.get("user_homepage_url") or "",
-                source.get("platform") or "",
-                source.get("video_title") or "",
-                source.get("creator_name") or "",
-                source.get("creator_type") or "",
-                label_intent(str(analysis.get("primary_intent") or "")),
-                "，".join(label_signal(str(s)) for s in (analysis.get("signals") or [])),
-                TRAINING_EVIDENCE_LABELS.get(
-                    str(analysis.get("actual_training_evidence") or ""), analysis.get("actual_training_evidence") or ""
-                ),
-                "；".join(str(p) for p in (analysis.get("specific_problems") or [])),
-                label_single_video(str(analysis.get("single_video_relation") or "")),
-                _format_new_signals(analysis.get("new_signals")),
-                label_product_fit(str(analysis.get("product_fit") or "")),
-                analysis.get("confidence"),
-                row.get("analyzed_at") or "",
-            ]
-        )
+    writer.writerow(_RESULTS_CSV_HEADER)
+    for row in selected:
+        writer.writerow(_results_csv_row(row))
     return buffer.getvalue().encode("utf-8-sig")
+
+
+def write_results_csv(
+    path,
+    run_id: str,
+    *,
+    source_files: Optional[Set[str]] = None,
+    rows: Optional[List[Dict[str, Any]]] = None,
+) -> None:
+    """Stream results to a CSV file without building the whole blob in memory."""
+    selected = _select_results_rows(run_id, source_files, rows)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(_RESULTS_CSV_HEADER)
+        for row in selected:
+            writer.writerow(_results_csv_row(row))
 
 
 def _elapsed_seconds(progress: Dict[str, Any]) -> int | None:
@@ -913,12 +942,18 @@ def auto_export_artifacts(run_id: str) -> Dict[str, str]:
             if resolve_under_data(rel_path).parent.resolve() == target_parent
         }
         try:
-            results_bytes = build_results_csv(
-                run_id, source_files=source_files or None, rows=all_results
+            write_results_csv(
+                targets["results_csv"],
+                run_id,
+                source_files=source_files or None,
+                rows=all_results,
             )
+            saved.setdefault("results_csv", _rel_to_data(targets["results_csv"]))
         except ValueError:
             # Other videos in a multi-video run may not have results yet.
-            results_bytes = None
+            pass
+        except OSError as exc:
+            errors.append(f"results_csv write: {exc}")
         report_text: str | None = None
         if report_ready:
             try:
@@ -927,13 +962,6 @@ def auto_export_artifacts(run_id: str) -> Dict[str, str]:
                 )
             except Exception as exc:
                 errors.append(f"report_md ({target_parent.name}): {exc}")
-        if results_bytes is not None:
-            try:
-                targets["results_csv"].parent.mkdir(parents=True, exist_ok=True)
-                targets["results_csv"].write_bytes(results_bytes)
-                saved.setdefault("results_csv", _rel_to_data(targets["results_csv"]))
-            except OSError as exc:
-                errors.append(f"results_csv write: {exc}")
         if report_text is not None:
             try:
                 targets["report_md"].parent.mkdir(parents=True, exist_ok=True)

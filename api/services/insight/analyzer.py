@@ -633,12 +633,11 @@ def build_summary(run_id: str) -> Dict[str, object]:
         for row in load_evidence_cards(run_id)
         if row.get("record_id")
     }
-    refreshed: List[Dict[str, object]] = []
+    # Mutate rows in place to avoid holding a second full copy of a large run.
     for row in results:
         rid = str(row.get("record_id") or "")
         card_row = cards_by_id.get(rid)
         if not card_row:
-            refreshed.append(row)
             continue
         card = card_row.get("card") or {}
         projected = outreach_analysis_from_card(card)
@@ -647,8 +646,8 @@ def build_summary(run_id: str) -> Dict[str, object]:
         analysis["paid_help"] = bool(
             analysis.get("paid_help") or projected.get("paid_help")
         )
-        refreshed.append({**row, "analysis": analysis, "card": card})
-    results = refreshed
+        row["analysis"] = analysis
+        row["card"] = card
     progress = load_progress(run_id)
     summary = build_statistics(results, total_records=progress.total_records)
     candidates_doc = load_candidates(run_id)
