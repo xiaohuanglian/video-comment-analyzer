@@ -465,10 +465,11 @@ def _scoped_qual_stats(
     *,
     source_files: Optional[Set[str]] = None,
     total_records: int = 0,
+    rows: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     from .statistics import build_statistics
 
-    rows = load_results(run_id)
+    rows = rows if rows is not None else load_results(run_id)
     if source_files:
         rows = [
             row
@@ -484,6 +485,9 @@ def build_report_markdown(
     run_id: str,
     *,
     source_files: Optional[Set[str]] = None,
+    all_records: Optional[List[Any]] = None,
+    all_cards: Optional[List[Dict[str, Any]]] = None,
+    all_results: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     config = load_config(run_id)
     progress = load_progress(run_id).model_dump()
@@ -494,21 +498,24 @@ def build_report_markdown(
         from .readable_report import build_readable_report
 
         if source_files:
-            research, records, card_rows = _scoped_research_payload(run_id, source_files)
+            research, records, card_rows = _scoped_research_payload(
+                run_id, source_files, all_records=all_records, all_cards=all_cards
+            )
             source_label = " / ".join(
                 sorted({Path(source_file).parent.name for source_file in source_files})
             )
             run_label = f"{config.name} · {source_label}"
         else:
             research = load_research_analysis(run_id)
-            records = load_source_records(run_id)
-            card_rows = load_evidence_cards(run_id)
+            records = all_records if all_records is not None else load_source_records(run_id)
+            card_rows = all_cards if all_cards is not None else load_evidence_cards(run_id)
             run_label = config.name
         open_themes = _scoped_open_themes(run_id, source_files=source_files)
         qual_stats = _scoped_qual_stats(
             run_id,
             source_files=source_files,
             total_records=len(records),
+            rows=all_results,
         )
         research_report = build_readable_report(
             research=research,
@@ -535,7 +542,7 @@ def build_report_markdown(
             return research_report
     summary_path = _run_dir(run_id) / "summary.json"
     summary: Dict[str, Any] = _read_json(summary_path) if summary_path.exists() else {}
-    rows = load_results(run_id)
+    rows = all_results if all_results is not None else load_results(run_id)
     analyzed = summary.get("total_analyzed") or len(rows)
     total_records = progress.get("total_records") or analyzed
 
@@ -923,6 +930,9 @@ def auto_export_artifacts(run_id: str) -> Dict[str, str]:
         bool(getattr(themes_doc, "created_at", ""))
         and bool(semantic_review.get("open_themes"))
     )
+    # Load source/cards once for all per-video report targets (was O(videos x rows)).
+    all_records = load_source_records(run_id) if report_ready else []
+    all_cards = load_evidence_cards(run_id, include_source=False) if report_ready else []
     try:
         if load_candidates(run_id).candidates:
             candidates_bytes = build_candidates_csv(run_id)
@@ -958,7 +968,11 @@ def auto_export_artifacts(run_id: str) -> Dict[str, str]:
         if report_ready:
             try:
                 report_text = build_report_markdown(
-                    run_id, source_files=source_files or None
+                    run_id,
+                    source_files=source_files or None,
+                    all_records=all_records,
+                    all_cards=all_cards,
+                    all_results=all_results,
                 )
             except Exception as exc:
                 errors.append(f"report_md ({target_parent.name}): {exc}")
