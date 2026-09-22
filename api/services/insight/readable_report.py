@@ -134,7 +134,10 @@ def _is_reportable_theme(theme: dict) -> bool:
 
 
 def _reportable_themes(themes: Sequence[dict]) -> List[dict]:
-    return [theme for theme in themes if _is_reportable_theme(theme)]
+    reportable = [theme for theme in themes if _is_reportable_theme(theme)]
+    # Most-supported themes first, so executive sections are not order-dependent.
+    reportable.sort(key=_theme_count, reverse=True)
+    return reportable
 
 
 def _theme_summary(theme: dict) -> str:
@@ -161,6 +164,21 @@ def _is_reportable_finding(finding: dict) -> bool:
         str(finding.get(key) or "") for key in ("finding", "conclusion", "why_it_matters")
     ).lower()
     return not any(marker in text for marker in ("打卡", "第九天", "第四天", "day", "bgm", "收藏"))
+
+
+# Cap on findings expanded inline; the rest stay available in research_analysis.json.
+MAX_REPORT_FINDINGS = 5
+
+
+def _finding_score(finding: dict, records: Sequence[SourceRecord]) -> tuple:
+    """Rank findings by independent users, then comment volume, then evidence refs."""
+    ids = [rid for rid in (finding.get("record_ids") or []) if isinstance(rid, str)]
+    refs = finding.get("supporting_evidence_refs") or []
+    return (
+        _users_for_ids(records, ids),
+        len(set(ids)),
+        len([ref for ref in refs if isinstance(ref, dict)]),
+    )
 
 
 def _priority_insight(themes: Sequence[dict]) -> dict:
@@ -341,12 +359,15 @@ def build_readable_report(
     coverage_themes = open_theme_list or research_themes
     coverage_label = "开放主题覆盖率" if open_theme_list else "主要主题覆盖率"
 
-    findings = [
+    eligible_findings = [
         finding
         for finding in (research.get("unexpected_findings") or [])
         if _finding_has_required_evidence(finding, item_index)
         and _is_reportable_finding(finding)
-    ][:3]
+    ]
+    eligible_findings.sort(key=lambda f: _finding_score(f, records), reverse=True)
+    findings = eligible_findings[:MAX_REPORT_FINDINGS]
+    hidden_findings = max(0, len(eligible_findings) - len(findings))
     model_draft = research.get("model_draft") or {}
     dropped = model_draft.get("dropped_evidence_refs") or []
     aggregate_research_used = any(
@@ -413,6 +434,7 @@ def build_readable_report(
         "| 指标 | 数值 |",
         "|---|---:|",
         f"| 评论总数 | {summary.get('total_comments', len(records))} |",
+        f"| 已分析评论 | {len(cards)} |",
         f"| 独立用户数 | {summary.get('unique_users', 0)} |",
         f"| 有具体问题的用户数 | {_users_for_ids(records, list(problem_ids))} |",
         f"| 有真实行为的用户数 | {_users_for_ids(records, list(behavior_ids))} |",
@@ -430,6 +452,7 @@ def build_readable_report(
         "",
         "### 结论边界",
         "",
+        f"- 本报告基于 {len(cards)} / {len(records)} 条评论的证据卡；未覆盖部分不代表没有信号。",
         "- 本报告识别的是评论中的问题与行为信号，不等于需求已经验证。",
         "- 规则推断的个性化/实时反馈标签仅用于候选筛选，不作为事实统计。",
         "- 当前数据不能证明付费意愿、市场规模、长期留存或医疗效果。",
@@ -458,6 +481,12 @@ def build_readable_report(
                     "",
                 ]
             )
+        if hidden_findings:
+            lines.append(
+                f"- 另有 {hidden_findings} 条达到证据门槛的发现（按独立用户数与证据量排序后未展开），"
+                "详见任务目录 `research_analysis.json`。"
+            )
+            lines.append("")
     elif themes:
         theme = themes[0]
         rids = _theme_record_ids(theme)
