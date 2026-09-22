@@ -378,7 +378,12 @@ async def get_run(run_id: str) -> Dict[str, Any]:
         config = load_config(run_id)
         reconcile_thread_state(run_id)
         worker_alive = is_running(run_id)
-        progress = sync_progress_from_results(run_id)
+        # progress.json is updated incrementally while the worker runs; only fall
+        # back to a full results.jsonl scan when the worker is gone (crash/stop).
+        if worker_alive:
+            progress = load_progress(run_id)
+        else:
+            progress = sync_progress_from_results(run_id)
         before_status = progress.status
         progress = reconcile_stale_progress(progress, worker_alive=worker_alive)
         if (
