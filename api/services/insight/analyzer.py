@@ -416,15 +416,8 @@ def run_evidence_analysis_batch(
         progress.failed = len(progress.failed_record_ids)
         _persist_progress(run_id, progress)
 
-        next_source = work_chunks[chunk_index][0] if chunk_index < len(work_chunks) else None
-        if next_source != source_file:
-            try:
-                from .run_partitions import partition_run_storage
-
-                partition_run_storage(run_id)
-            except Exception:
-                pass
-
+        # Per-video partitions are written once at completion (build_summary);
+        # doing it at every video boundary was O(videos x total_rows).
         if progress.status == "cancelled":
             break
 
