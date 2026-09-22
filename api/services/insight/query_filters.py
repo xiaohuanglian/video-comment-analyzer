@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .candidate_schemas import CandidateRecord
 from .statistics import VALID_INTENTS
@@ -91,6 +91,14 @@ def match_result_row(
     return True
 
 
+def _result_filter_kwargs(filters: Dict[str, Any]) -> Dict[str, Any]:
+    theme_ids = filters.pop("theme_record_ids", None)
+    record_ids = filters.pop("record_ids", None)
+    theme_set = set(theme_ids) if theme_ids else None
+    id_set = set(record_ids) if record_ids else theme_set
+    return {"record_ids": id_set, **filters}
+
+
 def paginate_results(
     rows: List[Dict[str, Any]],
     *,
@@ -98,21 +106,39 @@ def paginate_results(
     page_size: int = 100,
     **filters: Any,
 ) -> Dict[str, Any]:
-    theme_ids = filters.pop("theme_record_ids", None)
-    record_ids = filters.pop("record_ids", None)
-    theme_set = set(theme_ids) if theme_ids else None
-    id_set = set(record_ids) if record_ids else theme_set
-    filtered = [row for row in rows if match_result_row(row, record_ids=id_set, **filters)]
-    total = len(filtered)
+    return paginate_results_iter(rows, page=page, page_size=page_size, **filters)
+
+
+def paginate_results_iter(
+    rows: Iterable[Dict[str, Any]],
+    *,
+    page: int = 1,
+    page_size: int = 100,
+    **filters: Any,
+) -> Dict[str, Any]:
+    """Stream rows once; hold only the requested page in memory.
+
+    Keeps memory O(page_size) even for 100k-row runs, while still reporting
+    the true filtered total.
+    """
+    match_kwargs = _result_filter_kwargs(dict(filters))
     page = max(1, page)
     page_size = max(1, min(page_size, 500))
     start = (page - 1) * page_size
     end = start + page_size
+    total = 0
+    items: List[Dict[str, Any]] = []
+    for row in rows:
+        if not match_result_row(row, **match_kwargs):
+            continue
+        if start <= total < end:
+            items.append(row)
+        total += 1
     return {
         "total": total,
         "page": page,
         "page_size": page_size,
-        "items": filtered[start:end],
+        "items": items,
     }
 
 

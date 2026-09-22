@@ -45,6 +45,7 @@ from api.services.insight.storage import (
     load_themes,
     load_trial_sample,
     list_runs,
+    iter_results,
     reset_failed_records,
     results_for_candidates,
     save_candidates,
@@ -62,7 +63,7 @@ from api.services.insight.research_matching import parse_research_targets
 from api.services.insight.candidates import build_candidates, merge_candidate_updates
 from api.services.insight.outreach import generate_outreach_drafts, merge_outreach_update
 from api.services.insight.outreach_prompts import DEFAULT_BASE_TEMPLATE
-from api.services.insight.query_filters import paginate_candidates, paginate_results
+from api.services.insight.query_filters import paginate_candidates, paginate_results_iter
 from api.services.insight.trial_report import build_trial_report
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -974,10 +975,9 @@ async def get_result_items(
         load_config(run_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="任务不存在") from exc
-    rows = load_results(run_id)
     id_list = [item.strip() for item in record_ids.split(",") if item.strip()] if record_ids else None
-    return paginate_results(
-        rows,
+    return paginate_results_iter(
+        iter_results(run_id),
         page=page,
         page_size=page_size,
         keyword=keyword.strip(),

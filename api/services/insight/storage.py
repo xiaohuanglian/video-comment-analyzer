@@ -353,6 +353,16 @@ def load_results(run_id: str, limit: Optional[int] = None) -> List[Dict[str, Any
     return rows
 
 
+def iter_results(run_id: str, limit: Optional[int] = None):
+    """Yield result rows one at a time so callers can stream huge runs."""
+    count = 0
+    for line in _iter_jsonl(_run_dir(run_id) / "results.jsonl"):
+        yield json.loads(line)
+        count += 1
+        if limit and count >= limit:
+            break
+
+
 def save_summary(run_id: str, summary: Dict[str, object]) -> None:
     _write_json(_run_dir(run_id) / "summary.json", summary)
 
