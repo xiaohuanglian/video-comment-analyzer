@@ -67,7 +67,7 @@ def _quote_meta(refs: Sequence[dict], item_index: Dict[str, dict], *, limit: int
 
 REPORT_BEHAVIOR_GROUPS = {
     "已开始尝试": {"attempted", "completed_once", "completed", "self_reported_ability"},
-    "正在持续训练": {
+    "正在持续进行": {
         "continued",
         "ongoing_period",
         "sustained_practice",
@@ -116,15 +116,14 @@ def _theme_count(theme: dict) -> int:
     return int(theme.get("comment_count") or len(_theme_record_ids(theme)))
 
 
-# Defaults reproduce the built-in fitness profile; profiles can override them.
+# Neutral defaults; project profiles normally override these.
 DEFAULT_NOISE_MARKERS = (
-    "打卡", "day", "第九天", "第四天", "d5", "d6", "bgm",
-    "收藏", "点赞", "真的有用",
+    "哈哈", "支持", "沙发", "第一", "点赞", "路过", "签到",
 )
-DEFAULT_DECISION_KEYWORDS = ("方向", "判断", "动作", "困难", "问题", "障碍", "疼痛", "规划", "积液", "甩泥")
-DEFAULT_RISK_TOKENS = ("疼", "痛", "不适", "关节")
-DEFAULT_DIFFICULTY_TOKENS = ("做不了", "不行", "困难", "好难", "累", "不到位")
-DEFAULT_QUESTION_TOKENS = ("可以", "能不能", "吗", "要做几次", "每天")
+DEFAULT_DECISION_KEYWORDS = ("问题", "困难", "需求", "替代", "付费", "为什么不", "怎么办")
+DEFAULT_RISK_TOKENS = ("风险", "坑", "骗", "退款", "后悔")
+DEFAULT_DIFFICULTY_TOKENS = ("不会", "难", "搞不定", "做不到", "麻烦", "卡住")
+DEFAULT_QUESTION_TOKENS = ("怎么", "能不能", "可以", "吗", "如何", "为什么")
 
 
 def _noise_markers(profile) -> tuple:
@@ -357,9 +356,9 @@ def build_readable_report(
     profile: Any = None,
 ) -> str:
     if profile is None:
-        from .project_profiles import builtin_profiles
+        from .project_profiles import DEFAULT_PROFILE_ID, get_profile
 
-        profile = builtin_profiles()["kineo"]
+        profile = get_profile(DEFAULT_PROFILE_ID)
     noise_markers = _noise_markers(profile)
     summary = research.get("dataset_summary") or {}
     item_index = _index_evidence_items(card_rows)
@@ -606,7 +605,7 @@ def build_readable_report(
         lines.append(f"- 跳过无效证据引用 {len(dropped)} 条，未补写或猜测原话。")
     lines.extend(
         [
-            "- 单一视频评论样本存在选择偏差；自我报告不能视为客观训练效果。",
+            "- 单一内容评论样本存在选择偏差；自我报告不能视为客观效果。",
             "",
             "## 7. 证据附录",
             "",

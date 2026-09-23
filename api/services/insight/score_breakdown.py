@@ -6,15 +6,15 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 SCORE_LABELS = {
-    "training_continued": "持续训练 +2",
-    "training_tried": "尝试训练 +1",
+    "training_continued": "持续进行 +2",
+    "training_tried": "尝试过 +1",
     "specific_problems": "具体问题 +2",
-    "video_insufficient": "单向视频可能不足 +2",
+    "video_insufficient": "单向内容可能不足 +2",
     "help_seeking": "主动求助 +1",
     "behavior_costs": "行为成本 +1",
-    "impact_skipped": "因此跳过训练 +1",
-    "impact_stopped": "因此停止训练 +2",
-    "impact_changed_plan": "因此调整计划 +1",
+    "impact_skipped": "因此跳过步骤 +1",
+    "impact_stopped": "因此停止使用 +2",
+    "impact_changed_plan": "因此调整方案 +1",
     "impact_paid_help": "因此付费求助 +2",
     "fit_high": "产品高适配 +2",
     "fit_medium": "产品中适配 +1",

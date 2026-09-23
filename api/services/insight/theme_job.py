@@ -204,97 +204,6 @@ def _progress_pct(
     return min(99.0, max(0.0, 100.0 * done / max(1, total_batches)))
 
 
-def _execute_hybrid_theme_cluster(
-    run_id: str,
-    *,
-    config,
-    records,
-    api_key: str,
-    use_mock: bool,
-) -> Dict[str, Any]:
-    """Hybrid pipeline adapter that preserves the legacy ThemesDocument contract."""
-    from .theme_pipeline import run_hybrid_theme_pipeline
-
-    pipeline_dir = _run_dir(run_id) / "theme_pipeline"
-    source_total = len({record.source_file for record in records if record.source_file})
-    save_theme_progress(
-        run_id,
-        {
-            "status": "running",
-            "phase": "embedding",
-            "progress_scope": "stages",
-            "source_total": source_total,
-            "source_completed": 0,
-            "current": 0,
-            "total": 7,
-            "progress_pct": 10,
-            "message": "正在准备信号并生成本地语义向量…",
-            "last_error": "",
-        },
-    )
-    doc = run_hybrid_theme_pipeline(
-        run_id, config=config, pipeline_dir=pipeline_dir, use_mock=use_mock
-    )
-    save_theme_progress(
-        run_id,
-        {
-            "status": "running",
-            "phase": "quality_validation",
-            "progress_scope": "stages",
-            "source_total": source_total,
-            "source_completed": source_total,
-            "current": 6,
-            "total": 7,
-            "progress_pct": 90,
-            "message": "正在校验主题结构与证据链…",
-            "last_error": "",
-        },
-    )
-    # Hybrid labels are deterministic fallbacks until short LLM labeling is
-    # enabled; structural review still keeps the downstream semantic contract.
-    reviewed_doc, review = review_open_themes(
-        doc, records, config=config, api_key=api_key, use_mock=use_mock
-    )
-    per_source_ids = reviewed_doc.cluster_metadata.get("per_source_theme_ids") or {}
-    semantic_payload = load_semantic_review(run_id)
-    semantic_payload["open_themes"] = review.model_dump(mode="json")
-    semantic_payload["per_source_open_theme_ids"] = per_source_ids
-    semantic_payload["per_source_open_themes"] = {
-        source_file: review.model_dump(mode="json") for source_file in per_source_ids
-    }
-    save_open_theme_artifacts(run_id, reviewed_doc, semantic_payload)
-    try:
-        from .analyzer import build_summary
-        from .export import auto_export_artifacts
-
-        build_summary(run_id)
-        auto_export_artifacts(run_id)
-    except Exception:
-        pass
-    save_theme_progress(
-        run_id,
-        {
-            "status": "completed_with_warnings" if reviewed_doc.warnings else "completed",
-            "phase": "done",
-            "progress_scope": "stages",
-            "source_total": source_total,
-            "source_completed": source_total,
-            "current": 7,
-            "total": 7,
-            "progress_pct": 100,
-            "eta_seconds": 0,
-            "message": f"完成：共 {len(reviewed_doc.themes)} 个开放主题",
-            "last_error": "",
-            "theme_count": len(reviewed_doc.themes),
-            "per_source_theme_counts": {
-                key: len(value) for key, value in per_source_ids.items()
-            },
-            "warnings": reviewed_doc.warnings,
-        },
-    )
-    return {**reviewed_doc.model_dump(mode="json"), "status": "completed"}
-
-
 def execute_theme_cluster(
     run_id: str,
     *,
@@ -307,14 +216,6 @@ def execute_theme_cluster(
     mark_theme_cluster_starting(run_id)
     config = load_config(run_id)
     records = load_source_records(run_id)
-    if config.themes_engine == "hybrid_cluster_v1":
-        return _execute_hybrid_theme_cluster(
-            run_id,
-            config=config,
-            records=records,
-            api_key=api_key,
-            use_mock=use_mock,
-        )
     source_files = sorted({record.source_file for record in records if record.source_file})
     if not source_files:
         raise ValueError("任务中没有可归并的来源文件")

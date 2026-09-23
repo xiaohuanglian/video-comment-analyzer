@@ -202,7 +202,7 @@ def test_decision_report_has_single_action_layers_and_no_raw_subtypes():
     assert "H1" not in md and "H2" not in md and "H3" not in md
     assert "值得验证的机会" in md
     assert "completed_repeatedly" not in md
-    assert "正在持续训练" in md
+    assert "正在持续进行" in md
     assert md.count("### 发现 ") == 1
 
 

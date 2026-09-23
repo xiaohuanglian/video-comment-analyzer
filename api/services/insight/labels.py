@@ -5,7 +5,7 @@ from __future__ import annotations
 
 INTENT_LABELS = {
     "gratitude_recognition": "感谢与认可",
-    "check_in": "打卡",
+    "check_in": "签到",
     "result_feedback": "结果反馈",
     "question": "提问",
     "difficulty_help_request": "困难求助",
@@ -17,33 +17,33 @@ INTENT_LABELS = {
 SIGNAL_LABELS = {
     "gratitude": "表达感谢",
     "saved_or_plan_to_try": "收藏或准备尝试",
-    "started_training": "已开始训练",
-    "continued_training": "持续训练",
+    "started_using": "已开始使用",
+    "continued_using": "持续使用",
     "positive_result": "正向结果反馈",
     "no_change": "无变化",
     "negative_result": "负向结果反馈",
     "applicability_question": "适用性提问",
-    "form_uncertainty": "动作形态不确定",
-    "cannot_complete": "无法完成动作",
-    "no_target_muscle_sensation": "目标肌群无感",
+    "howto_uncertainty": "执行方式不确定",
+    "cannot_complete": "无法完成",
+    "expected_effect_missing": "未达到预期效果",
     "physical_discomfort": "身体不适",
-    "injury_or_special_condition": "伤病或特殊情况",
-    "needs_substitution": "需要替换动作",
-    "needs_regression": "需要降阶",
-    "needs_progression": "需要进阶",
-    "needs_training_plan": "需要训练计划",
-    "pace_or_counting_problem": "节奏或计数问题",
+    "special_condition": "特殊身体状况",
+    "needs_alternative": "需要替代方案",
+    "needs_simpler": "需要降低难度/简化",
+    "needs_advanced": "需要进阶",
+    "needs_plan": "需要规划",
+    "pace_problem": "节奏或操作问题",
     "instruction_unclear": "讲解不清楚",
-    "equipment_or_space_constraint": "设备或空间限制",
+    "resource_constraint": "设备/空间等条件限制",
     "privacy_concern": "隐私顾虑",
     "motivation_or_accountability": "需要督促或陪伴",
-    "asks_coach_reply": "希望博主回复",
+    "asks_creator_reply": "希望作者回复",
     "searched_other_content": "搜索其他内容",
     "recorded_self_for_review": "录像自我回看",
     "paid_professional_help": "付费专业帮助",
-    "skipped_exercise": "跳过动作",
-    "stopped_training": "停止训练",
-    "changed_training_plan": "改变训练计划",
+    "skipped_step": "跳过步骤",
+    "stopped_using": "停止使用",
+    "changed_plan": "调整方案",
     "other_new_signal": "其他新信号",
 }
 
@@ -70,10 +70,10 @@ HYPOTHESIS_RELATION_LABELS = {
 }
 
 TRAINING_EVIDENCE_LABELS = {
-    "none": "无训练证据",
+    "none": "无行为证据",
     "planned": "计划尝试",
     "tried": "已尝试",
-    "continued": "持续训练",
+    "continued": "持续进行",
 }
 
 

@@ -27,11 +27,9 @@ VIDEO_TITLE_KEYS = ("video_title", "title", "content_title", "视频标题", "�
 CREATOR_KEYS = ("creator_name", "up_name", "author_name", "up主", "博主")
 PLATFORM_KEYS = ("platform", "source_platform", "平台")
 
-CREATOR_TYPE_FROM_PATH = {
-    "健身类": "普通健身类",
-    "运康类": "运动康复类",
-    "生活方式类": "生活方式类",
-}
+# Optional path→creator-type mapping. Empty by default (no vertical assumptions);
+# projects can extend it with their own folder conventions.
+CREATOR_TYPE_FROM_PATH: dict[str, str] = {}
 
 
 def _match_column(columns: List[str], candidates: tuple[str, ...]) -> Optional[str]:

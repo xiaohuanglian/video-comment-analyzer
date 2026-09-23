@@ -193,7 +193,7 @@ def export_artifact_paths(config: RunConfig) -> dict[str, Path]:
         "results_csv": parent / f"{stem}_分析结果.csv",
         "report_md": parent / f"{stem}_洞察报告.md",
         "candidates_csv": parent / f"{stem}_调研对象.csv",
-        "outreach_csv": parent / f"{stem}_私信草稿.csv",
+        "outreach_csv": parent / f"{stem}_回复草稿.csv",
     }
 
 
@@ -207,7 +207,7 @@ def export_artifact_targets(config: RunConfig) -> list[dict[str, Path]]:
                 "results_csv": parent / f"{stem}_分析结果.csv",
                 "report_md": parent / f"{stem}_洞察报告.md",
                 "candidates_csv": parent / f"{stem}_调研对象.csv",
-                "outreach_csv": parent / f"{stem}_私信草稿.csv",
+                "outreach_csv": parent / f"{stem}_回复草稿.csv",
             }
         )
     return targets

@@ -569,9 +569,9 @@ def recount_research_analysis(
 
 _CLUSTER_TYPE_LABELS = {
     "problem": "具体问题",
-    "barrier": "训练障碍",
-    "behavior": "训练行为",
-    "result": "训练结果",
+    "barrier": "使用障碍",
+    "behavior": "行为",
+    "result": "结果",
     "context": "用户背景",
     "solution": "当前解决方式",
     "action_gap": "行动差距",
@@ -583,12 +583,12 @@ _CLUSTER_TYPE_LABELS = {
 _CLUSTER_SUBTYPE_LABELS = {
     "attempted": "已开始尝试",
     "completed_once": "已完成一次",
-    "continued": "正在持续训练",
-    "ongoing_period": "正在持续训练",
-    "sustained_practice": "正在持续训练",
-    "persistence": "正在持续训练",
-    "completed_repeated": "正在持续训练",
-    "completed_repeatedly": "正在持续训练",
+    "continued": "正在持续进行",
+    "ongoing_period": "正在持续进行",
+    "sustained_practice": "正在持续进行",
+    "persistence": "正在持续进行",
+    "completed_repeated": "正在持续进行",
+    "completed_repeatedly": "正在持续进行",
     "progress": "已经获得结果",
     "improved": "已经获得结果",
     "stopped": "尝试后停止",
@@ -633,12 +633,12 @@ _RESEARCH_SUBTYPE_WHITELIST = {
 }
 
 _SEMANTIC_RULES = (
-    ("方向判断困难", ("左旋", "右旋", "方向", "判断", "怎么测", "怎么看")),
-    ("动作执行与发力不确定", ("动作不标准", "发力", "感觉不到", "找不到感觉", "练到", "酸痛")),
-    ("特殊身体情况与适用性", ("受伤", "损伤", "腰突", "术后", "疼痛", "适合我", "可不可以练")),
-    ("训练安排与下一步疑问", ("怎么练", "练哪", "下一步", "多久", "几次", "多少组", "降阶")),
-    ("短期正向结果", ("立竿见影", "改善", "舒服", "有效果", "回正", "好转")),
-    ("训练后无效或负向结果", ("没效果", "无效", "没有改善", "更疼", "加重")),
+    ("方向/判断困难", ("方向", "判断", "怎么测", "怎么看", "分不清")),
+    ("执行方式不确定", ("标准", "做得不", "感觉不到", "找不到感觉", "方法不")),
+    ("特殊身体状况与适用性", ("受伤", "损伤", "术后", "身体", "适合我", "可不可以")),
+    ("安排与下一步疑问", ("怎么", "下一步", "多久", "几次", "先做", "降级")),
+    ("短期正向结果", ("立竿见影", "改善", "好转", "有效果", "变好")),
+    ("无效或负向结果", ("没效果", "无效", "没有改善", "更严重", "加重")),
 )
 
 
@@ -805,8 +805,8 @@ def research_analysis_mock(
         "themes": [
             {
                 "theme_id": "T1",
-                "theme_name": "训练疑问与求助",
-                "theme_definition": "用户提出动作/安排相关问题或求助",
+                "theme_name": "疑问与求助",
+                "theme_definition": "用户提出具体问题或求助",
                 "comment_record_ids": theme_ids,
                 "representative_evidence_refs": _first_item_refs(card_rows, theme_ids, limit=3),
                 "representative_quotes": [],
@@ -826,7 +826,7 @@ def research_analysis_mock(
                 ],
                 "weakening_record_ids": by_expr.get("gratitude", [])[:5],
                 "reasoning_summary": "有问题反馈支持过程需求；纯感谢较弱。",
-                "unknowns": ["是否具备持续训练动力仍需访谈"],
+                "unknowns": ["是否具备持续投入动力仍需访谈"],
             },
             {
                 "hypothesis_id": "H2",
@@ -836,7 +836,7 @@ def research_analysis_mock(
                     {**ref, "strength": "behavioral"} for ref in _first_item_refs(card_rows, help_ids, limit=5)
                 ],
                 "weakening_record_ids": by_expr.get("check_in", [])[:5],
-                "reasoning_summary": "求助类评论可能支持实时反馈需求。",
+                "reasoning_summary": "求助类评论可能支持个性化/实时反馈需求。",
                 "unknowns": [],
             },
             {
@@ -844,8 +844,8 @@ def research_analysis_mock(
                 "conclusion": "insufficient",
                 "supporting_record_ids": [],
                 "weakening_record_ids": [],
-                "reasoning_summary": "证据不足以判断 Agent 规划需求。",
-                "unknowns": ["是否希望代为安排计划"],
+                "reasoning_summary": "证据不足以判断是否需要系统化规划。",
+                "unknowns": ["是否希望代为规划"],
             },
         ],
         "unexpected_findings": (
@@ -865,31 +865,31 @@ def research_analysis_mock(
         ),
         "opportunity_hypotheses": [
             {
-                "opportunity_name": "动作疑问即时答疑",
+                "opportunity_name": "疑问即时答疑",
                 "supporting_evidence": ["多条提问/求助证据卡"],
                 "supporting_evidence_refs": _first_item_refs(
                     card_rows, help_ids[:8] or problem_ids[:5], limit=5
                 ),
-                "counter_evidence": ["部分打卡评论无问题"],
-                "possible_product_form": ["跟练纠错助手"],
+                "counter_evidence": ["部分签到评论无问题"],
+                "possible_product_form": ["即时答疑助手"],
                 "possible_content_form": ["高频疑问短视频"],
                 "current_unknowns": ["付费意愿未知"],
                 "recommended_validation": ["对求助用户做 10 人访谈"],
                 "supporting_record_ids": help_ids[:8] or problem_ids[:5],
-                "target_users": "有明确动作疑问或求助的训练者",
-                "concrete_problem": "跟练时不知动作是否正确",
-                "current_alternatives": ["反复看视频", "问教练"],
+                "target_users": "有明确问题或求助的用户",
+                "concrete_problem": "使用时不确定做法是否正确",
+                "current_alternatives": ["反复看内容", "咨询他人"],
                 "behavior_evidence_refs": _first_item_refs(card_rows, help_ids[:5], limit=3),
             }
         ],
         "research_conclusions": [
-            "最主要问题：训练过程疑问与求助较常见。",
-            "最重要行为信号：提问/求助相对打卡更多指向可访谈用户。",
-            "最值得先验证：动作疑问即时答疑类原型。",
+            "最主要问题：使用过程中的疑问与求助较常见。",
+            "最重要行为信号：提问/求助相对签到更多指向可访谈用户。",
+            "最值得先验证：疑问即时答疑类原型。",
             "当前证据不能证明：付费意愿或产品必然成立。",
         ],
         "recommended_interviews": ["访谈有明确问题或求助的用户"],
-        "recommended_experiments": ["用纠错助手原型验证 H2"],
+        "recommended_experiments": ["用即时答疑原型验证 H2"],
     }
     return recount_research_analysis(draft, known_ids=known, records=records, card_rows=card_rows)
 

@@ -70,9 +70,9 @@ _RESULTS_CSV_HEADER = [
     "分类",
     "主要目的",
     "信息信号",
-    "训练证据",
+    "行为证据",
     "具体问题",
-    "单向视频关系",
+    "单向内容关系",
     "新发现",
     "产品适配",
     "置信度",
@@ -576,7 +576,7 @@ def build_report_markdown(
         [
             f"本报告基于 **{analyzed} 条**已分析评论{coverage_note}，用于评论洞察与用户需求分析。",
             "",
-            f"- **核心发现**：{summary.get('trained_users', 0)} 位用户有真实训练证据；"
+            f"- **核心发现**：{summary.get('trained_users', 0)} 位用户有真实行为证据；"
             f"{summary.get('personalized_needed_count', 0)} 条评论被判断为需个性化判断；"
             f"{summary.get('realtime_needed_count', 0)} 条被判断为需实时观察；"
             f"{summary.get('high_priority_user_count', 0)} 位高优先级潜在用户"
@@ -591,11 +591,11 @@ def build_report_markdown(
             f"| 来源视频 | {summary.get('source_video_count', 0)} | 按视频标题/文件去重 |",
             f"| UP 主数 | {summary.get('source_creator_count', 0)} | 按 creator_name 去重 |",
             f"| 来源文件 | {summary.get('source_file_count', 0)} | CSV 文件数 |",
-            f"| 已训练用户 | {summary.get('trained_users', 0)} | 有 tried / continued 证据 |",
+            f"| 已行动用户 | {summary.get('trained_users', 0)} | 有 tried / continued 证据 |",
             f"| 可定位主页 | {summary.get('contactable_homepage_count', 0)} | 可推导 B 站用户空间链接 |",
             f"| 感谢信号 | {summary.get('gratitude_signal_count', 0)} | 含 gratitude 标签 |",
             f"| 需个性化判断 | {summary.get('personalized_needed_count', 0)} | 单向视频不足 |",
-            f"| 需实时观察 | {summary.get('realtime_needed_count', 0)} | 需动作质量反馈 |",
+            f"| 需实时观察 | {summary.get('realtime_needed_count', 0)} | 需实时/个性化反馈 |",
             f"| 高产品适配 | {summary.get('product_fit_high_count', 0)} | product_fit = high |",
             f"| 高优先级潜在用户 | {summary.get('high_priority_user_count', 0)} | 用户级，综合评分 ≥ 7 |",
             f"| 高优先级候选评论 | {summary.get('high_priority_candidate_comment_count', 0)} | 评论级，供交叉核对 |",
@@ -637,16 +637,16 @@ def build_report_markdown(
             "## 当前数据无法证明的结论",
             "",
             f"- 当前样本中有 {realtime} 条评论被判断为需要实时观察，占有效评论的 {_pct(realtime, valid)}。"
-            "该结果支持**部分**用户可能存在实时动作反馈需求，**不能**代表全部居家健身用户。",
+            "该结果支持**部分**用户可能存在实时/个性化反馈需求，**不能**代表全部目标用户。",
             "- 开放主题与高优先级用户名单仅基于已分析评论，**不能**直接推导市场规模或产品必然成功。",
-            "- 本工具**不提供**医学诊断；涉及伤病、疼痛、术后恢复等评论需人工审慎解读。",
+            "- 本工具**不提供**医学诊断；涉及身体状况、敏感话题等评论需人工审慎解读。",
             "",
         ]
     )
 
     priority_rows = _collect_high_priority_rows(rows)
     if priority_rows:
-        lines.extend(["## 高优先级候选评论（节选）", "", "以下评论综合训练证据、具体问题、求助意愿与产品适配度评分较高，建议优先人工复核。", ""])
+        lines.extend(["## 高优先级候选评论（节选）", "", "以下评论综合行为证据、具体问题、求助意愿与产品适配度评分较高，建议优先人工复核。", ""])
         for row in priority_rows:
             source = row.get("source") or {}
             analysis = row.get("analysis") or {}
@@ -714,7 +714,7 @@ def _collect_theme_section(
     lines: List[str] = [
         "## 开放主题（归并结果）",
         "",
-        "以下仅展示可行动的主题；打卡、日数、BGM、泛化收藏等互动簇不进入决策正文。",
+        "以下仅展示可行动的主题；签到、刷屏、BGM、泛化收藏等互动簇不进入决策正文。",
         "",
     ]
     scoped_records = []
@@ -756,7 +756,7 @@ def _collect_theme_section(
         lowered = name.lower()
         if (
             len(name) < 3
-            or any(token in lowered for token in ("打卡", "day", "d5", "d6", "bgm", "收藏", "点赞", "真的有用"))
+            or any(token in lowered for token in ("哈哈", "沙发", "第一", "点赞", "路过", "签到"))
         ):
             continue
         ttype = getattr(theme, "theme_type", "") or "—"
@@ -809,7 +809,7 @@ def build_candidates_csv(run_id: str) -> bytes:
             "联系状态",
             "联系理由",
             "产品适配",
-            "训练证据",
+            "行为证据",
             "求助",
             "具体问题",
             "视频关系",
@@ -848,7 +848,7 @@ def build_candidates_csv(run_id: str) -> bytes:
 def build_outreach_csv(run_id: str) -> bytes:
     doc = load_outreach(run_id)
     if not doc.entries:
-        raise ValueError("尚无联系记录可导出，请先生成私信草稿")
+        raise ValueError("尚无联系记录可导出，请先生成回复草稿")
 
     buffer = io.StringIO()
     writer = csv.writer(buffer)

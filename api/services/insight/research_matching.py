@@ -7,12 +7,9 @@ import re
 from typing import Any, Dict, List, Sequence
 
 # Built-in keyword hints for common segments (user can add custom targets freely).
-SEGMENT_HINTS: Dict[str, List[str]] = {
-    "运动损伤": ["损伤", "受伤", "术后", "康复", "半月板", "韧带", "撕裂", "骨折", "旧伤", "疼痛", "理疗"],
-    "初老群体": ["初老", "中年", "40岁", "50岁", "代谢", "年纪", "年龄大", "关节退化"],
-    "产后康复": ["产后", "腹直肌", "盆底", "漏尿", "哺乳", "月子", "剖腹产", "顺产", "骨盆"],
-    "中考体育家长": ["中考", "体育中考", "孩子练", "儿子", "女儿", "家长", "升学", "考试"],
-}
+SEGMENT_HINTS: Dict[str, List[str]] = {}
+# Projects can extend keyword hints for their own research target segments;
+# matching always falls back to the literal target string.
 
 
 def parse_research_targets(raw: str | Sequence[str] | None) -> List[str]:

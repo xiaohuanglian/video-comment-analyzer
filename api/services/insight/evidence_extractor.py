@@ -300,9 +300,9 @@ def _enrich_missing_signal_items(record: SourceRecord, items: List[EvidenceItem]
             )
         )
 
-    if ("办卡" in text or ("健身房" in text and "办" in text)) and not has(EvidenceItemType.BEHAVIOR, "sought_paid_help"):
-        hint = "办卡" if "办卡" in text else "健身房"
-        add(EvidenceItemType.BEHAVIOR, "付费办卡或健身房", subtype="sought_paid_help", quote_hint=hint)
+    if ("充值" in text or "会员" in text or "订阅" in text) and not has(EvidenceItemType.BEHAVIOR, "sought_paid_help"):
+        hint = "充值" if "充值" in text else ("会员" if "会员" in text else "订阅")
+        add(EvidenceItemType.BEHAVIOR, "付费购买", subtype="sought_paid_help", quote_hint=hint)
 
     # Quantitative tokens commonly dropped on long plan lists
     for token, subtype in (
@@ -349,14 +349,8 @@ def extract_evidence_card_mock(record: SourceRecord, *, finalize: bool = True) -
         return local_excluded_card(record, RecordStatus.MACHINE_GENERATED, "machine_generated")
     if _looks_like_garbled(text):
         return local_excluded_card(record, RecordStatus.GARBLED, "garbled")
-    if _looks_like_spam(text) and not any(k in text for k in ("谢谢", "打卡", "收藏", "太难", "开始练")):
+    if _looks_like_spam(text) and not any(k in text for k in ("谢谢", "收藏", "太难", "开始")):
         return local_excluded_card(record, RecordStatus.SPAM, "spam")
-    if any(k in text for k in ("啤酒鸭", "连人带盒")) and "练" not in text[:10]:
-        return local_excluded_card(record, RecordStatus.OFF_TOPIC, "off_topic_joke")
-    if any(k in text for k in ("纹身", "门什么时候")) and not any(
-        k in text for k in ("练", "俯卧撑", "倒立", "深蹲")
-    ):
-        return local_excluded_card(record, RecordStatus.OFF_TOPIC, "off_topic")
 
     items: List[EvidenceItem] = []
     expression = PrimaryExpression.OTHER
@@ -386,16 +380,16 @@ def extract_evidence_card_mock(record: SourceRecord, *, finalize: bool = True) -
     if any(k in text for k in ("谢谢", "感谢", "太帅", "名不虚传")):
         expression = PrimaryExpression.PRAISE
         add(EvidenceItemType.OPINION, "赞赏或感谢", certainty=ItemCertainty.MEDIUM)
-    if re.search(r"(?i)\bday\s*\d+\b", text) or text.strip() in {"Day3", "day3"}:
+    if re.search(r"(?i)\bday\s*\d+\b", text) or text.strip().lower() in {"day3"}:
         expression = PrimaryExpression.CHECK_IN
-        add(EvidenceItemType.ENGAGEMENT, "打卡天数", subtype="checked_in")
-        add(EvidenceItemType.BEHAVIOR, "连续训练暗示", subtype="continued", certainty=ItemCertainty.MEDIUM)
-    if any(k in text for k in ("打卡", "已打卡")):
+        add(EvidenceItemType.ENGAGEMENT, "签到天数", subtype="checked_in")
+        add(EvidenceItemType.BEHAVIOR, "连续进行暗示", subtype="continued", certainty=ItemCertainty.MEDIUM)
+    if any(k in text for k in ("签到", "已签到")):
         expression = PrimaryExpression.CHECK_IN if expression == PrimaryExpression.OTHER else expression
-        add(EvidenceItemType.ENGAGEMENT, "评论区打卡", subtype="checked_in")
+        add(EvidenceItemType.ENGAGEMENT, "评论区签到", subtype="checked_in")
     if "收藏" in text:
         add(EvidenceItemType.ENGAGEMENT, "收藏", subtype="saved")
-        if any(k in text for k in ("不练", "从不开始", "退出", "只是看看", "只看看", "看看就算")):
+        if any(k in text for k in ("不做", "从不开始", "退出", "只是看看", "只看看", "看看就算")):
             subtype = "saved_but_not_started" if "收藏" in text else "watched_but_not_practiced"
             add(EvidenceItemType.ACTION_GAP, "改变意愿与行动落差", subtype=subtype)
             expression = expression if expression != PrimaryExpression.OTHER else PrimaryExpression.OTHER
@@ -413,40 +407,40 @@ def extract_evidence_card_mock(record: SourceRecord, *, finalize: bool = True) -
     if any(k in text for k in ("帮我", "求教", "怎么办")):
         expression = PrimaryExpression.HELP_REQUEST
         add(EvidenceItemType.PROBLEM, "主动求助")
-    if any(k in text for k in ("看不懂镜像", "左右腿分不清", "镜像把我搞晕", "同侧还是反侧")):
+    if any(k in text for k in ("看不懂", "分不清", "搞不清楚", "弄不明白")):
         expression = PrimaryExpression.HELP_REQUEST
-        add(EvidenceItemType.PROBLEM, "镜像方向理解困难")
-    if any(k in text for k in ("计划", "打算练", "准备练", "明天继续")):
-        add(EvidenceItemType.BEHAVIOR, "计划训练", subtype="planned")
-    if any(k in text for k in ("可以", "会做")) and any(k in text for k in ("倒立", "俯卧撑", "引体")):
+        add(EvidenceItemType.PROBLEM, "理解困难")
+    if any(k in text for k in ("计划", "打算", "准备做", "明天继续")):
+        add(EvidenceItemType.BEHAVIOR, "计划执行", subtype="planned")
+    if any(k in text for k in ("我可以", "我会做", "我能做")):
         add(EvidenceItemType.BEHAVIOR, "自报能力", subtype="self_reported_ability", certainty=ItemCertainty.MEDIUM)
     if any(k in text for k in ("做完", "刚做完")):
-        add(EvidenceItemType.BEHAVIOR, "完成一次训练", subtype="completed_once")
+        add(EvidenceItemType.BEHAVIOR, "完成一次", subtype="completed_once")
         expression = PrimaryExpression.RESULT_FEEDBACK
-    if any(k in text for k in ("练了", "做了", "试了", "跟练", "刚刚试", "做到")):
-        add(EvidenceItemType.BEHAVIOR, "已尝试训练", subtype="attempted")
+    if any(k in text for k in ("做了", "试了", "用了", "刚刚试", "试过")):
+        add(EvidenceItemType.BEHAVIOR, "已尝试", subtype="attempted")
         if expression == PrimaryExpression.OTHER:
             expression = PrimaryExpression.RESULT_FEEDBACK
     if any(k in text for k in ("就会了", "学会了", "看第二遍就会")):
-        add(EvidenceItemType.RESULT, "理解或学会动作")
+        add(EvidenceItemType.RESULT, "理解或学会")
         expression = PrimaryExpression.RESULT_FEEDBACK
-    if any(k in text for k in ("坚持", "每天", "继续练")) and any(k in text for k in ("周", "月", "年", "现在", "一周")):
-        add(EvidenceItemType.BEHAVIOR, "持续训练", subtype="continued")
-    if any(k in text for k in ("办卡", "健身房")):
-        add(EvidenceItemType.BEHAVIOR, "付费办卡或健身房", subtype="sought_paid_help")
+    if any(k in text for k in ("坚持", "每天", "继续做")) and any(k in text for k in ("周", "月", "年", "现在", "一周")):
+        add(EvidenceItemType.BEHAVIOR, "持续进行", subtype="continued")
+    if any(k in text for k in ("充值", "会员", "购买", "订阅")):
+        add(EvidenceItemType.BEHAVIOR, "付费购买", subtype="sought_paid_help")
         if any(k in text for k in ("没有一点改变", "没变化", "无效果")):
             add(EvidenceItemType.ACTION_GAP, "付费后无结果", subtype="paid_but_no_result")
-    if any(k in text for k in ("换成", "还不如直接上器械")):
-        add(EvidenceItemType.BEHAVIOR, "调整训练方式", subtype="changed_plan", certainty=ItemCertainty.MEDIUM)
+    if any(k in text for k in ("换成", "还不如", "改用")):
+        add(EvidenceItemType.BEHAVIOR, "调整方案", subtype="changed_plan", certainty=ItemCertainty.MEDIUM)
         add(EvidenceItemType.SOLUTION, "替代方案", certainty=ItemCertainty.MEDIUM)
-    if any(k in text for k in ("酸", "痛", "太难", "做不到", "做不了", "学不会")):
-        add(EvidenceItemType.BARRIER, "难度或体感障碍")
+    if any(k in text for k in ("麻烦", "太难", "做不到", "做不了", "学不会", "搞不定")):
+        add(EvidenceItemType.BARRIER, "难度或障碍")
         if expression == PrimaryExpression.OTHER:
             expression = PrimaryExpression.COMPLAINT
-    if any(k in text for k in ("先跑步", "小区健身", "自己搜")):
+    if any(k in text for k in ("自己搜", "其他办法", "替代")):
         add(EvidenceItemType.SOLUTION, "自行方案或建议", scope=SpeakerScope.GENERAL_OBSERVATION, certainty=ItemCertainty.MEDIUM)
-    if any(k in text for k in ("产后", "膝盖", "腰", "体重", "斤", "腰间盘")):
-        add(EvidenceItemType.CONTEXT, "用户提及身体或人群背景", certainty=ItemCertainty.MEDIUM)
+    if any(k in text for k in ("过敏", "预算", "身体", "年龄", "地区")):
+        add(EvidenceItemType.CONTEXT, "用户提及个人背景", certainty=ItemCertainty.MEDIUM)
 
     for token, subtype in (
         ("10个", "reps"),
@@ -458,7 +452,6 @@ def extract_evidence_card_mock(record: SourceRecord, *, finalize: bool = True) -
         ("45秒", "duration"),
         ("7个多月", "duration"),
         ("两个月", "duration"),
-        ("200斤", "weight"),
         ("九分钟", "duration"),
         ("一个月", "duration"),
     ):
@@ -467,7 +460,7 @@ def extract_evidence_card_mock(record: SourceRecord, *, finalize: bool = True) -
 
     if any(k in text for k in ("从", "到")) and any(k in text for k in ("个", "次")):
         add(EvidenceItemType.QUANTITATIVE, "能力进步", subtype="progress")
-        add(EvidenceItemType.BEHAVIOR, "训练进步", subtype="progress")
+        add(EvidenceItemType.BEHAVIOR, "能力进步", subtype="progress")
 
     card = EvidenceCard(
         record_id=record.internal_record_id,
@@ -950,13 +943,13 @@ def _short_circuit_card(record: SourceRecord) -> Optional[EvidenceCard]:
         return local_excluded_card(record, RecordStatus.MACHINE_GENERATED, "machine_generated")
     if _looks_like_garbled(text):
         return local_excluded_card(record, RecordStatus.GARBLED, "garbled")
-    if any(k in text for k in ("啤酒鸭", "连人带盒")) and "练" not in text[:10]:
+    if any(k in text for k in ("啤酒鸭", "连人带盒")) and "做" not in text[:10]:
         return local_excluded_card(record, RecordStatus.OFF_TOPIC, "off_topic_joke")
     if any(k in text for k in ("纹身", "门什么时候")) and not any(
-        k in text for k in ("练", "俯卧撑", "倒立", "深蹲")
+        k in text for k in ("做", "完成", "开始")
     ):
         return local_excluded_card(record, RecordStatus.OFF_TOPIC, "off_topic")
-    if _looks_like_spam(text) and not any(k in text for k in ("谢谢", "打卡", "收藏", "太难", "开始练")):
+    if _looks_like_spam(text) and not any(k in text for k in ("谢谢", "收藏", "太难", "开始")):
         return local_excluded_card(record, RecordStatus.SPAM, "spam")
     return None
 

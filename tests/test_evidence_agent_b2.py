@@ -45,7 +45,7 @@ def test_spam_and_empty_excluded():
 
 
 def test_checkin_is_content_engagement_not_continued_training():
-    card = extract_evidence_card_mock(_rec("c", "打卡"))
+    card = extract_evidence_card_mock(_rec("c", "签到"))
     assert any(e.type == ContentEngagementType.CHECKED_IN for e in card.content_engagement)
     assert not any(t.type == TrainingBehaviorType.CONTINUED for t in card.training_behavior)
 

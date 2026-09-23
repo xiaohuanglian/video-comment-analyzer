@@ -124,8 +124,8 @@ def test_infer_legacy_signals_from_problem_and_behavior():
         ],
     )
     projected = outreach_analysis_from_card(card)
-    assert "form_uncertainty" in projected["signals"]
-    assert "started_training" in projected["signals"]
+    assert "howto_uncertainty" in projected["signals"]
+    assert "started_using" in projected["signals"]
 
 
 def test_derive_new_signals_uses_valid_enum_types():

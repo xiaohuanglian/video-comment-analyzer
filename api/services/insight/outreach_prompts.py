@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Prompts for personalized outreach message drafts (token-lean)."""
+"""Prompts for personalized public comment-reply drafts (token-lean).
+
+The tool only ever produces *drafts* for a human to review and post manually.
+It never auto-posts and never messages anyone on the user's behalf.
+"""
 
 from __future__ import annotations
 
@@ -7,46 +11,43 @@ import json
 
 from .candidate_schemas import CandidateRecord
 
-# 与 docs/产品验证计划.md、docs/虚拟教练 B2B2C 商业访谈与验证计划.md 对齐
-INTERVIEW_PURPOSE = (
-    "我们在做「居家训练/康复动作反馈」的用户研究（B2B2C 验证阶段），"
-    "想了解用户在家真实练习时的场景、顾虑与替代做法，用于改进产品方向。"
-    "这是 Mom Test 式访谈：只聊过去实际怎么做的，不问「你觉得这个功能好不好」。"
+# Domain-neutral purpose: write a genuinely helpful public reply under someone
+# else's content, aimed at one specific commenter.
+REPLY_PURPOSE = (
+    "在他人内容的评论区，针对一位具体用户写一条公开回复。"
+    "目标是真正帮到对方、建立信任，而不是推销或导流。"
+    "只谈他评论里明确说到的内容。"
 )
 
-# 内测权益表述：用户明确为「待定」，话术里可提但不承诺具体形式/时间
-BETA_INCENTIVE_PHRASE = (
-    "参与简短交流的用户，会优先获得内测体验资格（具体形式与时间待定，以实际通知为准）"
+# Hard guardrails for public replies (also applied by the reviewer).
+REPLY_GUARDRAILS = (
+    "禁止推销、导流、留联系方式或做疗效/收益承诺；"
+    "禁止编造对方经历；信息不足时可以先提一个澄清问题。"
 )
 
 DEFAULT_BASE_TEMPLATE = (
-    "你好，我们在做居家训练与动作反馈相关的用户研究。"
-    "看到你在评论区分享了真实经历，想邀请你花 15 分钟聊聊："
-    "最近一次在家练习/康复时，具体是怎么做的、当时最没底或最麻烦的是什么。"
-    "纯访谈交流，不推销；"
-    f"{BETA_INCENTIVE_PHRASE}。"
+    "你好，看到你提到的情况，说说我的经验/做法：……"
+    "如果方便，可以再补充一下你的具体场景，我看看还能怎么帮到你。"
 )
 
-SEGMENT_INTERVIEW_ANGLES: dict[str, str] = {
-    "运动损伤": "居家康复动作对错判断、二次受伤顾虑、替代办法",
-    "初老群体": "跟练质量困扰、因无人纠正而停练/改方式",
-    "产后康复": "碎片时间/隐私、腹直肌盆底恢复、难坚持原因",
-    "中考体育家长": "孩子在家练体能的安排监督、指导困难、枯燥感",
-}
+# Optional per-segment reply angles; projects can extend this map.
+SEGMENT_REPLY_ANGLES: dict[str, str] = {}
 
-OUTREACH_SYSTEM_PROMPT = f"""写一条 B 站等平台的访谈邀请私信（只输出正文）。
-背景：{INTERVIEW_PURPOSE}
-利他：必须包含「{BETA_INCENTIVE_PHRASE}」；禁止空洞「对我们很有价值」；禁止未承诺的资料包/避坑清单。
-Mom Test：聊过去真实经历；禁止问功能好不好/会否付费；禁止推销链接与疗效承诺。
-只用评论明确内容；勿贴标签；80–220 中文字；语气真诚具体。"""
+OUTREACH_SYSTEM_PROMPT = f"""为一位具体用户写一条公开的评论区回复（只输出正文）。
+背景：{REPLY_PURPOSE}
+要求：
+- 针对该用户评论里明确的问题/需求给出具体、可执行的信息，不要泛泛而谈、不要复制模板。
+- {REPLY_GUARDRAILS}
+- 像一个真实的人：真诚、具体，40–160 中文字。
+- 只用评论里已有的信息；不要贴标签、不要下诊断。"""
 
 
 def _segment_hints(matches: list[str]) -> str:
     if not matches:
         return ""
-    parts = [SEGMENT_INTERVIEW_ANGLES[m] for m in matches if m in SEGMENT_INTERVIEW_ANGLES]
-    if not parts and matches:
-        parts = [f"了解「{matches[0]}」在家练习真实困扰"]
+    parts = [SEGMENT_REPLY_ANGLES[m] for m in matches if m in SEGMENT_REPLY_ANGLES]
+    if not parts:
+        parts = [f"围绕「{matches[0]}」给出具体帮助"]
     return "；".join(parts)
 
 
@@ -62,4 +63,4 @@ def build_outreach_user_message(candidate: CandidateRecord, base_template: str) 
         "angle": _segment_hints(matches),
         "template_hint": (base_template or "")[:120],
     }
-    return "生成访谈邀请：\n" + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return "生成评论区回复：\n" + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
