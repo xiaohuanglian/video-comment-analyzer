@@ -92,19 +92,28 @@ class CDPBrowserManager:
             # 1. Detect browser path
             browser_path = await self._get_browser_path()
 
-            # 2. Get available port
+            # 2. Reuse the persistent profile; first clear any leftover browser
+            #    that a previous crashed/killed run left holding this profile or
+            #    the debug port (otherwise a new launch just forwards to it and
+            #    the debug port never opens).
+            user_data_dir = self._resolve_user_data_dir()
+            if user_data_dir:
+                self.launcher.kill_stale_browsers(user_data_dir)
+                self.launcher.clear_stale_profile_locks(user_data_dir)
+
+            # 3. Get available port (after cleanup, so 9222 is reusable)
             self.debug_port = self.launcher.find_available_port(config.CDP_DEBUG_PORT)
 
-            # 3. Launch browser
-            await self._launch_browser(browser_path, headless)
+            # 4. Launch browser
+            await self._launch_browser(browser_path, headless, user_data_dir)
 
-            # 4. Register cleanup handlers (ensure cleanup on abnormal exit)
+            # 5. Register cleanup handlers (ensure cleanup on abnormal exit)
             self._register_cleanup_handlers()
 
-            # 5. Connect via CDP
+            # 6. Connect via CDP
             await self._connect_via_cdp(playwright)
 
-            # 6. Create browser context
+            # 7. Create browser context
             browser_context = await self._create_browser_context(
                 playwright_proxy, user_agent
             )
@@ -227,29 +236,28 @@ class CDPBrowserManager:
             utils.logger.warning(f"[CDPBrowserManager] CDP connection test failed: {e}")
             return False
 
-    async def _launch_browser(self, browser_path: str, headless: bool):
+    def _resolve_user_data_dir(self) -> Optional[str]:
+        """Persistent profile directory, shared by cleanup and launch."""
+        if not config.SAVE_LOGIN_STATE:
+            return None
+        user_data_dir = os.path.join(
+            os.getcwd(),
+            "browser_data",
+            f"cdp_{config.USER_DATA_DIR % config.PLATFORM}",
+        )
+        os.makedirs(user_data_dir, exist_ok=True)
+        utils.logger.info(f"[CDPBrowserManager] User data directory: {user_data_dir}")
+        return user_data_dir
+
+    async def _launch_browser(self, browser_path: str, headless: bool, user_data_dir: Optional[str] = None):
         """
         Launch browser process
         """
         # Set user data directory (if save login state is enabled)
-        user_data_dir = None
-        if config.SAVE_LOGIN_STATE:
-            user_data_dir = os.path.join(
-                os.getcwd(),
-                "browser_data",
-                f"cdp_{config.USER_DATA_DIR % config.PLATFORM}",
-            )
-            os.makedirs(user_data_dir, exist_ok=True)
-            utils.logger.info(f"[CDPBrowserManager] User data directory: {user_data_dir}")
+        if user_data_dir is None:
+            user_data_dir = self._resolve_user_data_dir()
 
         # Launch browser
-        if user_data_dir:
-            # Self-heal: a previous crashed/killed run can leave a Chrome alive
-            # holding this profile (singleton lock), which makes the new launch
-            # exit immediately and the debug port never open.
-            self.launcher.kill_stale_browsers(user_data_dir)
-            self.launcher.clear_stale_profile_locks(user_data_dir)
-
         self.launcher.browser_process = self.launcher.launch_browser(
             browser_path=browser_path,
             debug_port=self.debug_port,
