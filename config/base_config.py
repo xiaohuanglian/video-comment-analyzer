@@ -1,4 +1,14 @@
 # Basic configuration
+import os as _os
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = _os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 PLATFORM = "dy"  # Platform, xhs | dy | ks | bili | wb | tieba | zhihu
 
 # 是否使用海外版小红书 (rednote.com)
@@ -44,6 +54,7 @@ WEB_UI_MODE = False
 
 # When True, CDP launch failures are not silently downgraded to Playwright persistent context
 DISABLE_CDP_FALLBACK = False
+DISABLE_CDP_FALLBACK = _env_bool("DISABLE_CDP_FALLBACK", DISABLE_CDP_FALLBACK)
 
 # CDP 调试端口，用于与浏览器通信
 # 如果端口被占用，系统会自动尝试下一个可用端口
@@ -68,6 +79,9 @@ BROWSER_LAUNCH_TIMEOUT = 60
 # 或者使用命令行参数启动 Chrome：--remote-debugging-port=9222
 # 这种方式反检测效果最好，因为直接使用用户真实浏览器的所有 Cookie、扩展和浏览历史
 CDP_CONNECT_EXISTING = True
+
+# 环境变量可覆盖（Web UI 的子进程采集会传 CDP_CONNECT_EXISTING=0，让它自己开浏览器）
+CDP_CONNECT_EXISTING = _env_bool("CDP_CONNECT_EXISTING", CDP_CONNECT_EXISTING)
 
 # 程序结束时是否自动关闭浏览器
 # 设置为 False 可以保持浏览器运行，方便调试
