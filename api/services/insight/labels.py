@@ -48,11 +48,11 @@ SIGNAL_LABELS = {
 }
 
 SINGLE_VIDEO_LABELS = {
-    "video_sufficient": "视频本身足够",
-    "one_reply_sufficient": "一次回复即可",
-    "personalized_judgment_needed": "需个性化判断",
-    "realtime_observation_needed": "需实时观察",
-    "unclear": "证据不足，无法判断",
+    "video_sufficient": "现有内容/视频已足够",
+    "one_reply_sufficient": "一次回复可解决",
+    "personalized_judgment_needed": "需结合个人情况",
+    "realtime_observation_needed": "需看到实际操作",
+    "unclear": "暂无法判断",
 }
 
 PRODUCT_FIT_LABELS = {

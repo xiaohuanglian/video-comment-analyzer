@@ -18,6 +18,7 @@ from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import douyin as douyin_store
 from tools import utils
 from tools.cdp_browser import CDPBrowserManager
+from tools.crawl_pacing import compute_crawl_interval
 from var import crawler_type_var, source_keyword_var
 
 from .client import DouYinClient
@@ -232,18 +233,18 @@ class DouYinCrawler(AbstractCrawler):
         async with semaphore:
             try:
                 # Pass the list of keywords to the get_aweme_all_comments method
-                # Use fixed crawling interval
-                crawl_interval = config.CRAWLER_MAX_SLEEP_SEC
+                # Safe, jittered pacing between videos (adaptive pacer runs per page inside the client)
+                base, jitter = compute_crawl_interval("dy")
                 await self.dy_client.get_aweme_all_comments(
                     aweme_id=aweme_id,
-                    crawl_interval=crawl_interval,
+                    crawl_interval=base,
                     is_fetch_sub_comments=config.ENABLE_GET_SUB_COMMENTS,
                     callback=douyin_store.batch_update_dy_aweme_comments,
                     max_count=config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
                 )
                 # Sleep after fetching comments
-                await asyncio.sleep(crawl_interval)
-                utils.logger.info(f"[DouYinCrawler.get_comments] Sleeping for {crawl_interval} seconds after fetching comments for aweme {aweme_id}")
+                await asyncio.sleep(base + random.uniform(0, jitter))
+                utils.logger.info(f"[DouYinCrawler.get_comments] Sleeping {base:.1f}s after aweme {aweme_id}")
                 utils.logger.info(f"[DouYinCrawler.get_comments] aweme_id: {aweme_id} comments have all been obtained and filtered ...")
             except DataFetchError as e:
                 utils.logger.error(f"[DouYinCrawler.get_comments] aweme_id: {aweme_id} get comments failed, error: {e}")

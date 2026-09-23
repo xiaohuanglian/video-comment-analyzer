@@ -12,6 +12,7 @@ import config
 from base.base_crawler import AbstractApiClient
 from proxy.proxy_mixin import ProxyRefreshMixin
 from tools import utils
+from tools.crawl_pacing import CrawlPacer
 
 if TYPE_CHECKING:
     from proxy.proxy_ip_pool import ProxyIpPool
@@ -37,6 +38,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
     ):
         self.proxy = proxy
         self.timeout = timeout
+        self._pacer = CrawlPacer(platform="xhs")
         self.headers = headers
         if config.XHS_INTERNATIONAL:
             self._host = "https://webapi.rednote.com"
@@ -423,7 +425,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                 comments = comments[: max_count - len(result)]
             if callback:
                 await callback(note_id, comments)
-            await asyncio.sleep(crawl_interval)
+            await self._pacer.sleep("after note comment page")
             result.extend(comments)
             sub_comments = await self.get_comments_all_sub_comments(
                 comments=comments,
@@ -498,7 +500,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                         comments = comments_res["comments"]
                         if callback:
                             await callback(note_id, comments)
-                        await asyncio.sleep(crawl_interval)
+                        await self._pacer.sleep("after sub-comment page")
                         result.extend(comments)
                     except DataFetchError as e:
                         utils.logger.warning(
@@ -628,7 +630,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                 await callback(notes_to_add)
 
             result.extend(notes_to_add)
-            await asyncio.sleep(crawl_interval)
+            await self._pacer.sleep("after creator note page")
 
         utils.logger.info(
             f"[XiaoHongShuClient.get_all_notes_by_creator] Finished getting notes for user {user_id}, total: {len(result)}"
