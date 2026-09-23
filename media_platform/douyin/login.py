@@ -1,17 +1,21 @@
 import asyncio
 import functools
-import sys
 from typing import Optional
 
 from playwright.async_api import BrowserContext, Page
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
-from tenacity import (RetryError, retry, retry_if_result, stop_after_attempt,
-                      wait_fixed)
+from tenacity import retry, retry_if_result, stop_after_attempt, wait_fixed
 
 import config
 from base.base_crawler import AbstractLogin
 from cache.cache_factory import CacheFactory
 from tools import utils
+from tools.login_helper import (
+    DEFAULT_LOGIN_TIMEOUT,
+    has_login_cookie,
+    show_qrcode_best_effort,
+    wait_for_login,
+)
 
 
 class DouYinLogin(AbstractLogin):
@@ -30,16 +34,40 @@ class DouYinLogin(AbstractLogin):
         self.scan_qrcode_time = 60
         self.cookie_str = cookie_str
 
+    async def _login_confirmed(self) -> bool:
+        """Single, non-blocking login check (localStorage / cookie)."""
+        try:
+            current_cookie = await self.browser_context.cookies()
+            _, cookie_dict = utils.convert_cookies(current_cookie)
+            if cookie_dict.get("LOGIN_STATUS") == "1":
+                return True
+        except Exception:
+            pass
+        for page in self.browser_context.pages:
+            try:
+                local_storage = await page.evaluate("() => window.localStorage")
+                if local_storage.get("HasUserLogin", "") == "1":
+                    return True
+            except Exception:
+                continue
+        return False
+
+    @retry(stop=stop_after_attempt(600), wait=wait_fixed(1), retry=retry_if_result(lambda value: value is False))
+    async def check_login_state(self) -> bool:
+        return await self._login_confirmed()
+
     async def begin(self):
         """
-            Start login douyin website
-            The verification accuracy of the slider verification is not very good... If there are no special requirements, it is recommended not to use Douyin login, or use cookie login
+            Start login douyin website.
+            The slider verification is unreliable; cookie login is recommended
+            when available. We never kill the process on failure — we raise a
+            clear error so the Web UI can show it.
         """
+        if await has_login_cookie(self.browser_context, ["LOGIN_STATUS"]):
+            return
 
-        # popup login dialog
         await self.popup_login_dialog()
 
-        # select login type
         if config.LOGIN_TYPE == "qrcode":
             await self.login_by_qrcode()
         elif config.LOGIN_TYPE == "phone":
@@ -49,72 +77,50 @@ class DouYinLogin(AbstractLogin):
         else:
             raise ValueError("[DouYinLogin.begin] Invalid Login Type Currently only supported qrcode or phone or cookie ...")
 
-        # If the page redirects to the slider verification page, need to slide again
+        if config.LOGIN_TYPE != "cookie":
+            utils.logger.info(
+                "[DouYinLogin.begin] 请在浏览器窗口中扫码/登录抖音，"
+                f"等待登录（最多 {DEFAULT_LOGIN_TIMEOUT} 秒）..."
+            )
+            await wait_for_login(self._login_confirmed, timeout=DEFAULT_LOGIN_TIMEOUT, label="抖音登录")
+
+        # If the page redirects to the slider verification page, try once more.
         await asyncio.sleep(6)
-        current_page_title = await self.context_page.title()
-        if "验证码中间页" in current_page_title:
-            await self.check_page_display_slider(move_step=3, slider_level="hard")
-
-        # check login state
-        utils.logger.info(f"[DouYinLogin.begin] login finished then check login state ...")
         try:
-            await self.check_login_state()
-        except RetryError:
-            utils.logger.info("[DouYinLogin.begin] login failed please confirm ...")
-            sys.exit()
+            current_page_title = await self.context_page.title()
+            if "验证码中间页" in current_page_title:
+                await self.check_page_display_slider(move_step=3, slider_level="hard")
+        except Exception as exc:
+            utils.logger.warning(f"[DouYinLogin.begin] slider check skipped: {exc}")
 
-        # wait for redirect
-        wait_redirect_seconds = 5
-        utils.logger.info(f"[DouYinLogin.begin] Login successful then wait for {wait_redirect_seconds} seconds redirect ...")
-        await asyncio.sleep(wait_redirect_seconds)
-
-    @retry(stop=stop_after_attempt(600), wait=wait_fixed(1), retry=retry_if_result(lambda value: value is False))
-    async def check_login_state(self):
-        """Check if the current login status is successful and return True otherwise return False"""
-        current_cookie = await self.browser_context.cookies()
-        _, cookie_dict = utils.convert_cookies(current_cookie)
-
-        for page in self.browser_context.pages:
-            try:
-                local_storage = await page.evaluate("() => window.localStorage")
-                if local_storage.get("HasUserLogin", "") == "1":
-                    return True
-            except Exception as e:
-                # utils.logger.warn(f"[DouYinLogin] check_login_state waring: {e}")
-                await asyncio.sleep(0.1)
-
-        if cookie_dict.get("LOGIN_STATUS") == "1":
-            return True
-
-        return False
+        await asyncio.sleep(3)
 
     async def popup_login_dialog(self):
-        """If the login dialog box does not pop up automatically, we will manually click the login button"""
+        """If the login dialog does not pop up automatically, click the login button (best effort)."""
         dialog_selector = "xpath=//div[@id='login-panel-new']"
         try:
-            # check dialog box is auto popup and wait for 10 seconds
-            await self.context_page.wait_for_selector(dialog_selector, timeout=1000 * 10)
-        except Exception as e:
-            utils.logger.error(f"[DouYinLogin.popup_login_dialog] login dialog box does not pop up automatically, error: {e}")
-            utils.logger.info("[DouYinLogin.popup_login_dialog] login dialog box does not pop up automatically, we will manually click the login button")
+            await self.context_page.wait_for_selector(dialog_selector, timeout=1000 * 8)
+            return
+        except Exception:
+            utils.logger.info("[DouYinLogin.popup_login_dialog] login dialog not auto-opened, clicking 登录 ...")
+        try:
             login_button_ele = self.context_page.locator("xpath=//p[text() = '登录']")
-            await login_button_ele.click()
+            await login_button_ele.click(timeout=5000)
             await asyncio.sleep(0.5)
+        except Exception as exc:
+            utils.logger.warning(f"[DouYinLogin.popup_login_dialog] could not click login button: {exc}")
 
     async def login_by_qrcode(self):
         utils.logger.info("[DouYinLogin.login_by_qrcode] Begin login douyin by qrcode...")
-        qrcode_img_selector = "xpath=//div[@id='animate_qrcode_container']//img"
-        base64_qrcode_img = await utils.find_login_qrcode(
+        await show_qrcode_best_effort(
             self.context_page,
-            selector=qrcode_img_selector
+            (
+                "xpath=//div[@id='animate_qrcode_container']//img",
+                "#animate_qrcode_container img",
+                "img[src^='data:image']",
+                "canvas",
+            ),
         )
-        if not base64_qrcode_img:
-            utils.logger.info("[DouYinLogin.login_by_qrcode] login qrcode not found please confirm ...")
-            sys.exit()
-
-        partial_show_qrcode = functools.partial(utils.show_qrcode, base64_qrcode_img)
-        asyncio.get_running_loop().run_in_executor(executor=None, func=partial_show_qrcode)
-        await asyncio.sleep(2)
 
     async def login_by_mobile(self):
         utils.logger.info("[DouYinLogin.login_by_mobile] Begin login douyin by mobile ...")
@@ -145,18 +151,13 @@ class DouYinLogin(AbstractLogin):
             await asyncio.sleep(0.5)
             submit_btn_ele = self.context_page.locator("xpath=//button[@class='web-login-button']")
             await submit_btn_ele.click()  # Click login
-            # todo ... should also check the correctness of the verification code, it may be incorrect
             break
 
     async def check_page_display_slider(self, move_step: int = 10, slider_level: str = "easy"):
-        """
-        Check if slider verification appears on the page
-        :return:
-        """
-        # Wait for slider verification to appear
+        """Solve the slider verification if it appears."""
         back_selector = "#captcha-verify-image"
         try:
-            await self.context_page.wait_for_selector(selector=back_selector, state="visible", timeout=30 * 1000)
+            await self.context_page.wait_for_selector(selector=back_selector, state="visible", timeout=20 * 1000)
         except PlaywrightTimeoutError:  # No slider verification, return directly
             return
 
@@ -165,80 +166,59 @@ class DouYinLogin(AbstractLogin):
         slider_verify_success = False
         while not slider_verify_success:
             if max_slider_try_times <= 0:
-                utils.logger.error("[DouYinLogin.check_page_display_slider] slider verify failed ...")
-                sys.exit()
+                raise RuntimeError("抖音滑块验证失败：请在浏览器窗口中手动完成验证后重试")
             try:
                 await self.move_slider(back_selector, gap_selector, move_step, slider_level)
                 await asyncio.sleep(1)
 
-                # If the slider is too slow or verification failed, it will prompt "The operation is too slow", click the refresh button here
                 page_content = await self.context_page.content()
                 if "操作过慢" in page_content or "提示重新操作" in page_content:
                     utils.logger.info("[DouYinLogin.check_page_display_slider] slider verify failed, retry ...")
                     await self.context_page.click(selector="//a[contains(@class, 'secsdk_captcha_refresh')]")
                     continue
 
-                # After successful sliding, wait for the slider to disappear
                 await self.context_page.wait_for_selector(selector=back_selector, state="hidden", timeout=1000)
-                # If the slider disappears, it means the verification is successful, break the loop. If not, it means the verification failed, the above line will throw an exception and be caught to continue the loop
                 utils.logger.info("[DouYinLogin.check_page_display_slider] slider verify success ...")
                 slider_verify_success = True
             except Exception as e:
                 utils.logger.error(f"[DouYinLogin.check_page_display_slider] slider verify failed, error: {e}")
                 await asyncio.sleep(1)
                 max_slider_try_times -= 1
-                utils.logger.info(f"[DouYinLogin.check_page_display_slider] remaining slider try times: {max_slider_try_times}")
                 continue
 
     async def move_slider(self, back_selector: str, gap_selector: str, move_step: int = 10, slider_level="easy"):
-        """
-        Move the slider to the right to complete the verification
-        :param back_selector: Selector for the slider verification background image
-        :param gap_selector:  Selector for the slider verification slider
-        :param move_step: Controls the ratio of single movement speed, default is 1, meaning the distance moves in 0.1 seconds no matter how far, larger value means slower
-        :param slider_level: Slider difficulty easy hard, corresponding to the slider for mobile verification code and the slider in the middle of verification code
-        :return:
-        """
+        """Move the slider to the right to complete the verification."""
 
-        # get slider background image
         slider_back_elements = await self.context_page.wait_for_selector(
             selector=back_selector,
-            timeout=1000 * 10,  # wait 10 seconds
+            timeout=1000 * 10,
         )
         slide_back = str(await slider_back_elements.get_property("src")) # type: ignore
 
-        # get slider gap image
         gap_elements = await self.context_page.wait_for_selector(
             selector=gap_selector,
-            timeout=1000 * 10,  # wait 10 seconds
+            timeout=1000 * 10,
         )
         gap_src = str(await gap_elements.get_property("src")) # type: ignore
 
-        # Identify slider position
         slide_app = utils.Slide(gap=gap_src, bg=slide_back)
         distance = slide_app.discern()
 
-        # Get movement trajectory
         tracks = utils.get_tracks(distance, slider_level)
         new_1 = tracks[-1] - (sum(tracks) - distance)
         tracks.pop()
         tracks.append(new_1)
 
-        # Drag slider to specified position according to trajectory
         element = await self.context_page.query_selector(gap_selector)
         bounding_box = await element.bounding_box() # type: ignore
 
         await self.context_page.mouse.move(bounding_box["x"] + bounding_box["width"] / 2, # type: ignore
                                            bounding_box["y"] + bounding_box["height"] / 2) # type: ignore
-        # Get x coordinate center position
         x = bounding_box["x"] + bounding_box["width"] / 2 # type: ignore
-        # Simulate sliding operation
         await element.hover() # type: ignore
         await self.context_page.mouse.down()
 
         for track in tracks:
-            # Loop mouse movement according to trajectory
-            # steps controls the ratio of single movement speed, default is 1, meaning the distance moves in 0.1 seconds no matter how far, larger value means slower
             await self.context_page.mouse.move(x + track, 0, steps=move_step)
             x += track
         await self.context_page.mouse.up()

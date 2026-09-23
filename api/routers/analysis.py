@@ -272,6 +272,43 @@ async def delete_profile_route(profile_id: str) -> Dict[str, Any]:
     return {"deleted": profile_id}
 
 
+class ProfileSuggestRequest(BaseModel):
+    run_id: str = ""
+    api_key: Optional[str] = None
+    use_mock: Optional[bool] = None
+    model: ModelSettings = Field(default_factory=ModelSettings)
+
+
+@router.post("/profiles/suggest")
+async def post_suggest_profile(body: ProfileSuggestRequest) -> Dict[str, Any]:
+    """Let the model propose a project profile from a run's real comments."""
+    from api.services.insight.profile_suggestion import suggest_profile
+
+    if not (body.run_id or "").strip():
+        raise HTTPException(status_code=400, detail="请先创建或选择一个分析任务（需要其中的评论作为样本）")
+    try:
+        config = load_config(body.run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="任务不存在") from exc
+    records = load_source_records(body.run_id)
+    comments = [r.comment_text for r in records[:300] if getattr(r, "comment_text", "")]
+    if not comments:
+        raise HTTPException(status_code=400, detail="该任务没有可用的评论样本")
+    use_mock = config.use_mock if body.use_mock is None else body.use_mock
+    api_key = (body.api_key or "").strip()
+    if not use_mock and not api_key:
+        raise HTTPException(status_code=400, detail="生成档案需要 API Key")
+    pricing = normalize_model_settings(base_url=body.model.base_url, model_name=body.model.model_name)
+    profile = suggest_profile(
+        comments,
+        model_name=str(pricing["model_name"]),
+        base_url=str(pricing["base_url"]),
+        api_key=api_key,
+        use_mock=use_mock,
+    )
+    return {"profile": profile}
+
+
 @router.post("/estimate")
 async def post_estimate(body: EstimateRequest) -> Dict[str, Any]:
     pricing = normalize_model_settings(base_url=body.model.base_url, model_name=body.model.model_name)
