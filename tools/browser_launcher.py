@@ -188,6 +188,19 @@ class BrowserLauncher:
             except Exception:
                 pass
 
+            # Port not up yet: detecting an early exit avoids a pointless 60s
+            # wait. This happens when another Chrome instance owns the same
+            # --user-data-dir and the new process merely forwards and exits.
+            process = self.browser_process
+            if process is not None and process.poll() is not None:
+                utils.logger.error(
+                    "[BrowserLauncher] Browser process exited early "
+                    f"(code={process.returncode}). Likely another Chrome owns the "
+                    "same user-data-dir; a leftover browser from a previous run "
+                    "must be closed."
+                )
+                return False
+
             time.sleep(0.5)
 
         utils.logger.error(f"[BrowserLauncher] Browser failed to be ready within {timeout} seconds")

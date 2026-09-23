@@ -32,3 +32,30 @@ def test_clear_stale_profile_locks_is_safe_when_missing(tmp_path):
 
 def test_kill_stale_browsers_no_match_returns_zero(tmp_path):
     assert BrowserLauncher().kill_stale_browsers(str(tmp_path / "unique-profile-xyz")) == 0
+
+
+class _ExitedProcess:
+    returncode = 1
+
+    def poll(self):
+        return 1
+
+
+def test_wait_for_browser_ready_fails_fast_on_early_exit():
+    launcher = BrowserLauncher()
+    launcher.browser_process = _ExitedProcess()
+    # free port so the socket check never succeeds; early exit must return quickly
+    import time as _time
+
+    started = _time.time()
+    ready = launcher.wait_for_browser_ready(port_free_guard(), timeout=30)
+    assert ready is False
+    assert _time.time() - started < 5  # did not wait the full 30s
+
+
+def port_free_guard() -> int:
+    import socket as _socket
+
+    with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+        s.bind(("localhost", 0))
+        return s.getsockname()[1]
