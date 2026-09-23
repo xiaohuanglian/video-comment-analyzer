@@ -178,7 +178,13 @@ def _hypothesis_quote_score(hid: str, rel: str, quote: str, analysis: Dict[str, 
     return score
 
 
-def build_statistics(results: List[Dict[str, Any]], *, total_records: int = 0) -> Dict[str, Any]:
+def build_statistics(
+    results: List[Dict[str, Any]],
+    *,
+    total_records: int = 0,
+    hypotheses: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    hypo_labels = hypotheses or HYPOTHESES
     total_analyzed = len(results)
     intent_counts: Dict[str, int] = defaultdict(int)
     signal_counts: Dict[str, int] = defaultdict(int)
@@ -337,7 +343,7 @@ def build_statistics(results: List[Dict[str, Any]], *, total_records: int = 0) -
     hypothesis_details = {}
     for hid in ("H1", "H2", "H3"):
         hypothesis_details[hid] = {
-            "label": HYPOTHESES[hid],
+            "label": hypo_labels.get(hid, HYPOTHESES[hid]),
             "counts": hypothesis_counts[hid],
             "unique_users": {rel: len(users) for rel, users in hypothesis_users[hid].items()},
             "by_creator_type": {

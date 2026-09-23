@@ -643,7 +643,14 @@ def build_summary(run_id: str) -> Dict[str, object]:
         row["analysis"] = analysis
         row["card"] = card
     progress = load_progress(run_id)
-    summary = build_statistics(results, total_records=progress.total_records)
+    try:
+        from .project_profiles import resolve_profile
+        from .storage import load_config as _load_config
+
+        hypo = resolve_profile(_load_config(run_id)).hypotheses
+    except Exception:
+        hypo = None
+    summary = build_statistics(results, total_records=progress.total_records, hypotheses=hypo)
     candidates_doc = load_candidates(run_id)
     if candidates_doc.candidates:
         summary = apply_candidates_to_summary(summary, candidates_doc.candidates)
