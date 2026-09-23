@@ -220,6 +220,68 @@ class BrowserLauncher:
         except Exception:
             return "Unknown Browser", "Unknown Version"
 
+    def find_processes_using_user_data_dir(self, user_data_dir: str) -> List[int]:
+        """PIDs of browser processes launched with the given --user-data-dir.
+
+        Matches on the profile path so we only touch browsers this tool started;
+        the user's own Chrome windows (different profile) are never affected.
+        """
+        if not user_data_dir or self.system == "Windows":
+            return []
+        try:
+            result = subprocess.run(
+                ["pgrep", "-f", f"--user-data-dir={user_data_dir}"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return []
+        pids: List[int] = []
+        for token in result.stdout.split():
+            try:
+                pid = int(token)
+            except ValueError:
+                continue
+            if pid != os.getpid():
+                pids.append(pid)
+        return pids
+
+    def kill_stale_browsers(self, user_data_dir: str) -> int:
+        """Terminate leftover browsers holding the profile dir. Returns count."""
+        stale = self.find_processes_using_user_data_dir(user_data_dir)
+        if not stale:
+            return 0
+        utils.logger.warning(
+            f"[BrowserLauncher] Found {len(stale)} leftover browser process(es) using {user_data_dir}; terminating"
+        )
+        for pid in stale:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+        time.sleep(1.0)
+        for pid in self.find_processes_using_user_data_dir(user_data_dir):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        return len(stale)
+
+    def clear_stale_profile_locks(self, user_data_dir: str) -> None:
+        """Remove Chromium singleton lock files left behind by a crashed run."""
+        if not user_data_dir:
+            return
+        for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+            path = os.path.join(user_data_dir, name)
+            try:
+                os.remove(path)
+                utils.logger.info(f"[BrowserLauncher] Removed stale profile lock: {path}")
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                utils.logger.warning(f"[BrowserLauncher] Could not remove {path}: {exc}")
+
     def cleanup(self):
         """
         Cleanup resources, close browser process

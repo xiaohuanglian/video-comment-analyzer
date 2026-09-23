@@ -27,7 +27,11 @@ def _rank_error_message(exc: Exception) -> str:
     if any(token in lowered for token in ("rate", "频繁", "风控", "稍后再试", "412", "429")):
         return "B 站请求过于频繁，请等待 1-2 分钟后重试。"
     if "Browser failed to start" in text or "Cannot connect to existing browser" in text:
-        return "浏览器启动失败。请关闭其他 Chrome 窗口后执行 ./run_web.sh 重启服务。"
+        return (
+            "浏览器启动失败：可能有上一次遗留的 Chrome 占用了调试配置。"
+            "请在终端执行 `pkill -f browser_data/cdp_` 后重试；"
+            "若仍失败，执行 `kill $(lsof -ti :8766) && ./run_web.sh` 重启服务。"
+        )
     return text or "排行查询失败，请稍后重试。"
 
 

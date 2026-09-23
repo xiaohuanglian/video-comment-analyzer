@@ -710,8 +710,9 @@ class BilibiliCrawler(AbstractCrawler):
             utils.logger.error(f"[BilibiliCrawler] CDP mode launch failed, fallback to standard mode: {e}")
             if getattr(config, "DISABLE_CDP_FALLBACK", False):
                 raise RuntimeError(
-                    "浏览器启动失败。请关闭其他 Chrome 窗口后重试；"
-                    "若仍失败，请在终端执行 kill $(lsof -ti :8766) && ./run_web.sh 重启服务。"
+                    "浏览器启动失败：可能有上一次遗留的 Chrome 占用了调试配置。"
+                    "请在终端执行 pkill -f browser_data/cdp_ 后重试；"
+                    "若仍失败，执行 kill $(lsof -ti :8766) && ./run_web.sh 重启服务。"
                 ) from e
             # Fallback to standard mode
             chromium = playwright.chromium
