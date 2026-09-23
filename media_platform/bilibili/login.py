@@ -4,16 +4,24 @@
 
 import asyncio
 import functools
-import sys
 from typing import Optional
 
 from playwright.async_api import BrowserContext, Page
-from tenacity import (RetryError, retry, retry_if_result, stop_after_attempt,
-                      wait_fixed)
+from tenacity import retry, retry_if_result, stop_after_attempt, wait_fixed
 
 import config
 from base.base_crawler import AbstractLogin
 from tools import utils
+
+BILIBILI_LOGIN_URL = "https://passport.bilibili.com/login"
+LOGIN_WAIT_SECONDS = 300
+# Selectors are tried in order; keep several because Bilibili rewrites markup.
+QRCODE_IMAGE_SELECTORS = (
+    "img[src^='data:image']",
+    ".login-scan-box img",
+    ".qrcode-img",
+    "#login_qr_guide img",
+)
 
 
 class BilibiliLogin(AbstractLogin):
@@ -57,40 +65,77 @@ class BilibiliLogin(AbstractLogin):
         return False
 
     async def login_by_qrcode(self):
-        """login bilibili website and keep webdriver login state"""
+        """Log in via Bilibili's passport page.
+
+        We no longer click the homepage login button (its DOM changes Often and
+        caused hard 30s timeouts). Instead we open the dedicated login page and
+        wait until a login cookie appears. When the browser is visible the user
+        can scan / log in there directly; we also try to render the QR code in
+        the terminal as a best-effort convenience.
+        """
         utils.logger.info("[BilibiliLogin.login_by_qrcode] Begin login bilibili by qrcode ...")
 
-        # click login button
-        login_button_ele = self.context_page.locator(
-            "xpath=//div[@class='right-entry__outside go-login-btn']//div"
-        )
-        await login_button_ele.click()
-        await asyncio.sleep(1)
-        # find login qrcode
-        qrcode_img_selector = "//div[@class='login-scan-box']//img"
-        base64_qrcode_img = await utils.find_login_qrcode(
-            self.context_page,
-            selector=qrcode_img_selector
-        )
-        if not base64_qrcode_img:
-            utils.logger.info("[BilibiliLogin.login_by_qrcode] login failed , have not found qrcode please check ....")
-            sys.exit()
+        if await self._has_login_cookie():
+            return
 
-        # show login qrcode
-        partial_show_qrcode = functools.partial(utils.show_qrcode, base64_qrcode_img)
-        asyncio.get_running_loop().run_in_executor(executor=None, func=partial_show_qrcode)
-
-        utils.logger.info(f"[BilibiliLogin.login_by_qrcode] Waiting for scan code login, remaining time is 20s")
         try:
-            await self.check_login_state()
-        except RetryError:
-            utils.logger.info("[BilibiliLogin.login_by_qrcode] Login bilibili failed by qrcode login method ...")
-            sys.exit()
+            await self.context_page.goto(
+                BILIBILI_LOGIN_URL, wait_until="domcontentloaded", timeout=60000
+            )
+        except Exception as exc:  # noqa: BLE001 - best effort; user can log in manually
+            utils.logger.warning(
+                f"[BilibiliLogin.login_by_qrcode] open login page failed: {exc}; "
+                "please log in in the opened browser window"
+            )
 
-        wait_redirect_seconds = 5
+        await self._show_qrcode_if_possible()
         utils.logger.info(
-            f"[BilibiliLogin.login_by_qrcode] Login successful then wait for {wait_redirect_seconds} seconds redirect ...")
-        await asyncio.sleep(wait_redirect_seconds)
+            "[BilibiliLogin.login_by_qrcode] 请在打开的浏览器窗口中扫码/登录 B 站，"
+            f"等待登录（最多 {LOGIN_WAIT_SECONDS} 秒）..."
+        )
+        await self._wait_for_login()
+        utils.logger.info(
+            "[BilibiliLogin.login_by_qrcode] Login successful, wait 3 seconds for redirect ..."
+        )
+        await asyncio.sleep(3)
+
+    async def _has_login_cookie(self) -> bool:
+        current_cookie = await self.browser_context.cookies()
+        _, cookie_dict = utils.convert_cookies(current_cookie)
+        return bool(cookie_dict.get("SESSDATA") or cookie_dict.get("DedeUserID"))
+
+    async def _show_qrcode_if_possible(self) -> None:
+        base64_qrcode_img = ""
+        for selector in QRCODE_IMAGE_SELECTORS:
+            try:
+                base64_qrcode_img = await utils.find_login_qrcode(self.context_page, selector=selector)
+            except Exception:
+                base64_qrcode_img = ""
+            if base64_qrcode_img:
+                break
+        if not base64_qrcode_img:
+            try:
+                base64_qrcode_img = await utils.find_qrcode_img_from_canvas(self.context_page, selector="canvas")
+            except Exception:
+                base64_qrcode_img = ""
+        if not base64_qrcode_img:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(None, functools.partial(utils.show_qrcode, base64_qrcode_img))
+        except Exception as exc:  # noqa: BLE001 - terminal display is optional
+            utils.logger.warning(f"[BilibiliLogin.login_by_qrcode] show qrcode failed: {exc}")
+
+    async def _wait_for_login(self) -> None:
+        deadline = asyncio.get_running_loop().time() + LOGIN_WAIT_SECONDS
+        while asyncio.get_running_loop().time() < deadline:
+            if await self._has_login_cookie():
+                return
+            await asyncio.sleep(2)
+        raise RuntimeError(
+            "B 站登录超时：请在打开的浏览器窗口中完成登录后重试"
+            "（若浏览器未弹出，可设置环境变量 BILI_QRCODE=... 或使用 cookie 登录）"
+        )
 
     async def login_by_mobile(self):
         pass
