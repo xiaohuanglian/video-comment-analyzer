@@ -61,7 +61,9 @@ from api.services.insight.run_locations import find_resumable_run, run_exists_in
 from api.services.insight.task_runner import is_running, reconcile_thread_state, request_cancel, start_background
 from api.services.insight.research_matching import parse_research_targets
 from api.services.insight.candidates import build_candidates, merge_candidate_updates
+from api.services.insight.candidate_schemas import ReplyControl
 from api.services.insight.outreach import generate_outreach_drafts, merge_outreach_update
+from api.services.insight.reply_runner import is_reply_running, start_reply_run, stop_reply_run
 from api.services.insight.outreach_prompts import DEFAULT_BASE_TEMPLATE
 from api.services.insight.query_filters import paginate_candidates, paginate_results_iter
 from api.services.insight.trial_report import build_trial_report
@@ -170,6 +172,18 @@ class OutreachUpdateRequest(BaseModel):
     edited_content: Optional[str] = None
     contact_status: Optional[str] = None
     product_manager_note: Optional[str] = None
+    review_status: Optional[Literal["draft", "approved", "rejected"]] = None
+
+
+class OutreachReplyStartRequest(BaseModel):
+    """Start a controlled reply run. Frequency/time guardrails live here."""
+
+    user_keys: Optional[List[str]] = None  # default: all approved entries
+    interval_seconds: int = Field(default=90, ge=10, le=86400)
+    jitter_seconds: int = Field(default=20, ge=0, le=3600)
+    daily_limit: int = Field(default=30, ge=1, le=500)
+    time_window_start: str = "09:00"
+    time_window_end: str = "22:00"
 
 
 class UpdateRunConfigRequest(BaseModel):
@@ -1170,6 +1184,7 @@ async def patch_outreach(run_id: str, user_key: str, body: OutreachUpdateRequest
         edited_content=body.edited_content,
         contact_status=body.contact_status,
         product_manager_note=body.product_manager_note,
+        review_status=body.review_status,
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="回复记录不存在")
@@ -1179,6 +1194,86 @@ async def patch_outreach(run_id: str, user_key: str, body: OutreachUpdateRequest
         merge_candidate_updates(candidates_doc, user_key=user_key, contact_status=body.contact_status)
         save_candidates(run_id, candidates_doc)
     return updated.model_dump()
+
+
+@router.post("/runs/{run_id}/outreach/reply/start")
+async def start_outreach_reply(run_id: str, body: OutreachReplyStartRequest) -> Dict[str, Any]:
+    """Start the rate/time-limited reply run over human-approved drafts only."""
+    try:
+        load_config(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="任务不存在") from exc
+    doc = load_outreach(run_id)
+    approved = [e for e in doc.entries if e.review_status == "approved" and e.final_content]
+    if not approved:
+        raise HTTPException(status_code=400, detail="没有已审核通过的回复；请先人工确认回复内容")
+    approved_keys = {e.user_key for e in approved}
+    if body.user_keys:
+        wanted = {k for k in body.user_keys if k in approved_keys}
+    else:
+        wanted = set(approved_keys)
+    if not wanted:
+        raise HTTPException(status_code=400, detail="所选用户中没有已审核通过的回复")
+    if is_reply_running(run_id):
+        raise HTTPException(status_code=409, detail="已有回复任务在运行，请先停止")
+
+    # Send higher-scoring candidates first.
+    score_by_key = {c.user_key: c.candidate_score for c in load_candidates(run_id).candidates}
+    ordered_keys = sorted(wanted, key=lambda k: score_by_key.get(k, 0), reverse=True)
+
+    control = ReplyControl(
+        interval_seconds=body.interval_seconds,
+        jitter_seconds=body.jitter_seconds,
+        daily_limit=body.daily_limit,
+        time_window_start=body.time_window_start,
+        time_window_end=body.time_window_end,
+    )
+    doc.reply_control = control
+    doc.reply_status = "running"
+    doc.reply_message = f"已启动受控回复（{len(ordered_keys)} 条待发送）…"
+    save_outreach(run_id, doc)
+    if not start_reply_run(run_id, control, ordered_keys):
+        raise HTTPException(status_code=409, detail="已有回复任务在运行，请先停止")
+    return load_outreach(run_id).model_dump()
+
+
+@router.post("/runs/{run_id}/outreach/reply/stop")
+async def stop_outreach_reply(run_id: str) -> Dict[str, Any]:
+    try:
+        load_config(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="任务不存在") from exc
+    doc = load_outreach(run_id)
+    stopped = stop_reply_run(run_id)
+    if stopped:
+        doc.reply_status = "stopping"
+        doc.reply_message = "已请求停止，将在当前一条发送后中止…"
+    else:
+        doc.reply_status = "stopped"
+        doc.reply_message = "当前没有运行中的回复任务"
+    save_outreach(run_id, doc)
+    return load_outreach(run_id).model_dump()
+
+
+@router.get("/runs/{run_id}/outreach/reply/status")
+async def get_outreach_reply_status(run_id: str) -> Dict[str, Any]:
+    try:
+        load_config(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="任务不存在") from exc
+    doc = load_outreach(run_id)
+    counts: Dict[str, int] = {}
+    for entry in doc.entries:
+        counts[entry.send_status] = counts.get(entry.send_status, 0) + 1
+    return {
+        "reply_status": doc.reply_status,
+        "reply_message": doc.reply_message,
+        "is_running": is_reply_running(run_id),
+        "reply_control": doc.reply_control.model_dump(),
+        "replies_sent_today": doc.replies_sent_today,
+        "last_reply_at": doc.last_reply_at,
+        "send_status_counts": counts,
+    }
 
 
 @router.get("/runs/{run_id}/evidence/items")

@@ -1936,7 +1936,7 @@
       profilesCache = [];
     }
     if (!insightProfileSelect) return;
-    const current = insightProfileSelect.value || sessionStorage.getItem(PROFILE_KEY) || "kineo";
+    const current = insightProfileSelect.value || sessionStorage.getItem(PROFILE_KEY) || "default";
     insightProfileSelect.innerHTML = "";
     for (const p of profilesCache) {
       const opt = document.createElement("option");
@@ -1946,12 +1946,12 @@
     }
     insightProfileSelect.value = profilesCache.some((p) => p.profile_id === current)
       ? current
-      : profilesCache[0]?.profile_id || "kineo";
+      : profilesCache[0]?.profile_id || "default";
     sessionStorage.setItem(PROFILE_KEY, insightProfileSelect.value);
   }
 
   function currentProfile() {
-    const pid = insightProfileSelect?.value || "kineo";
+    const pid = insightProfileSelect?.value || "default";
     return profilesCache.find((p) => p.profile_id === pid) || null;
   }
 
@@ -2017,7 +2017,7 @@
         file_paths: paths,
         use_mock: false,
         analysis_limit: getAnalysisLimit(),
-        profile_id: insightProfileSelect?.value || "kineo",
+        profile_id: insightProfileSelect?.value || "default",
         model: getModelSettings(),
       }),
     });

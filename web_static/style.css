@@ -2324,6 +2324,34 @@ body {
   margin-top: 6px;
 }
 
+.insight-send-error {
+  color: #b91c1c;
+  display: block;
+  margin-top: 4px;
+}
+
+.outreach-reply-control-card .outreach-reply-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin: 8px 0 12px;
+}
+
+.outreach-reply-control-card .outreach-reply-controls .setting-field {
+  margin: 0;
+}
+
+.outreach-reply-control-card .outreach-time-window {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.outreach-reply-control-card input[type="number"],
+.outreach-reply-control-card input[type="time"] {
+  width: 100%;
+}
+
 .insight-pager {
   display: flex;
   flex-wrap: wrap;

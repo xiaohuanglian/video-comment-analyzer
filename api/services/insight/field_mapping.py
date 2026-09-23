@@ -105,6 +105,31 @@ def derive_bilibili_links(platform: str, user_id: str, video_id: str, comment_id
     return homepage, comment_url
 
 
+_REPLY_FRAGMENT_PATTERN = re.compile(r"#reply(\d+)")
+
+
+def parse_bilibili_targets(comment_url: str) -> tuple[str, str]:
+    """Extract ``(content_id, comment_id)`` from a bilibili comment URL.
+
+    Accepts ``https://www.bilibili.com/video/BVxxxx#reply123`` (BV or numeric
+    avid) and returns empty strings when nothing can be parsed.
+    """
+    url = str(comment_url or "")
+    if not url:
+        return "", ""
+    content = ""
+    video_match = re.search(r"/video/([^/?#]+)", url)
+    if video_match:
+        content = video_match.group(1)
+    else:
+        bv_match = _BV_PATTERN.search(url)
+        if bv_match:
+            content = bv_match.group(1)
+    reply_match = _REPLY_FRAGMENT_PATTERN.search(url)
+    comment = reply_match.group(1) if reply_match else ""
+    return content, comment
+
+
 def resolve_source_links(source: Mapping[str, Any]) -> tuple[str, str]:
     homepage = str(source.get("user_homepage_url") or "").strip()
     comment_url = str(source.get("comment_url") or "").strip()

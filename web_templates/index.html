@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>视频评论分析</title>
-  <link rel="stylesheet" href="/static/style.css?v=27" />
+  <link rel="stylesheet" href="/static/style.css?v=28" />
 </head>
 <body>
   <header class="topbar">
@@ -368,12 +368,12 @@
         <fieldset class="insight-analysis-limit-field">
           <legend class="field-label">本次分析数量</legend>
           <div class="insight-segmented-control" role="radiogroup" aria-label="本次分析数量">
-            <label class="insight-segment"><input type="radio" name="insightAnalysisLimit" value="20" /> 20 条</label>
-            <label class="insight-segment"><input type="radio" name="insightAnalysisLimit" value="50" /> 50 条</label>
             <label class="insight-segment"><input type="radio" name="insightAnalysisLimit" value="100" checked /> 100 条</label>
+            <label class="insight-segment"><input type="radio" name="insightAnalysisLimit" value="1000" /> 1K 条</label>
+            <label class="insight-segment"><input type="radio" name="insightAnalysisLimit" value="10000" /> 10K 条</label>
             <label class="insight-segment"><input type="radio" name="insightAnalysisLimit" value="0" /> 全部</label>
           </div>
-          <p class="hint">默认 100 条用于 Prompt 验收；继续分析会处理剩余评论，已分析不会重复调用。</p>
+          <p class="hint">默认 100 条用于 Prompt 验收；1K / 10K / 全部为批量档位，超过 2000 条会二次确认预算与耗时，已分析的评论不会重复调用。</p>
         </fieldset>
         <div class="action-row insight-control-actions">
           <button class="btn primary" type="button" id="btnInsightStartRun">开始分析</button>
@@ -508,12 +508,14 @@
         <div>
           <p class="eyebrow">评论区回复</p>
           <h2>找出值得回复的人，生成针对性回复</h2>
-          <p>本板块<strong>独立运作</strong>：只读取前两板块已产出的分析任务（无需重新上传 CSV），负责筛选值得回复的用户并生成<strong>公开评论回复草稿</strong>；不会反向改写评论洞察的分析流程。筛选与生成均<strong>需你手动点击开始</strong>，结果只是草稿，永不自动发送。</p>
+          <p>本板块<strong>独立运作</strong>：只读取前两板块已产出的分析任务（无需重新上传 CSV）。流程为<strong>人工确认 → AI 生成 → 人工确认 → 受控回复</strong>：① 算法筛选值得回复的用户 → ② 你勾选确认 → ③ AI 按每个人各自的意图生成回复内容 → ④ 你逐条审核通过 → ⑤ 点击「开始回复」，按设定的<strong>最小间隔、每日上限与允许时段</strong>受控发送，可随时停止。任何环节都需你手动点击开始。</p>
         </div>
         <dl class="outreach-flow-legend">
-          <div><dt>关联任务</dt><dd>只读消费前两板块的分析结果</dd></div>
-          <div><dt>筛选回复对象</dt><dd><strong>纯算法</strong>（关键词匹配 + 评分合并），不用大模型</dd></div>
-          <div><dt>生成回复草稿</dt><dd><strong>需要大模型</strong>（API Key 可在本板块填写）；仅生成草稿，<strong>永不自动发送</strong></dd></div>
+          <div><dt>① 筛选对象</dt><dd><strong>纯算法</strong>（关键词匹配 + 评分合并），不用大模型</dd></div>
+          <div><dt>② 人工确认</dt><dd>你勾选确认要回复的用户后才进入下一步</dd></div>
+          <div><dt>③ 生成内容</dt><dd><strong>需要大模型</strong>（API Key 可在本板块填写），按用户意图逐条生成</dd></div>
+          <div><dt>④ 人工确认</dt><dd>逐条审核通过后才进入发送队列</dd></div>
+          <div><dt>⑤ 开始回复</dt><dd>受频率与时段控制，仅发送你审核通过的内容，可随时停止</dd></div>
         </dl>
       </div>
 
@@ -558,12 +560,12 @@
           <div class="step-number">C</div>
           <div class="step-header-copy">
             <h3>值得回复的用户</h3>
-            <p class="hint">按用户合并，优先展示符合目标人群的对象；评分仅供参考，不代表付费意愿。勾选后让 AI 按每个人各自的意图生成回复草稿（不复用模板）。</p>
+            <p class="hint">按用户合并，优先展示符合目标人群的对象；评分仅供参考，不代表付费意愿。勾选后点击「生成回复内容」，AI 会按每个人各自的意图逐条生成（不复用模板）。生成后请逐条人工审核。</p>
           </div>
         </div>
         <div class="action-row outreach-candidate-actions">
           <button class="btn secondary sm" type="button" id="btnOutreachBuildCandidates">筛选值得回复的用户（算法）</button>
-          <button class="btn secondary sm" type="button" id="btnOutreachGenerate">为勾选用户生成回复草稿（大模型）</button>
+          <button class="btn secondary sm" type="button" id="btnOutreachGenerate">为勾选用户生成回复内容（大模型）</button>
           <a class="btn ghost sm" id="btnOutreachExportCandidates" href="#" download hidden>导出用户 CSV</a>
           <a class="btn ghost sm" id="btnOutreachExportOutreach" href="#" download hidden>导出回复记录 CSV</a>
         </div>
@@ -604,7 +606,7 @@
         <label class="setting-field outreach-template-field">
           <span>回复参考话术（仅作风格参考，AI 会按每个人的评论单独生成）</span>
           <textarea id="outreachTemplate" rows="5" placeholder="默认会针对对方评论里的具体问题给出做法，必要时提一个澄清问题；不推销、不留联系方式"></textarea>
-          <span class="hint">回复是公开评论，必须真正帮到对方：针对其原话作答、给具体信息，不推销、不导流、不做疗效/收益承诺。生成结果只是<strong>草稿</strong>，需人工确认后再手动发送。</span>
+          <span class="hint">回复是公开评论，必须真正帮到对方：针对其原话作答、给具体信息，不推销、不导流、不做疗效/收益承诺。生成结果需<strong>人工逐条审核通过</strong>后才会进入受控发送队列。</span>
         </label>
         <p class="inline-status" id="outreachCandidatesStatus"></p>
         <div id="outreachCandidatesPanel" class="outreach-candidates-panel">
@@ -612,11 +614,49 @@
         </div>
         <div class="insight-pager" id="outreachCandidatesPager" hidden></div>
       </article>
+
+      <article class="card flow-card outreach-reply-control-card">
+        <div class="step-header">
+          <div class="step-number">D</div>
+          <div class="step-header-copy">
+            <h3>开始回复（受控）</h3>
+            <p class="hint">只有你在上一步<strong>审核通过</strong>的回复才会被发送。发送受最小间隔、随机抖动、每日上限与允许时段控制，可随时停止。未通过审核或平台不支持自动发送的条目不会被发送。</p>
+          </div>
+        </div>
+        <div class="outreach-reply-controls">
+          <label class="setting-field">
+            <span class="field-label">最小间隔（秒）</span>
+            <input type="number" id="outreachIntervalSeconds" min="10" max="86400" value="90" />
+          </label>
+          <label class="setting-field">
+            <span class="field-label">随机抖动（秒）</span>
+            <input type="number" id="outreachJitterSeconds" min="0" max="3600" value="20" />
+          </label>
+          <label class="setting-field">
+            <span class="field-label">每日上限（条）</span>
+            <input type="number" id="outreachDailyLimit" min="1" max="500" value="30" />
+          </label>
+          <label class="setting-field">
+            <span class="field-label">允许时段</span>
+            <span class="outreach-time-window">
+              <input type="time" id="outreachWindowStart" value="09:00" />
+              <span>–</span>
+              <input type="time" id="outreachWindowEnd" value="22:00" />
+            </span>
+          </label>
+        </div>
+        <div class="action-row">
+          <button class="btn primary sm" type="button" id="btnOutreachStartReply">开始回复（仅发已审核内容）</button>
+          <button class="btn danger sm" type="button" id="btnOutreachStopReply" disabled>停止回复</button>
+        </div>
+        <p class="hint">B 站自动回复需在服务端配置登录 Cookie（环境变量 <code>VCA_OUTREACH_COOKIE</code>，或爬虫的 <code>COOKIES</code>）。其他平台暂不支持自动发送，会保留为手动复制。</p>
+        <p class="inline-status" id="outreachReplyStatus"></p>
+      </article>
     </section>
   </main>
 
   <script src="/static/comment.js?v=28"></script>
-  <script src="/static/insight.js?v=27"></script>
-  <script src="/static/outreach.js?v=1"></script>
+  <script src="/static/insight.js?v=28"></script>
+  <script src="/static/outreach.js?v=2"></script>
 </body>
 </html>

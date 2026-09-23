@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from .candidate_schemas import CandidateRecord, OutreachDocument, OutreachEntry
+from .field_mapping import parse_bilibili_targets
 from .llm_analyzer import build_openai_client, estimate_cost, parse_usage
 from .outreach_prompts import DEFAULT_BASE_TEMPLATE, OUTREACH_SYSTEM_PROMPT, build_outreach_user_message
 from .pricing import resolve_pricing
@@ -85,6 +86,19 @@ def _generate_one(
     )
 
 
+def _apply_candidate_targets(entry: OutreachEntry, candidate: CandidateRecord) -> None:
+    """Attach platform + resolvable reply targets so a sender can post later."""
+    entry.platform = (candidate.platform or "").strip()
+    comment_url = ""
+    for comment in candidate.comments or []:
+        if comment.comment_url:
+            comment_url = comment.comment_url
+            break
+    content_id, comment_id = parse_bilibili_targets(comment_url)
+    entry.target_content_id = content_id
+    entry.target_comment_id = comment_id
+
+
 def generate_outreach_drafts(
     candidates: List[CandidateRecord],
     config: RunConfig,
@@ -117,6 +131,7 @@ def generate_outreach_drafts(
         if not force and prior and (prior.generated_draft or prior.edited_content):
             continue
         entry = _generate_one(selected[key], config, template, api_key=api_key or "", use_mock=use_mock, client=client)
+        _apply_candidate_targets(entry, selected[key])
         if prior and prior.product_manager_note:
             entry.product_manager_note = prior.product_manager_note
         entries_map[key] = entry
@@ -135,6 +150,7 @@ def merge_outreach_update(
     edited_content: Optional[str] = None,
     contact_status: Optional[str] = None,
     product_manager_note: Optional[str] = None,
+    review_status: Optional[str] = None,
 ) -> Optional[OutreachEntry]:
     for entry in doc.entries:
         if entry.user_key != user_key:
@@ -145,6 +161,13 @@ def merge_outreach_update(
             entry.contact_status = contact_status  # type: ignore[assignment]
         if product_manager_note is not None:
             entry.product_manager_note = product_manager_note
+        if review_status is not None:
+            entry.review_status = review_status  # type: ignore[assignment]
+            entry.reviewed_at = datetime.now(timezone.utc).isoformat()
+            if review_status == "approved":
+                entry.send_status = "queued" if entry.send_status != "sent" else "sent"
+            elif review_status == "rejected":
+                entry.send_status = "skipped"
         doc.updated_at = datetime.now(timezone.utc).isoformat()
         return entry
     return None

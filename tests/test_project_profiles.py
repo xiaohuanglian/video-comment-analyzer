@@ -22,9 +22,10 @@ def test_builtin_profiles_available():
 
 
 def test_legacy_profile_ids_alias_to_default():
-    # Older runs used vertical ids; they must resolve to the neutral default.
-    assert pp.get_profile("kineo").profile_id == "default"
+    # `generic` is the only retained neutral alias for the built-in default.
     assert pp.get_profile("generic").profile_id == "default"
+    # Historical vertical/private codenames are NOT special-cased.
+    assert pp.get_profile("kineo") is None
 
 
 def test_upsert_and_delete_custom_profile(tmp_path, monkeypatch):

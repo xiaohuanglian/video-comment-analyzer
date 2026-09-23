@@ -28,6 +28,14 @@
   const outreachCandidatesStatus = $("outreachCandidatesStatus");
   const outreachCandidatesPanel = $("outreachCandidatesPanel");
   const outreachCandidatesPager = $("outreachCandidatesPager");
+  const outreachIntervalSeconds = $("outreachIntervalSeconds");
+  const outreachJitterSeconds = $("outreachJitterSeconds");
+  const outreachDailyLimit = $("outreachDailyLimit");
+  const outreachWindowStart = $("outreachWindowStart");
+  const outreachWindowEnd = $("outreachWindowEnd");
+  const btnOutreachStartReply = $("btnOutreachStartReply");
+  const btnOutreachStopReply = $("btnOutreachStopReply");
+  const outreachReplyStatus = $("outreachReplyStatus");
 
   const RUN_ID_STORAGE = "vc_outreach_current_run_id";
   const SHARED_RUN_HINT = "vc_insight_current_run_id";
@@ -46,6 +54,18 @@
       contact_status: "",
       research_matched: "",
     },
+    replyRunning: false,
+    replyPollTimer: null,
+  };
+
+  const REVIEW_STATUS_LABELS = { draft: "待审核", approved: "已通过", rejected: "不回复" };
+  const SEND_STATUS_LABELS = {
+    pending: "待发送",
+    queued: "已入队",
+    sending: "发送中",
+    sent: "已发送",
+    failed: "发送失败",
+    skipped: "已跳过",
   };
 
   const PRODUCT_FIT_LABELS = { high: "高", medium: "中", low: "低", unclear: "不明" };
@@ -236,12 +256,20 @@
     ]);
     state.candidatesDoc = candidates || null;
     state.outreachDoc = outreach || null;
+    applyReplyControl(outreach?.reply_control);
     state.defaultOutreachTemplate = runMeta?.default_outreach_template || "";
     if (outreachTemplate && !outreachTemplate.value.trim() && state.defaultOutreachTemplate) {
       outreachTemplate.value = state.defaultOutreachTemplate;
     }
     updateExportLinks(runId);
     await loadCandidatesPage(1);
+    try {
+      const status = await apiFetch(`/api/analysis/runs/${encodeURIComponent(runId)}/outreach/reply/status`);
+      renderReplyStatus(status);
+      if (status.is_running) startReplyPolling();
+    } catch (_) {
+      /* status is best-effort */
+    }
   }
 
   async function saveTargets() {
@@ -413,15 +441,28 @@
           </div>
           ${
             draft
-              ? `<div class="insight-outreach-block">
-              <label>回复草稿（可编辑后复制，不会自动发送）
+              ? (() => {
+                  const review = outreach?.review_status || "draft";
+                  const send = outreach?.send_status || "pending";
+                  const reviewLabel = REVIEW_STATUS_LABELS[review] || review;
+                  const sendLabel = SEND_STATUS_LABELS[send] || send;
+                  const errorHint =
+                    send === "failed" && outreach?.send_error
+                      ? `<span class="hint insight-send-error">发送失败：${escapeHtml(outreach.send_error)}</span>`
+                      : "";
+                  return `<div class="insight-outreach-block">
+              <label>回复内容（可编辑；<strong>审核通过</strong>后才会进入发送队列）
                 <textarea class="outreach-draft" data-user-key="${escapeHtml(candidate.user_key)}" rows="4">${escapeHtml(draft)}</textarea>
               </label>
               <div class="insight-outreach-actions">
-                <button type="button" class="btn ghost sm outreach-draft-copy" data-user-key="${escapeHtml(candidate.user_key)}">复制草稿</button>
-                <span class="hint">${outreach?.model_name ? `模型 ${escapeHtml(outreach.model_name)}` : ""}${outreach?.cost ? ` · 费用 ${formatCost(outreach.cost, outreach.currency || "CNY")}` : ""}</span>
+                <button type="button" class="btn ${review === "approved" ? "primary" : "secondary"} sm outreach-review-btn" data-user-key="${escapeHtml(candidate.user_key)}" data-review="approved">${review === "approved" ? "已通过 ✓" : "审核通过"}</button>
+                <button type="button" class="btn ghost sm outreach-review-btn" data-user-key="${escapeHtml(candidate.user_key)}" data-review="rejected">不回复</button>
+                <button type="button" class="btn ghost sm outreach-draft-copy" data-user-key="${escapeHtml(candidate.user_key)}">复制</button>
+                <span class="hint">审核：${escapeHtml(reviewLabel)} · 发送：${escapeHtml(sendLabel)}${outreach?.sent_at ? ` （${escapeHtml(outreach.sent_at)}）` : ""}${outreach?.cost ? ` · 费用 ${formatCost(outreach.cost, outreach.currency || "CNY")}` : ""}</span>
               </div>
-            </div>`
+              ${errorHint}
+            </div>`;
+                })()
               : ""
           }
         </article>`;
@@ -504,7 +545,7 @@
       state.candidatesDoc = candidates;
       await loadCandidatesPage(state.candidatesPage.page || 1);
       updateExportLinks(state.currentRunId);
-      outreachCandidatesStatus.textContent = `完成：已为 ${keys.length} 位用户生成草稿，请编辑后手动复制发送`;
+      outreachCandidatesStatus.textContent = `完成：已为 ${keys.length} 位用户生成回复内容，请逐条审核「通过 / 不回复」后再开始受控回复`;
       outreachCandidatesStatus.className = "inline-status success";
     } catch (err) {
       outreachCandidatesStatus.textContent = `生成失败：${err.message}`;
@@ -576,6 +617,156 @@
     );
   }
 
+  async function reviewOutreach(userKey, status) {
+    if (!state.currentRunId || !userKey) return;
+    const textarea = outreachCandidatesPanel?.querySelector(`.outreach-draft[data-user-key="${CSS.escape(userKey)}"]`);
+    const body = { review_status: status };
+    if (textarea) body.edited_content = textarea.value;
+    try {
+      const entry = await apiFetch(
+        `/api/analysis/runs/${encodeURIComponent(state.currentRunId)}/outreach/${encodeURIComponent(userKey)}`,
+        { method: "PATCH", body: JSON.stringify(body) }
+      );
+      const existing = getOutreachEntry(userKey);
+      if (existing) Object.assign(existing, entry);
+      const labels = { approved: "已通过，待发送", rejected: "已标记为不回复" };
+      outreachCandidatesStatus.textContent = labels[status] || "已更新";
+      outreachCandidatesStatus.className = "inline-status success";
+      renderCandidatesPanel();
+    } catch (err) {
+      outreachCandidatesStatus.textContent = `审核失败：${err.message}`;
+      outreachCandidatesStatus.className = "inline-status error";
+    }
+  }
+
+  async function refreshOutreachDoc() {
+    if (!state.currentRunId) return;
+    state.outreachDoc = await apiFetch(
+      `/api/analysis/runs/${encodeURIComponent(state.currentRunId)}/outreach`
+    );
+  }
+
+  function getReplyControlInput() {
+    return {
+      interval_seconds: Number(outreachIntervalSeconds?.value || 90),
+      jitter_seconds: Number(outreachJitterSeconds?.value || 20),
+      daily_limit: Number(outreachDailyLimit?.value || 30),
+      time_window_start: outreachWindowStart?.value || "09:00",
+      time_window_end: outreachWindowEnd?.value || "22:00",
+    };
+  }
+
+  function applyReplyControl(control) {
+    if (!control) return;
+    if (outreachIntervalSeconds && control.interval_seconds != null) outreachIntervalSeconds.value = control.interval_seconds;
+    if (outreachJitterSeconds && control.jitter_seconds != null) outreachJitterSeconds.value = control.jitter_seconds;
+    if (outreachDailyLimit && control.daily_limit != null) outreachDailyLimit.value = control.daily_limit;
+    if (outreachWindowStart && control.time_window_start) outreachWindowStart.value = control.time_window_start;
+    if (outreachWindowEnd && control.time_window_end) outreachWindowEnd.value = control.time_window_end;
+  }
+
+  function renderReplyStatus(data) {
+    state.replyRunning = Boolean(data?.is_running);
+    if (btnOutreachStartReply) btnOutreachStartReply.disabled = state.replyRunning;
+    if (btnOutreachStopReply) btnOutreachStopReply.disabled = !state.replyRunning;
+    if (!outreachReplyStatus) return;
+    const counts = data?.send_status_counts || {};
+    const summary = Object.entries(SEND_STATUS_LABELS)
+      .filter(([key]) => counts[key])
+      .map(([key, label]) => `${label} ${counts[key]}`)
+      .join(" · ");
+    const parts = [data?.reply_message || "—"];
+    if (data?.replies_sent_today != null) parts.push(`今日已发 ${data.replies_sent_today}`);
+    if (summary) parts.push(summary);
+    outreachReplyStatus.textContent = parts.join(" ｜ ");
+    outreachReplyStatus.className = `inline-status ${data?.is_running ? "loading" : ""}`.trim();
+  }
+
+  async function pollReplyStatus() {
+    if (!state.currentRunId) return;
+    try {
+      const data = await apiFetch(
+        `/api/analysis/runs/${encodeURIComponent(state.currentRunId)}/outreach/reply/status`
+      );
+      renderReplyStatus(data);
+      await refreshOutreachDoc();
+      renderCandidatesPanel();
+      if (!data.is_running) stopReplyPolling();
+    } catch (err) {
+      if (outreachReplyStatus) {
+        outreachReplyStatus.textContent = `获取回复状态失败：${err.message}`;
+        outreachReplyStatus.className = "inline-status error";
+      }
+      stopReplyPolling();
+    }
+  }
+
+  function startReplyPolling() {
+    if (state.replyPollTimer) return;
+    state.replyPollTimer = setInterval(pollReplyStatus, 5000);
+    pollReplyStatus();
+  }
+
+  function stopReplyPolling() {
+    if (state.replyPollTimer) {
+      clearInterval(state.replyPollTimer);
+      state.replyPollTimer = null;
+    }
+  }
+
+  async function startReplyRun() {
+    if (!state.currentRunId) {
+      outreachReplyStatus.textContent = "请先选择分析任务";
+      outreachReplyStatus.className = "inline-status error";
+      return;
+    }
+    const approved = (state.outreachDoc?.entries || []).filter(
+      (e) => e.review_status === "approved" && (e.edited_content || e.generated_draft || "").trim()
+    );
+    if (!approved.length) {
+      outreachReplyStatus.textContent = "没有已审核通过的回复；请先在上方对每条内容点击「审核通过」";
+      outreachReplyStatus.className = "inline-status error";
+      return;
+    }
+    const control = getReplyControlInput();
+    if (!window.confirm(`将按受控节奏发送 ${approved.length} 条已审核回复：\n最小间隔 ${control.interval_seconds}s，每日上限 ${control.daily_limit} 条，允许时段 ${control.time_window_start}–${control.time_window_end}。\n确定开始吗？`)) {
+      return;
+    }
+    btnOutreachStartReply.disabled = true;
+    outreachReplyStatus.textContent = "正在启动受控回复…";
+    outreachReplyStatus.className = "inline-status loading";
+    try {
+      const doc = await apiFetch(
+        `/api/analysis/runs/${encodeURIComponent(state.currentRunId)}/outreach/reply/start`,
+        { method: "POST", body: JSON.stringify(control) }
+      );
+      state.outreachDoc = doc;
+      applyReplyControl(doc.reply_control);
+      renderCandidatesPanel();
+      startReplyPolling();
+    } catch (err) {
+      outreachReplyStatus.textContent = `启动失败：${err.message}`;
+      outreachReplyStatus.className = "inline-status error";
+      btnOutreachStartReply.disabled = false;
+    }
+  }
+
+  async function stopReplyRun() {
+    if (!state.currentRunId) return;
+    btnOutreachStopReply.disabled = true;
+    try {
+      const doc = await apiFetch(
+        `/api/analysis/runs/${encodeURIComponent(state.currentRunId)}/outreach/reply/stop`,
+        { method: "POST", body: JSON.stringify({}) }
+      );
+      state.outreachDoc = doc;
+      await pollReplyStatus();
+    } catch (err) {
+      outreachReplyStatus.textContent = `停止失败：${err.message}`;
+      outreachReplyStatus.className = "inline-status error";
+    }
+  }
+
   function toggleCandidateSelection(userKey, checked) {
     if (!userKey) return;
     if (checked) state.selectedCandidateKeys.add(userKey);
@@ -599,6 +790,8 @@
   btnOutreachSaveTargets?.addEventListener("click", saveTargets);
   btnOutreachBuildCandidates?.addEventListener("click", buildCandidates);
   btnOutreachGenerate?.addEventListener("click", generateOutreach);
+  btnOutreachStartReply?.addEventListener("click", startReplyRun);
+  btnOutreachStopReply?.addEventListener("click", stopReplyRun);
   outreachApiKey?.addEventListener("change", () => {
     const v = outreachApiKey.value.trim();
     if (v) sessionStorage.setItem(API_KEY_STORAGE, v);
@@ -628,6 +821,11 @@
     const copyBtn = event.target.closest(".outreach-draft-copy");
     if (copyBtn && outreachView.contains(copyBtn)) {
       copyOutreachDraft(copyBtn.getAttribute("data-user-key"));
+      return;
+    }
+    const reviewBtn = event.target.closest(".outreach-review-btn");
+    if (reviewBtn && outreachView.contains(reviewBtn)) {
+      reviewOutreach(reviewBtn.getAttribute("data-user-key"), reviewBtn.getAttribute("data-review"));
       return;
     }
     const linkBtn = event.target.closest(".outreach-link-btn");

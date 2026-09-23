@@ -60,41 +60,41 @@ class ProjectProfile(BaseModel):
 def _builtin_default() -> ProjectProfile:
     return ProjectProfile(
         profile_id="default",
-        name="通用（默认）",
-        domain="",
-        research_goal="从目标人群的真实评论中发现需求、痛点与产品机会。",
-        target_audience="待填写：你的产品或内容所服务的人群。",
-        forbidden_claims="不得声称已验证需求、市场规模、付费意愿或疗效，除非代码统计直接支持。",
+        name="AI 教学与分享（默认）",
+        domain="AI 教学与知识分享",
+        research_goal="从 AI 学习者与从业者的真实评论中，发现他们在学习/使用 AI 时的需求、卡点与内容机会。",
+        target_audience="想学会用 AI 提升效率的职场人、内容创作者与学生，以及对 AI 好奇的入门者。",
+        forbidden_claims="不得声称已验证需求、市场规模、付费意愿或某项 AI 的确定效果，除非代码统计直接支持。",
         context_compact=(
-            "研究目标：从评论中发现目标人群的真实需求、痛点与机会。"
+            "研究目标：发现 AI 学习/使用中的需求、卡点与内容选题机会。"
             "禁止：把玩笑/玩梗当作核心标签；把个别案例夸大为普遍需求。"
         ),
         context_full=(
-            "研究目标：从评论中发现目标人群的真实需求、痛点与机会，并评估产品假设。"
-            "禁止：把玩笑/玩梗当作核心标签；把个别案例夸大为普遍需求；使用未经验证的疗效/收益承诺。"
+            "研究目标：发现 AI 学习/使用中的需求、卡点与内容机会，并评估产品/内容假设。"
+            "禁止：把玩笑/玩梗当作核心标签；把个别案例夸大为普遍需求；把 AI 能力夸大为一定能达成的结果。"
         ),
         hypotheses={
-            "H1": "用户存在明确、反复出现的未满足需求（而非一次性好奇）。",
-            "H2": "现有替代方案（竞品/自建方案/人工服务）无法很好地满足该需求。",
-            "H3": "部分用户愿意为更好的解决方案付出成本（时间、学习或金钱）。",
+            "H1": "用户在学习或使用 AI 时存在明确、反复出现的卡点（不知道从哪学、工具太多、不知道怎么落地）。",
+            "H2": "现有教程/课程/工具无法很好满足：太理论、太零散、跟不上更新或缺少场景示范。",
+            "H3": "部分用户愿意为更系统的学习或更好的工具付出时间、注意力或金钱。",
         },
         hypothesis_short={
-            "H1": "存在反复出现的未满足需求",
-            "H2": "现有替代方案不够好",
-            "H3": "存在付费/投入意愿",
+            "H1": "存在反复出现的 AI 学习/使用卡点",
+            "H2": "现有教程/工具不够好",
+            "H3": "存在投入/付费意愿",
         },
         hypothesis_rules=(
             "- 只有单一或少样本时，结论必须为 mixed 或 insufficient。\n"
             "- 弱上下文（weak_context）不得支撑结论。\n"
             "- 区分「表达偏好」与「实际行为/付费」。"
         ),
-        decision_keywords=["问题", "困难", "需求", "替代", "付费", "为什么不", "怎么办"],
+        decision_keywords=["怎么学", "不会用", "教程", "提示词", "工具", "效果", "踩坑", "替代", "付费", "为什么不"],
         noise_markers=["哈哈", "支持", "沙发", "第一", "点赞", "路过", "签到"],
-        theme_risk_tokens=["风险", "坑", "骗", "退款", "后悔"],
-        theme_difficulty_tokens=["不会", "难", "搞不定", "做不到", "麻烦", "卡住"],
+        theme_risk_tokens=["风险", "坑", "骗", "割韭菜", "后悔"],
+        theme_difficulty_tokens=["不会", "难", "搞不定", "学不会", "麻烦", "卡住"],
         theme_question_tokens=["怎么", "能不能", "可以", "吗", "如何", "为什么"],
-        content_persona="专业、真诚、以解决问题为导向的口吻；具体、不夸大、不硬广。",
-        content_platforms=["短视频", "图文", "长文", "工具页"],
+        content_persona="既懂 AI 又能把复杂概念讲明白的老师型创作者口吻；具体、有示范、不夸大、不制造焦虑、不硬推广。",
+        content_platforms=["短视频", "图文", "长文", "课程/直播"],
         opportunity_templates=[],
         is_builtin=True,
     )
@@ -107,8 +107,10 @@ def builtin_profiles() -> Dict[str, ProjectProfile]:
 
 
 DEFAULT_PROFILE_ID = "default"
-# Legacy ids from earlier versions map onto the neutral default.
-_LEGACY_PROFILE_ALIASES = {"kineo": "default", "generic": "default"}
+# "generic" was an early neutral synonym for the built-in default; keep it as a
+# convenience alias. Any other historical id is NOT special-cased — unknown ids
+# simply fall back to `default` in resolve_profile(), so old configs still load.
+_LEGACY_PROFILE_ALIASES = {"generic": "default"}
 
 
 # --- storage -----------------------------------------------------------------
