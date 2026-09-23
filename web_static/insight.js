@@ -61,7 +61,6 @@
   const insightContradictions = $("insightContradictions");
   const insightDashboard = $("insightDashboard");
   const btnInsightClusterThemes = $("btnInsightClusterThemes");
-  const insightThemeEngine = $("insightThemeEngine");
   const btnInsightCancelClusterThemes = $("btnInsightCancelClusterThemes");
   const insightThemesPanel = $("insightThemesPanel");
   const insightThemesStatus = $("insightThemesStatus");
@@ -114,7 +113,7 @@
     help_request: "求助",
     complaint: "抱怨",
     result_feedback: "结果反馈",
-    check_in: "打卡",
+    check_in: "签到",
     praise: "赞赏",
     other: "其他",
   };
@@ -285,7 +284,7 @@
     if (!runId || !hasResults) {
       insightExportPlaceholder.hidden = false;
       insightExportPlaceholder.textContent =
-        "完成至少一批评论分析后，将自动保存分析结果 CSV 与洞察报告至 CSV 同目录。调研对象 / 私信请到「找人聊聊」。";
+        "完成至少一批评论分析后，将自动保存分析结果 CSV 与洞察报告至 CSV 同目录。回复对象 / 内容选题请到「评论区回复」「内容选题」生成。";
       return;
     }
     const lines = [];
@@ -296,7 +295,7 @@
       insightExportPlaceholder.innerHTML = `<span class="inline-status error">自动导出失败：${escapeHtml(exportError)}</span>`;
     } else if (lines.length) {
       insightExportPlaceholder.innerHTML =
-        `已自动保存（分析产物）：<br>${lines.map(escapeHtml).join("<br>")}<br><span class="hint">调研对象与私信请在「找人聊聊」生成与导出。</span>`;
+        `已自动保存（分析产物）：<br>${lines.map(escapeHtml).join("<br>")}<br><span class="hint">回复对象与内容选题请在对应板块生成与导出。</span>`;
     } else {
       insightExportPlaceholder.textContent = "分析结果将在本批完成后自动保存至 CSV 同目录。";
     }
@@ -548,7 +547,7 @@
 
   const INTENT_LABELS = {
     gratitude_recognition: "感谢与认可",
-    check_in: "打卡",
+    check_in: "签到",
     result_feedback: "结果反馈",
     question: "提问",
     difficulty_help_request: "困难求助",
@@ -560,33 +559,33 @@
   const SIGNAL_LABELS = {
     gratitude: "表达感谢",
     saved_or_plan_to_try: "收藏或准备尝试",
-    started_training: "已开始训练",
-    continued_training: "持续训练",
+    started_using: "已开始使用",
+    continued_using: "持续使用",
     positive_result: "正向结果反馈",
     no_change: "无变化",
     negative_result: "负向结果反馈",
     applicability_question: "适用性提问",
-    form_uncertainty: "动作形态不确定",
-    cannot_complete: "无法完成动作",
-    no_target_muscle_sensation: "目标肌群无感",
+    howto_uncertainty: "执行方式不确定",
+    cannot_complete: "无法完成",
+    expected_effect_missing: "未达到预期效果",
     physical_discomfort: "身体不适",
-    injury_or_special_condition: "伤病或特殊情况",
-    needs_substitution: "需要替换动作",
-    needs_regression: "需要降阶",
-    needs_progression: "需要进阶",
-    needs_training_plan: "需要训练计划",
-    pace_or_counting_problem: "节奏或计数问题",
+    special_condition: "特殊身体状况",
+    needs_alternative: "需要替代方案",
+    needs_simpler: "需要降低难度/简化",
+    needs_advanced: "需要进阶",
+    needs_plan: "需要规划",
+    pace_problem: "节奏或操作问题",
     instruction_unclear: "讲解不清楚",
-    equipment_or_space_constraint: "设备或空间限制",
+    resource_constraint: "设备/空间等条件限制",
     privacy_concern: "隐私顾虑",
     motivation_or_accountability: "需要督促或陪伴",
-    asks_coach_reply: "希望博主回复",
+    asks_creator_reply: "希望作者回复",
     searched_other_content: "搜索其他内容",
     recorded_self_for_review: "录像自我回看",
     paid_professional_help: "付费专业帮助",
-    skipped_exercise: "跳过动作",
-    stopped_training: "停止训练",
-    changed_training_plan: "改变训练计划",
+    skipped_step: "跳过步骤",
+    stopped_using: "停止使用",
+    changed_plan: "调整方案",
     other_new_signal: "其他新信号",
   };
 
@@ -606,9 +605,9 @@
   };
 
   const HYPOTHESIS_LABELS = {
-    H1: "H1 训练过程/质量",
-    H2: "H2 需实时反馈",
-    H3: "H3 需 Agent 规划",
+    H1: "H1 存在反复需求",
+    H2: "H2 替代方案不足",
+    H3: "H3 有付费/投入意愿",
   };
 
   const HYPOTHESIS_RELATION_LABELS = {
@@ -1114,16 +1113,16 @@
         ${metricCard(analyzedLabel, summary.total_analyzed)}
         ${metricCard("有效评论", summary.valid_comments, "intent_valid", "1")}
         ${metricCard("独立用户", summary.unique_users)}
-        ${metricCard("已训练用户", summary.trained_users)}
+        ${metricCard("已行动用户", summary.trained_users)}
         ${metricCard("感谢信号", summary.gratitude_signal_count, "signal", "gratitude")}
-        ${metricCard("打卡", summary.check_in_count, "intent", "check_in")}
+        ${metricCard("签到", summary.check_in_count, "intent", "check_in")}
         ${metricCard("结果反馈", summary.result_feedback_count, "intent", "result_feedback")}
         ${metricCard("提问", summary.question_count, "intent", "question")}
         ${metricCard("具体困难", summary.difficulty_count, "intent", "difficulty_help_request")}
         ${metricCard("需个性化判断", summary.personalized_needed_count, "video", "personalized_judgment_needed")}
         ${metricCard("需实时观察", summary.realtime_needed_count, "video", "realtime_observation_needed")}
         ${metricCard("高产品适配", summary.product_fit_high_count, "fit", "high")}
-        ${metricCard("匹配调研对象", summary.research_matched_user_count ?? summary.high_priority_user_count ?? 0)}
+        ${metricCard("匹配目标人群", summary.research_matched_user_count ?? summary.high_priority_user_count ?? 0)}
         ${metricCard("可定位主页", summary.contactable_homepage_count)}
       </div>`;
   }
@@ -1363,7 +1362,6 @@
           api_key: getApiKey(),
           use_mock: false,
           background: true,
-          themes_engine: insightThemeEngine?.value || "legacy_llm_v1",
         }),
       });
       if (started.background) {
@@ -1893,7 +1891,7 @@
     }
     const thead = `<tr>
       <th>评论</th><th>用户</th><th>平台</th><th>视频</th><th>目的</th><th>信号</th>
-      <th>训练证据</th><th>具体问题</th><th>视频关系</th><th>新发现</th><th>适配</th><th>置信度</th>
+      <th>行为证据</th><th>具体问题</th><th>内容关系</th><th>新发现</th><th>适配</th><th>置信度</th>
     </tr>`;
     const tbody = rows
       .map((row) => {

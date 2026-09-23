@@ -69,7 +69,7 @@ _SELF_MARKERS = (
     "我",
     "本人",
     "自己",
-    "练了",
+    "用了",
     "做了",
     "试了",
     "坚持",
@@ -78,24 +78,23 @@ _SELF_MARKERS = (
     "刚才",
     "亲测",
     "做完",
-    "练完",
+    "用完",
 )
-_OTHER_MARKERS = ("朋友", "别人", "他练", "她练", "我妈", "我爸", "孩子", "同事")
+_OTHER_MARKERS = ("朋友", "别人", "他做", "她做", "我妈", "我爸", "孩子", "同事")
 _ACTION_MARKERS = (
-    "练",
+    "用",
     "做",
     "试",
     "测",
-    "打卡",
+    "签到",
     "坚持",
     "购买",
     "买了",
     "付了",
     "花了",
-    "办卡",
+    "充值",
     "报名",
-    "跟练",
-    "看医生",
+    "就医",
     "挂号",
 )
 _POSITIVE_MARKERS = (
@@ -323,7 +322,7 @@ def _hard_review_claim(
             "付费但",
             "花钱",
             "成交",
-            "办卡",
+            "充值",
             "报名购买",
         )
     )
@@ -354,7 +353,7 @@ def _hard_review_claim(
     if any(marker in text for marker in _MEDICAL_OVERREACH):
         verdict = SemanticVerdict.INSUFFICIENT
         reasons.append("评论自述不能支持医疗结论")
-    if any(marker in text for marker in ("已经行动", "持续训练", "真实行为")):
+    if any(marker in text for marker in ("已经行动", "持续进行", "真实行为")):
         if "behavior" not in claim.evidence_types:
             verdict = SemanticVerdict.CONTRADICTED
             reasons.append("缺少行为类型证据")

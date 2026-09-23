@@ -250,7 +250,7 @@ class RunConfig(BaseModel):
     batch_size: int = Field(default=20, ge=1, le=50)
     concurrency: int = Field(default=8, ge=1, le=16)
     requests_per_minute: int = Field(default=0, ge=0, description="0 = unlimited")
-    project_id: str = "kineo"
+    project_id: str = "default"
     project_version: str = "1"
     project_context_compact: str = ""
     project_context: str = ""  # full context for research agent; extract uses compact

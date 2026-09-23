@@ -23,10 +23,10 @@ CONTACT_STATUS_LABELS = {
     "preparing": "准备中",
     "contacted": "已联系",
     "replied": "已回复",
-    "interview_agreed": "同意访谈",
+    "interview_agreed": "已深度互动",
     "declined": "已拒绝",
     "no_reply": "无回复",
-    "interview_completed": "访谈完成",
+    "interview_completed": "已跟进",
 }
 
 Priority = Literal["high", "medium", "low"]

@@ -105,22 +105,22 @@ def _hypothesis_quote_score(hid: str, rel: str, quote: str, analysis: Dict[str, 
     text = quote
 
     process_signals = {
-        "form_uncertainty",
+        "howto_uncertainty",
         "cannot_complete",
-        "no_target_muscle_sensation",
+        "expected_effect_missing",
         "physical_discomfort",
-        "needs_substitution",
-        "needs_regression",
-        "needs_progression",
-        "needs_training_plan",
-        "pace_or_counting_problem",
+        "needs_alternative",
+        "needs_simpler",
+        "needs_advanced",
+        "needs_plan",
+        "pace_problem",
         "instruction_unclear",
-        "started_training",
-        "continued_training",
+        "started_using",
+        "continued_using",
         "positive_result",
         "negative_result",
     }
-    motivation_signals = {"motivation_or_accountability", "stopped_training", "skipped_exercise"}
+    motivation_signals = {"motivation_or_accountability", "stopped_using", "skipped_step"}
 
     if intent in {"invalid_or_unclear", "other_valid"} and "谢谢" not in text:
         score -= 0.5
@@ -140,39 +140,39 @@ def _hypothesis_quote_score(hid: str, rel: str, quote: str, analysis: Dict[str, 
         elif rel == "weakens":
             if signals & motivation_signals:
                 score += 2.0
-            if any(token in text for token in ("懒", "坚持不", "没动力", "不想练", "提不起")):
+            if any(token in text for token in ("懒", "坚持不", "没动力", "不想开始", "提不起")):
                 score += 1.5
             if signals & process_signals and not (signals & motivation_signals):
                 score -= 1.5
-            if any(token in text for token in ("真的有用", "有效", "舒服多了", "放松", "改善", "谢谢")):
+            if any(token in text for token in ("真的有用", "有效", "改善", "缓解", "谢谢")):
                 score -= 3.0
     elif hid == "H2":
         if rel == "supports":
             if video_rel in {"personalized_judgment_needed", "realtime_observation_needed"}:
                 score += 2.5
-            if signals & {"form_uncertainty", "asks_coach_reply", "recorded_self_for_review"}:
+            if signals & {"howto_uncertainty", "asks_creator_reply", "recorded_self_for_review"}:
                 score += 1.5
             if intent == "question" and video_rel in {"one_reply_sufficient", "video_sufficient", "unclear"}:
                 score -= 2.0
-            if any(token in text for token in ("帮我看", "看看我", "哪里不对", "姿势对不对")):
+            if any(token in text for token in ("帮我看", "看看我", "哪里不对", "做得对不对")):
                 score += 2.0
         elif rel == "weakens":
             if video_rel in {"video_sufficient", "one_reply_sufficient"}:
                 score += 2.0
-            if any(token in text for token in ("看懂了", "跟着练", "看第二遍", "就会了")):
+            if any(token in text for token in ("看懂了", "照着做", "看第二遍", "就会了")):
                 score += 1.5
             if intent == "gratitude_recognition" or any(token in text for token in ("谢谢", "感谢", "真的有用", "有效")):
                 score -= 3.0
     elif hid == "H3":
         if rel == "supports":
-            if signals & {"needs_training_plan", "needs_progression", "needs_regression", "changed_training_plan"}:
+            if signals & {"needs_plan", "needs_advanced", "needs_simpler", "changed_plan"}:
                 score += 2.0
-            if any(token in text for token in ("怎么安排", "训练计划", "怎么练", "进阶", "帮我安排")):
+            if any(token in text for token in ("怎么安排", "做计划", "怎么做", "进阶", "帮我安排")):
                 score += 1.5
             if intent == "question" and "安排" not in text and "计划" not in text:
                 score -= 1.0
         elif rel == "weakens":
-            if any(token in text for token in ("自己安排", "自己计划", "随便练")):
+            if any(token in text for token in ("自己安排", "自己计划", "随便做")):
                 score += 1.5
 
     return score
@@ -430,15 +430,15 @@ def _build_contradictions(hypothesis_details: Dict[str, Any]) -> List[Dict[str, 
 def _contradiction_note(hid: str, weakens: int, supports: int) -> str:
     if hid == "H2":
         return (
-            f"当前样本中有 {weakens} 条评论提供了与 H2（需实时反馈/交互指导）不一致的证据，"
-            f"同时有 {supports} 条支持性评论。需结合原话判断单向视频是否足够。"
+            f"当前样本中有 {weakens} 条评论提供了与 H2（现有替代方案不够好）不一致的证据，"
+            f"同时有 {supports} 条支持性评论。需结合原话判断现有方案是否已足够。"
         )
     if hid == "H3":
         return (
-            f"当前样本中有 {weakens} 条评论表明用户未必需要 Agent 规划训练，"
+            f"当前样本中有 {weakens} 条评论表明用户未必愿意额外投入或为方案付费，"
             f"与 H3 预期存在偏差，建议查看削弱性原话。"
         )
     return (
-        f"当前样本中有 {weakens} 条评论与 H1（训练过程/质量假设）不一致，"
+        f"当前样本中有 {weakens} 条评论与 H1（存在反复出现的未满足需求）不一致，"
         f"请查看代表性原话后再下结论。"
     )

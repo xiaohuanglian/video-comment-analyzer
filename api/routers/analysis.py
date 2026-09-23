@@ -132,7 +132,7 @@ class CreateRunRequest(BaseModel):
     analysis_limit: int = Field(default=100, ge=0, description="0 = analyze all pending per batch")
     use_mock: bool = False
     research_targets: str = ""
-    profile_id: str = "kineo"
+    profile_id: str = "default"
     model: ModelSettings = Field(default_factory=ModelSettings)
 
 
@@ -151,7 +151,6 @@ class ThemeClusterRequest(BaseModel):
     api_key: Optional[str] = None
     use_mock: Optional[bool] = None
     background: bool = True
-    themes_engine: Optional[Literal["legacy_llm_v1", "hybrid_cluster_v1"]] = None
 
 
 class OutreachGenerateRequest(BaseModel):
@@ -305,8 +304,8 @@ async def post_verify_model(body: VerifyModelRequest) -> Dict[str, Any]:
         internal_record_id="verify:1",
         source_file="verify",
         source_row_number=1,
-        comment_text="这个动作一周练几次？",
-        creator_type="普通健身类",
+        comment_text="这个功能一般多久用一次？",
+        creator_type="普通创作者",
         platform="bilibili",
     )
     try:
@@ -392,7 +391,7 @@ async def post_create_run(body: CreateRunRequest) -> Dict[str, Any]:
         analysis_limit=body.analysis_limit,
         use_mock=body.use_mock,
         research_targets=parse_research_targets(body.research_targets),
-        project_id=(body.profile_id or "kineo").strip() or "kineo",
+        project_id=(body.profile_id or "default").strip() or "default",
         created_at=datetime.now(timezone.utc).isoformat(),
         analysis_version="evidence_items_v1",
     )
@@ -870,9 +869,6 @@ async def post_cluster_themes(run_id: str, body: ThemeClusterRequest) -> Dict[st
         config = load_config(run_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="任务不存在") from exc
-    if body.themes_engine and body.themes_engine != config.themes_engine:
-        config = config.model_copy(update={"themes_engine": body.themes_engine})
-        save_config(run_id, config)
     use_mock = config.use_mock if body.use_mock is None else body.use_mock
     if not use_mock and not (body.api_key or "").strip():
         raise HTTPException(status_code=400, detail="主题归并需要填写 API Key")
@@ -1125,7 +1121,7 @@ async def post_generate_outreach(run_id: str, body: OutreachGenerateRequest) -> 
         raise HTTPException(status_code=400, detail="请先生成候选用户列表")
     use_mock = config.use_mock if body.use_mock is None else body.use_mock
     if not use_mock and not (body.api_key or "").strip():
-        raise HTTPException(status_code=400, detail="生成私信草稿需要 API Key")
+        raise HTTPException(status_code=400, detail="生成回复草稿需要 API Key")
     try:
         doc = generate_outreach_drafts(
             candidates_doc.candidates,
@@ -1176,7 +1172,7 @@ async def patch_outreach(run_id: str, user_key: str, body: OutreachUpdateRequest
         product_manager_note=body.product_manager_note,
     )
     if updated is None:
-        raise HTTPException(status_code=404, detail="私信记录不存在")
+        raise HTTPException(status_code=404, detail="回复记录不存在")
     save_outreach(run_id, doc)
     if body.contact_status:
         candidates_doc = load_candidates(run_id)

@@ -15,14 +15,14 @@
           <h1>视频评论分析</h1>
           <div class="progress-chip" id="envChip">检查环境中…</div>
         </div>
-        <p>从真实评论中发现需求、验证假设、找到值得深聊的调研对象</p>
+        <p>从真实评论中发现需求、验证假设，找出值得回复的用户并生成内容选题</p>
       </div>
     </div>
     <div class="topbar-actions">
       <nav class="product-stage-strip topbar-stage-strip" aria-label="产品能力阶段">
         <button type="button" class="stage-tab active" id="stageTabCollect" data-stage="collect">1 数据采集</button>
         <button type="button" class="stage-tab" id="stageTabInsight" data-stage="insight">2 评论洞察</button>
-        <button type="button" class="stage-tab" id="stageTabOutreach" data-stage="outreach">3 找人聊聊</button>
+        <button type="button" class="stage-tab" id="stageTabOutreach" data-stage="outreach">3 评论区回复</button>
       </nav>
       <button class="btn ghost" id="btnBackSetup" hidden>← 返回设置</button>
     </div>
@@ -265,7 +265,7 @@
         <div>
           <p class="eyebrow">评论洞察</p>
           <h2>验证假设，发现未知需求</h2>
-          <p>选择已采集的评论数据，使用 LLM 进行结构化分析；结果持久保存，支持导出分享。调研对象筛选请前往「找人聊聊」。</p>
+          <p>选择已采集的评论数据，使用 LLM 进行结构化分析；结果持久保存，支持导出分享。回复对象筛选与内容选题请在对应板块手动开始。</p>
         </div>
       </div>
 
@@ -428,13 +428,6 @@
             <p class="hint">基于已分析评论中的 new_signals 做二阶段主题归并；完成后再导出报告。证据路径任务另见「研究报告」。</p>
           </div>
           <div class="step-header-actions insight-theme-actions">
-            <label class="theme-engine-control">
-              <span>归并方式</span>
-              <select id="insightThemeEngine" class="input sm" aria-label="开放主题归并引擎">
-                <option value="legacy_llm_v1">旧版 LLM（维护）</option>
-                <option value="hybrid_cluster_v1">混合本地聚类（实验）</option>
-              </select>
-            </label>
             <div class="theme-action-buttons">
               <button class="btn secondary sm" type="button" id="btnInsightClusterThemes">生成开放主题</button>
               <button class="btn danger sm" type="button" id="btnInsightCancelClusterThemes" hidden>停止归并</button>
@@ -513,14 +506,14 @@
     <section class="outreach-view" id="outreachView" hidden>
       <div class="setup-intro">
         <div>
-          <p class="eyebrow">找人聊聊</p>
-          <h2>筛选调研对象，撰写访谈邀请</h2>
-          <p>本板块<strong>独立运作</strong>：只读取前两板块已产出的分析任务（无需重新上传 CSV），负责调研筛选与访谈邀请；不会反向改写评论洞察的分析流程。</p>
+          <p class="eyebrow">评论区回复</p>
+          <h2>找出值得回复的人，生成针对性回复</h2>
+          <p>本板块<strong>独立运作</strong>：只读取前两板块已产出的分析任务（无需重新上传 CSV），负责筛选值得回复的用户并生成<strong>公开评论回复草稿</strong>；不会反向改写评论洞察的分析流程。</p>
         </div>
         <dl class="outreach-flow-legend">
-          <div><dt>关联任务</dt><dd>只读消费第二板块的分析结果</dd></div>
-          <div><dt>生成调研对象</dt><dd><strong>纯算法</strong>（关键词匹配 + 评分合并），不用大模型</dd></div>
-          <div><dt>生成私信</dt><dd><strong>需要大模型</strong>（API Key 可在本板块填写）</dd></div>
+          <div><dt>关联任务</dt><dd>只读消费前两板块的分析结果</dd></div>
+          <div><dt>筛选回复对象</dt><dd><strong>纯算法</strong>（关键词匹配 + 评分合并），不用大模型</dd></div>
+          <div><dt>生成回复草稿</dt><dd><strong>需要大模型</strong>（API Key 可在本板块填写）；仅生成草稿，<strong>永不自动发送</strong></dd></div>
         </dl>
       </div>
 
@@ -539,7 +532,7 @@
           </select>
         </label>
         <label class="setting-field">
-          <span class="field-label">API Key（仅生成私信需要；可复用第二板块已填的 Key）</span>
+          <span class="field-label">API Key（仅生成回复草稿需要；可复用第二板块已填的 Key）</span>
           <input type="password" id="outreachApiKey" placeholder="sk-…" autocomplete="off" />
         </label>
         <p class="inline-status" id="outreachRunStatus"></p>
@@ -549,14 +542,14 @@
         <div class="step-header">
           <div class="step-number">B</div>
           <div class="step-header-copy">
-            <h3>调研目标人群</h3>
-            <p class="hint">仅在本板块填写；用于算法筛选调研对象（不需大模型）。保存后点击「生成调研对象列表」生效。</p>
+            <h3>目标人群与关注方向</h3>
+            <p class="hint">仅在本板块填写；用于算法筛选值得回复的用户（不需大模型）。保存后点击「筛选回复对象」生效。可留空表示不限定。</p>
           </div>
         </div>
         <label class="setting-field outreach-research-targets-field">
-          <textarea id="outreachResearchTargets" rows="2" placeholder="运动损伤、初老群体、产后康复、中考体育家长"></textarea>
+          <textarea id="outreachResearchTargets" rows="2" placeholder="例如：新手入门、预算有限、遇到过某类问题"></textarea>
         </label>
-        <button class="btn ghost sm" type="button" id="btnOutreachSaveTargets">保存调研目标到任务</button>
+        <button class="btn ghost sm" type="button" id="btnOutreachSaveTargets">保存目标人群到任务</button>
         <p class="inline-status" id="outreachTargetsStatus"></p>
       </article>
 
@@ -564,22 +557,22 @@
         <div class="step-header">
           <div class="step-number">C</div>
           <div class="step-header-copy">
-            <h3>调研对象</h3>
-            <p class="hint">按用户合并，优先展示符合调研目标的对象；评分仅供参考，不代表产品付费意愿。</p>
+            <h3>值得回复的用户</h3>
+            <p class="hint">按用户合并，优先展示符合目标人群的对象；评分仅供参考，不代表付费意愿。勾选后让 AI 按每个人各自的意图生成回复草稿（不复用模板）。</p>
           </div>
         </div>
         <div class="action-row outreach-candidate-actions">
-          <button class="btn secondary sm" type="button" id="btnOutreachBuildCandidates">生成调研对象列表（算法）</button>
-          <button class="btn secondary sm" type="button" id="btnOutreachGenerate">为选中同学生成私信（大模型）</button>
-          <a class="btn ghost sm" id="btnOutreachExportCandidates" href="#" download hidden>导出对象 CSV</a>
-          <a class="btn ghost sm" id="btnOutreachExportOutreach" href="#" download hidden>导出联系记录 CSV</a>
+          <button class="btn secondary sm" type="button" id="btnOutreachBuildCandidates">筛选值得回复的用户（算法）</button>
+          <button class="btn secondary sm" type="button" id="btnOutreachGenerate">为勾选用户生成回复草稿（大模型）</button>
+          <a class="btn ghost sm" id="btnOutreachExportCandidates" href="#" download hidden>导出用户 CSV</a>
+          <a class="btn ghost sm" id="btnOutreachExportOutreach" href="#" download hidden>导出回复记录 CSV</a>
         </div>
         <p class="hint" id="outreachExportHint" hidden></p>
         <div class="outreach-candidate-toolbar">
-          <select id="outreachCandidateFilterResearch" aria-label="调研对象匹配筛选">
+          <select id="outreachCandidateFilterResearch" aria-label="目标人群匹配筛选">
             <option value="">全部对象</option>
-            <option value="yes">仅匹配调研目标</option>
-            <option value="no">未匹配调研目标</option>
+            <option value="yes">仅匹配目标人群</option>
+            <option value="no">未匹配目标人群</option>
           </select>
           <select id="outreachCandidateFilterPriority" aria-label="优先级筛选">
             <option value="">全部优先级</option>
@@ -599,23 +592,23 @@
             <option value="preparing">准备中</option>
             <option value="contacted">已联系</option>
             <option value="replied">已回复</option>
-            <option value="interview_agreed">同意访谈</option>
+            <option value="interview_agreed">已深度互动</option>
             <option value="declined">已拒绝</option>
             <option value="no_reply">无回复</option>
-            <option value="interview_completed">访谈完成</option>
+            <option value="interview_completed">已跟进</option>
           </select>
           <label class="outreach-candidate-select-all">
             <input type="checkbox" id="outreachCandidateSelectAll" /> 全选可见
           </label>
         </div>
         <label class="setting-field outreach-template-field">
-          <span>访谈邀请参考话术（Mom Test 式，含内测体验资格说明）</span>
-          <textarea id="outreachTemplate" rows="5" placeholder="默认会邀请聊「上一次在家怎么练、当时最没底的是什么」；参与交流优先获得内测体验资格（待定）。可在生成前按场景微调…"></textarea>
-          <span class="hint">话术应对齐产品验证计划中的 C 端访谈：还原真实场景、挖掘阻力与替代做法，不直接推销。内测权益具体形式待定，勿过度承诺。</span>
+          <span>回复参考话术（仅作风格参考，AI 会按每个人的评论单独生成）</span>
+          <textarea id="outreachTemplate" rows="5" placeholder="默认会针对对方评论里的具体问题给出做法，必要时提一个澄清问题；不推销、不留联系方式"></textarea>
+          <span class="hint">回复是公开评论，必须真正帮到对方：针对其原话作答、给具体信息，不推销、不导流、不做疗效/收益承诺。生成结果只是<strong>草稿</strong>，需人工确认后再手动发送。</span>
         </label>
         <p class="inline-status" id="outreachCandidatesStatus"></p>
         <div id="outreachCandidatesPanel" class="outreach-candidates-panel">
-          <p class="hint">请先关联分析任务，再点击「生成调研对象列表」。</p>
+          <p class="hint">请先关联分析任务，再点击「筛选值得回复的用户」。</p>
         </div>
         <div class="insight-pager" id="outreachCandidatesPager" hidden></div>
       </article>

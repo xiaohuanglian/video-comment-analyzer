@@ -51,7 +51,7 @@ def test_ingest_preserves_raw_fields(sample_csv):
     records = ingest_files([sample_csv])
     assert len(records) == 3
     assert records[0].raw_data["comment_id"] == "1"
-    assert records[0].creator_type == "普通健身类"
+    assert records[0].creator_type == "未知"
 
 
 def test_mock_analysis_and_resume(sample_csv):

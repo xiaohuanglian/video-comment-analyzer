@@ -1,5 +1,5 @@
 /**
- * 找人聊聊（第三板块）— 独立模块。
+ * 评论区回复（第三板块）— 独立模块。
  * 只消费前两板块产出的分析任务；不驱动评论洞察流程。
  */
 (function () {
@@ -56,10 +56,10 @@
     preparing: "准备中",
     contacted: "已联系",
     replied: "已回复",
-    interview_agreed: "同意访谈",
+    interview_agreed: "已深度互动",
     declined: "已拒绝",
     no_reply: "无回复",
-    interview_completed: "访谈完成",
+    interview_completed: "已跟进",
   };
 
   async function apiFetch(path, options = {}) {
@@ -258,7 +258,7 @@
         method: "PATCH",
         body: JSON.stringify({ research_targets: text }),
       });
-      let msg = "调研目标已保存。请点击「生成调研对象列表」重新匹配，否则列表仍是旧目标。";
+      let msg = "目标人群已保存。请点击「筛选值得回复的用户」重新匹配，否则列表仍是旧目标。";
       if (state.candidatesDoc?.candidates?.length) {
         msg += `（当前列表 ${state.candidatesDoc.candidates.length} 人可能已过期）`;
       }
@@ -333,7 +333,7 @@
     const visible = state.candidatesPage.items || [];
     if (!allCount) {
       outreachCandidatesPanel.innerHTML =
-        '<p class="hint">暂无调研对象。请先在「评论洞察」完成分析，再点击「生成调研对象列表」。</p>';
+        '<p class="hint">暂无值得回复的用户。请先在「评论洞察」完成分析，再点击「筛选值得回复的用户」。</p>';
       if (outreachCandidateSelectAll) outreachCandidateSelectAll.checked = false;
       if (outreachCandidatesPager) {
         outreachCandidatesPager.hidden = true;
@@ -343,10 +343,10 @@
     }
 
     const meta = state.candidatesDoc?.generated_at
-      ? `<p class="hint">共 ${allCount} 位调研对象 · 当前页 ${visible.length} 位 · 已选 ${state.selectedCandidateKeys.size} 位</p>`
+      ? `<p class="hint">共 ${allCount} 位用户 · 当前页 ${visible.length} 位 · 已选 ${state.selectedCandidateKeys.size} 位</p>`
       : "";
     if (!visible.length) {
-      outreachCandidatesPanel.innerHTML = meta + '<p class="hint center">无符合筛选条件的调研对象</p>';
+      outreachCandidatesPanel.innerHTML = meta + '<p class="hint center">无符合筛选条件的用户</p>';
       renderPager(outreachCandidatesPager, state.candidatesPage, loadCandidatesPage);
       return;
     }
@@ -414,7 +414,7 @@
           ${
             draft
               ? `<div class="insight-outreach-block">
-              <label>私信草稿（可编辑后复制，不会自动发送）
+              <label>回复草稿（可编辑后复制，不会自动发送）
                 <textarea class="outreach-draft" data-user-key="${escapeHtml(candidate.user_key)}" rows="4">${escapeHtml(draft)}</textarea>
               </label>
               <div class="insight-outreach-actions">
@@ -444,7 +444,7 @@
       return;
     }
     btnOutreachBuildCandidates.disabled = true;
-    outreachCandidatesStatus.textContent = "正在合并调研对象…";
+    outreachCandidatesStatus.textContent = "正在筛选值得回复的用户…";
     outreachCandidatesStatus.className = "inline-status loading";
     try {
       const doc = await apiFetch(`/api/analysis/runs/${encodeURIComponent(state.currentRunId)}/candidates/build`, {
@@ -457,7 +457,7 @@
       await loadCandidatesPage(1);
       updateExportLinks(state.currentRunId);
       const highCount = (doc.candidates || []).filter((c) => c.priority === "high").length;
-      outreachCandidatesStatus.textContent = `完成：${doc.total_candidates || 0} 位调研对象，其中 ${highCount} 位高优先`;
+      outreachCandidatesStatus.textContent = `完成：${doc.total_candidates || 0} 位用户，其中 ${highCount} 位高优先`;
       outreachCandidatesStatus.className = "inline-status success";
     } catch (err) {
       outreachCandidatesStatus.textContent = `生成失败：${err.message}`;
@@ -475,7 +475,7 @@
     }
     const keys = Array.from(state.selectedCandidateKeys);
     if (!keys.length) {
-      outreachCandidatesStatus.textContent = "请先勾选要生成私信的用户";
+      outreachCandidatesStatus.textContent = "请先勾选要生成回复的用户";
       outreachCandidatesStatus.className = "inline-status error";
       return;
     }
@@ -486,7 +486,7 @@
       return;
     }
     btnOutreachGenerate.disabled = true;
-    outreachCandidatesStatus.textContent = `正在为 ${keys.length} 位用户生成私信草稿…`;
+    outreachCandidatesStatus.textContent = `正在为 ${keys.length} 位用户按各自意图生成回复草稿…`;
     outreachCandidatesStatus.className = "inline-status loading";
     try {
       const doc = await apiFetch(`/api/analysis/runs/${encodeURIComponent(state.currentRunId)}/outreach/generate`, {

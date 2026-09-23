@@ -17,8 +17,14 @@ def _isolate_profiles(tmp_path, monkeypatch):
 
 def test_builtin_profiles_available():
     ids = {p.profile_id for p in pp.list_profiles()}
-    assert "kineo" in ids and "generic" in ids
-    assert pp.get_profile("kineo").hypotheses["H1"]
+    assert ids == {"default"}
+    assert pp.get_profile("default").hypotheses["H1"]
+
+
+def test_legacy_profile_ids_alias_to_default():
+    # Older runs used vertical ids; they must resolve to the neutral default.
+    assert pp.get_profile("kineo").profile_id == "default"
+    assert pp.get_profile("generic").profile_id == "default"
 
 
 def test_upsert_and_delete_custom_profile(tmp_path, monkeypatch):
@@ -48,11 +54,11 @@ def test_resolve_profile_applies_run_override(monkeypatch):
         name="r",
         file_paths=["a.csv"],
         field_mapping=FieldMapping(comment_text="content"),
-        project_id="generic",
+        project_id="default",
         project_context_compact="自定义上下文",
     )
     profile = pp.resolve_profile(config)
-    assert profile.profile_id == "generic"
+    assert profile.profile_id == "default"
     assert profile.context_compact == "自定义上下文"
 
 
@@ -64,22 +70,23 @@ def test_resolve_profile_falls_back_to_default():
         field_mapping=FieldMapping(comment_text="content"),
         project_id="does-not-exist",
     )
-    assert pp.resolve_profile(config).profile_id == "kineo"
+    assert pp.resolve_profile(config).profile_id == "default"
 
 
 def test_research_prompt_uses_profile_hypotheses():
-    generic = pp.get_profile("generic")
-    prompt = build_research_system_prompt(generic)
-    assert generic.hypothesis_short["H1"] in prompt
-    # fitness-specific rule must not leak into a generic profile
-    assert "实时视觉识别" not in prompt
+    default = pp.get_profile("default")
+    prompt = build_research_system_prompt(default)
+    assert default.hypothesis_short["H1"] in prompt
+    # no vertical-specific vocabulary may leak into the neutral default
+    for banned in ("健身", "训练", "跟练", "实时视觉识别"):
+        assert banned not in prompt
 
 
 def test_report_noise_markers_are_profile_scoped():
-    theme = {"theme_name": "bgm 合集", "comment_count": 20}
-    # kineo filters bgm-style noise
-    assert _is_reportable_theme(theme, pp.get_profile("kineo").noise_markers) is False
+    noise = {"theme_name": "哈哈 沙发", "comment_count": 20}
+    # built-in default filters generic noise markers
+    assert _is_reportable_theme(noise, pp.get_profile("default").noise_markers) is False
     # a custom profile without that marker keeps it
     custom = pp.ProjectProfile(profile_id="x", name="x", noise_markers=["广告"])
-    assert _is_reportable_theme(theme, custom.noise_markers) is True
-    assert len(_reportable_themes([theme], custom.noise_markers)) == 1
+    assert _is_reportable_theme(noise, custom.noise_markers) is True
+    assert len(_reportable_themes([noise], custom.noise_markers)) == 1

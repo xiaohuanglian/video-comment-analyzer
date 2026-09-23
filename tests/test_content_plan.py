@@ -60,7 +60,7 @@ def test_build_content_plan_from_mock_run(tmp_path, monkeypatch):
     run_analysis_batch(run_id, limit=0, use_mock=True)
 
     doc = build_content_plan(run_id, use_mock=True, max_topics=10, draft_topics=3)
-    assert doc.profile_id == "kineo"
+    assert doc.profile_id == "default"
     assert doc.topics, "应当至少产出一个内容选题"
     first = doc.topics[0]
     assert first.rank == 1

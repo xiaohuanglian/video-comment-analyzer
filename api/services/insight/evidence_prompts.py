@@ -17,7 +17,7 @@ EVIDENCE_SYSTEM_PROMPT = """提取可追溯证据，不做产品结论。只输�
 格式：{"r":[{"i":1,"s":"u","x":"h","e":[["p","","s","h","原文"]]}]}。
 i 是输入短编号，禁止返回 record_id；s 是状态，x 是表达，禁止合并或调换。
 s 只能是：u可用/o跑题/m机器生成/s垃圾/g乱码/c不清楚；禁止把 x 的码写进 s（尤其禁止 s=k）。
-x: q提问/h求助/c抱怨/r结果反馈/k打卡/p赞赏/o其他；打卡必须写 x=k 且 s=u，例如 sx=uk。
+x: q提问/h求助/c抱怨/r结果反馈/k签到/p赞赏/o其他；签到必须写 x=k 且 s=u，例如 sx=uk。
 e 每项固定 [类型,subtype,范围,确定性,原文]：
 类型 p问题/d障碍/b行为/r结果/c背景/s解决方式/a行动差距/e互动/o观点/q量化；
 范围 s本人/g泛指/o他人/u不清楚；确定性 h高/m中/l低。
@@ -29,9 +29,9 @@ subtype 仅行为可用 a尝试/c完成一次/n持续/p计划/x停止/f付费求
 2) 默认每条最多2项；仅“问题+行为+结果”、付费且无结果、多个独立事实或量化兼有核心问题时可3—4项。
 3) 超限优先：问题/障碍、行为、行动差距、结果、付费、量化、解决方式、观点、赞赏。
 4) 同一句不得换类型重复；低信息可 e=[]。
-5) 只要本人明确“做了/练了/试了/测了/跟练完/坚持/看医生/付费”，必须优先保留 b 行为；不能标成 d 障碍。
-6) “做完后改善/疼痛”通常保留 b 行为 + r 结果；训练周期同时属于行为，不要只标量化。
-7) 收藏不练→互动+行动差距；办卡/付费治疗→b,f，无结果再加 a,f。
+5) 只要本人明确“做了/用了/试了/测了/完成/坚持/就医/付费”，必须优先保留 b 行为；不能标成 d 障碍。
+6) “做完后改善/出现不适”通常保留 b 行为 + r 结果；周期性坚持同时属于行为，不要只标量化。
+7) 收藏不做→互动+行动差距；付费/购买求助→b,f，无结果再加 a,f。
 8) 玩梗跑题→o；广告→s；乱码→g；AI摘要→m。
 """.strip()
 
@@ -59,10 +59,10 @@ RESEARCH_SYSTEM_PROMPT_TEMPLATE = """你是数据集级评论研究分析师。�
 
 def build_research_system_prompt(profile: Any = None) -> str:
     """Render the research system prompt for a project profile."""
-    from .project_profiles import builtin_profiles
+    from .project_profiles import DEFAULT_PROFILE_ID, get_profile
 
     if profile is None:
-        profile = builtin_profiles()["kineo"]
+        profile = get_profile(DEFAULT_PROFILE_ID)
     short = getattr(profile, "hypothesis_short", None) or {}
     return RESEARCH_SYSTEM_PROMPT_TEMPLATE.format(
         hypothesis_rules=(getattr(profile, "hypothesis_rules", "") or "").strip(),
@@ -72,8 +72,11 @@ def build_research_system_prompt(profile: Any = None) -> str:
     )
 
 
-# Default (fitness) prompt kept for backward compatibility.
-RESEARCH_SYSTEM_PROMPT = build_research_system_prompt()
+# Default (neutral) context used when no profile/project context is provided.
+DEFAULT_PROJECT_CONTEXT_COMPACT = (
+    "研究目标：从评论中发现目标人群的真实需求、痛点与机会。"
+    "禁止：把玩笑/玩梗当作核心标签；把个别案例夸大为普遍需求。"
+)
 
 REVIEW_SYSTEM_PROMPT = """结构审查员（仅异常抽检时使用）。检查 record_id、原话可追溯、反例、个案夸大、弱证据撑结论。
 输出 JSON：{"structural_review_passed":bool,"issues":[{"type":"...","description":"...","related_record_ids":[]}],"corrected_sections":{}}
@@ -83,19 +86,15 @@ SEMANTIC_REVIEW_SYSTEM_PROMPT = """你是精确优先的证据审查员，不是
 逐项判断候选结论是否被附带原文直接支持。只可使用输入原文与程序统计，禁止补充常识、生成新结论或改写证据。
 判断：
 - supported：结论每个关键语义都被原文直接支持，且未夸大范围、因果、疗效、付费或本人经历。
-- contradicted：原文与结论含义相反，或把计划当执行、推销当购买、省钱当付费失败、他人当本人、疼痛当有效。
+- contradicted：原文与结论含义相反，或把计划当行动、推销当购买、节省当付费失败、他人当本人、症状当作有效。
 - insufficient：原文相关但不足以支持结论，或只有少数样本却声称普遍、相关却声称因果。
 程序 hard_verdict 为 contradicted/insufficient 时不得改成 supported。
 只输出单行紧凑 JSON：{"r":[{"i":"claim_id","v":"supported|contradicted|insufficient","x":"短理由"}]}。
 必须覆盖输入中的每个 claim_id；禁止输出其他字段。
 """.strip()
 
-# Compact project context placeholder — filled by caller when available
-DEFAULT_PROJECT_CONTEXT_COMPACT = (
-    "研究目标：健身内容评论中的训练障碍、行动差距与产品机会。"
-    "目标用户：跟练/自重训练新手到进阶。"
-    "禁止：把玩梗当核心标签；把难度直接当成需要系统代规划的证明；医疗确诊措辞。"
-)
+# Backward-compat alias: neutral default research system prompt.
+RESEARCH_SYSTEM_PROMPT = build_research_system_prompt()
 
 
 def _clip(text: str, limit: int = _CONTEXT_CHAR_LIMIT) -> str:

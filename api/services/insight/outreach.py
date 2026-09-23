@@ -18,11 +18,9 @@ def _mock_draft(candidate: CandidateRecord, base_template: str) -> str:
     quote = candidate.representative_quotes[0] if candidate.representative_quotes else ""
     if quote:
         body = (
-            f"{name}，你好！我们在做居家训练动作反馈的用户研究。"
-            f"看到你在评论里提到「{quote[:36]}」，"
-            f"想邀请你花 15 分钟聊聊：最近一次在家练习时具体怎么做的、"
-            f"当时最没底或最麻烦的是什么。"
-            f"纯访谈不推销；参与交流会优先获得内测体验资格（形式待定）。方便的话欢迎回复～"
+            f"{name}，看到你提到「{quote[:36]}」。"
+            f"我的经验是：先确认你具体想解决的问题，再针对性给做法。"
+            f"如果你方便，可以说下具体场景，我看看还能怎么帮到你。"
         )
     else:
         body = base_template.replace("你好", f"{name}，你好", 1)
@@ -100,7 +98,7 @@ def generate_outreach_drafts(
 ) -> OutreachDocument:
     template = (base_template or DEFAULT_BASE_TEMPLATE).strip()
     if not use_mock and not (api_key or "").strip():
-        raise ValueError("生成私信草稿需要 API Key")
+        raise ValueError("生成回复草稿需要 API Key")
 
     selected = {c.user_key: c for c in candidates if c.user_key in set(user_keys)}
     missing = [key for key in user_keys if key not in selected]

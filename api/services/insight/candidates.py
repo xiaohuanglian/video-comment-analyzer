@@ -31,7 +31,7 @@ def build_contact_reason(analysis: Dict[str, Any], score: int, *, research_match
         parts.append(f"符合调研对象：{'、'.join(research_matches)}")
     evidence = analysis.get("actual_training_evidence") or "none"
     if evidence in {"tried", "continued"}:
-        parts.append("有真实训练证据")
+        parts.append("有真实行为证据")
     if analysis.get("help_seeking"):
         parts.append("主动求助")
     problems = analysis.get("specific_problems") or []
@@ -39,16 +39,16 @@ def build_contact_reason(analysis: Dict[str, Any], score: int, *, research_match
         parts.append(f"具体问题：{'；'.join(str(p) for p in problems[:2])}")
     relation = analysis.get("single_video_relation") or ""
     if relation in {"personalized_judgment_needed", "realtime_observation_needed"}:
-        parts.append("单向视频可能不足")
+        parts.append("单向内容可能不足")
     fit = analysis.get("product_fit") or ""
     if fit == "high":
         parts.append("产品适配度高")
     if score >= 7:
         parts.append("综合评分高")
-    text = "；".join(parts) or "评论内容与居家训练反馈相关，值得进一步了解"
+    text = "；".join(parts) or "评论内容与目标场景反馈相关，值得进一步了解"
     forbidden = ("付费意愿", "强烈付费", "购买意向", "询价")
     if any(token in text for token in forbidden):
-        text = "用户明确实际训练过，并提出了单向视频难以解决的具体动作问题"
+        text = "用户明确实际使用过，并提出了单向内容难以解决的具体问题"
     return text
 
 
