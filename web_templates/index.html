@@ -346,6 +346,23 @@
               <option value="">— 加载已有任务 —</option>
             </select>
           </label>
+          <label class="setting-field insight-profile-field">
+            <span class="field-label">项目档案（场景/产品）</span>
+            <select id="insightProfileSelect"></select>
+          </label>
+          <button class="btn secondary sm" type="button" id="btnInsightEditProfile">编辑档案</button>
+        </div>
+        <div id="insightProfileEditor" class="insight-profile-editor" hidden>
+          <label class="setting-field">
+            <span class="field-label">档案 JSON（场景/目标人群/假设/词表/内容人设，可编辑后保存）</span>
+            <textarea id="insightProfileJson" rows="12" spellcheck="false"></textarea>
+          </label>
+          <div class="action-row">
+            <button class="btn primary sm" type="button" id="btnInsightSaveProfile">保存档案</button>
+            <button class="btn secondary sm" type="button" id="btnInsightDuplicateProfile">另存为新档案</button>
+            <button class="btn ghost sm" type="button" id="btnInsightCloseProfile">关闭</button>
+          </div>
+          <p class="inline-status" id="insightProfileStatus"></p>
         </div>
         <p class="hint">选择新文件并「开始分析」会<strong>创建新任务</strong>；从「历史任务」加载则只查看或继续该任务，不会合并文件。</p>
         <fieldset class="insight-analysis-limit-field">
@@ -443,6 +460,22 @@
           </div>
         </div>
         <div id="insightResearchReport" class="insight-research-report"></div>
+      </article>
+
+      <article class="card flow-card" id="insightContentCard" hidden>
+        <div class="step-header">
+          <div class="step-number">D4</div>
+          <div class="step-header-copy">
+            <h3>内容选题与生成</h3>
+            <p class="hint">把评论需求转成可发布的内容选题，并让 AI 生成多形态草稿（需人工审核后发布）。</p>
+          </div>
+        </div>
+        <div class="action-row">
+          <button class="btn primary sm" type="button" id="btnInsightGenerateContent">生成内容选题</button>
+          <button class="btn secondary sm" type="button" id="btnInsightExportContent">导出 Markdown</button>
+        </div>
+        <p class="inline-status" id="insightContentStatus"></p>
+        <div id="insightContentPlan" class="insight-content-plan"></div>
       </article>
 
       <article class="card flow-card">

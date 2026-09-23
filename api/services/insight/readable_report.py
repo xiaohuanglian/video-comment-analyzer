@@ -116,53 +116,72 @@ def _theme_count(theme: dict) -> int:
     return int(theme.get("comment_count") or len(_theme_record_ids(theme)))
 
 
-def _is_reportable_theme(theme: dict) -> bool:
+# Defaults reproduce the built-in fitness profile; profiles can override them.
+DEFAULT_NOISE_MARKERS = (
+    "打卡", "day", "第九天", "第四天", "d5", "d6", "bgm",
+    "收藏", "点赞", "真的有用",
+)
+DEFAULT_DECISION_KEYWORDS = ("方向", "判断", "动作", "困难", "问题", "障碍", "疼痛", "规划", "积液", "甩泥")
+DEFAULT_RISK_TOKENS = ("疼", "痛", "不适", "关节")
+DEFAULT_DIFFICULTY_TOKENS = ("做不了", "不行", "困难", "好难", "累", "不到位")
+DEFAULT_QUESTION_TOKENS = ("可以", "能不能", "吗", "要做几次", "每天")
+
+
+def _noise_markers(profile) -> tuple:
+    markers = tuple(getattr(profile, "noise_markers", None) or ())
+    return markers or DEFAULT_NOISE_MARKERS
+
+
+def _is_reportable_theme(theme: dict, noise_markers: Sequence[str] = DEFAULT_NOISE_MARKERS) -> bool:
     """Keep ritual/noise clusters out of executive recommendations."""
     name = str(theme.get("theme_name") or "")
     definition = str(theme.get("theme_definition") or theme.get("definition") or "")
     text = f"{name} {definition}".lower()
     if not name or len(name) < 3:
         return False
-    noise_markers = (
-        "打卡", "day", "第九天", "第四天", "d5", "d6", "bgm",
-        "收藏", "点赞", "真的有用",
-    )
     if any(marker in text for marker in noise_markers):
         return False
     return _theme_count(theme) >= 8
 
 
-def _reportable_themes(themes: Sequence[dict]) -> List[dict]:
-    reportable = [theme for theme in themes if _is_reportable_theme(theme)]
+def _reportable_themes(
+    themes: Sequence[dict], noise_markers: Sequence[str] = DEFAULT_NOISE_MARKERS
+) -> List[dict]:
+    reportable = [theme for theme in themes if _is_reportable_theme(theme, noise_markers)]
     # Most-supported themes first, so executive sections are not order-dependent.
     reportable.sort(key=_theme_count, reverse=True)
     return reportable
 
 
-def _theme_summary(theme: dict) -> str:
+def _theme_summary(theme: dict, profile=None) -> str:
     """Turn a cluster label into a bounded, decision-useful observation."""
     name = str(theme.get("theme_name") or "").strip()
-    if any(token in name for token in ("疼", "痛", "不适", "关节")):
-        return f"用户反复报告「{name}」相关不适；应先确认触发动作与安全边界，而非将其直接解释为产品需求。"
-    if any(token in name for token in ("做不了", "不行", "困难", "好难", "累", "不到位")):
-        return f"用户反复表示「{name}」；优先验证降阶、节奏或动作提示能否降低完成门槛。"
-    if any(token in name for token in ("可以", "能不能", "吗", "要做几次", "每天")):
-        return f"用户围绕「{name}」寻求适用范围或训练安排；先补齐视频内的明确说明，再观察重复提问是否下降。"
+    risk = tuple(getattr(profile, "theme_risk_tokens", None) or ()) or DEFAULT_RISK_TOKENS
+    difficulty = tuple(getattr(profile, "theme_difficulty_tokens", None) or ()) or DEFAULT_DIFFICULTY_TOKENS
+    question = tuple(getattr(profile, "theme_question_tokens", None) or ()) or DEFAULT_QUESTION_TOKENS
+    if any(token in name for token in risk):
+        return f"用户反复报告「{name}」相关不适或风险信号；应先确认触发情境与安全边界，而非直接当作需求。"
+    if any(token in name for token in difficulty):
+        return f"用户反复表示「{name}」；优先验证降低完成门槛的方式（说明、降阶、节奏等）。"
+    if any(token in name for token in question):
+        return f"用户围绕「{name}」寻求适用范围或做法；先补齐明确说明，再观察重复提问是否下降。"
     return f"评论中反复出现「{name}」，但当前只能确认表达集中，不能据此推导原因、需求强度或付费意愿。"
 
 
-def _theme_implication(theme: dict) -> str:
+def _theme_implication(theme: dict, profile=None) -> str:
     implication = str(theme.get("implication") or "").strip()
     if implication and not implication.startswith("围绕"):
         return implication
-    return _theme_summary(theme)
+    return _theme_summary(theme, profile)
 
 
-def _is_reportable_finding(finding: dict) -> bool:
+def _is_reportable_finding(
+    finding: dict, noise_markers: Sequence[str] = DEFAULT_NOISE_MARKERS
+) -> bool:
     text = " ".join(
         str(finding.get(key) or "") for key in ("finding", "conclusion", "why_it_matters")
     ).lower()
-    return not any(marker in text for marker in ("打卡", "第九天", "第四天", "day", "bgm", "收藏"))
+    return not any(marker in text for marker in noise_markers)
 
 
 # Cap on findings expanded inline; the rest stay available in research_analysis.json.
@@ -180,9 +199,9 @@ def _finding_score(finding: dict, records: Sequence[SourceRecord]) -> tuple:
     )
 
 
-def _priority_insight(themes: Sequence[dict]) -> dict:
+def _priority_insight(themes: Sequence[dict], profile=None) -> dict:
     """Insight-oriented next step — not interview recruitment copy."""
-    candidates = _reportable_themes(themes)
+    candidates = _reportable_themes(themes, _noise_markers(profile))
     if candidates:
         top = max(candidates, key=_theme_count)
         name = str(top.get("theme_name") or "核心问题主题")
@@ -195,7 +214,7 @@ def _priority_insight(themes: Sequence[dict]) -> dict:
         ).strip()
         return {
             "action": f"优先围绕「{name}」做内容或产品单点验证（约 {count} 条相关评论）。",
-            "why": implication if implication and not implication.startswith("围绕") else _theme_summary(top),
+            "why": implication if implication and not implication.startswith("围绕") else _theme_summary(top, profile),
             "confirm": "该问题是否反复出现、用户现有替代方案是什么、何种辅助真正会被尝试",
             "advance": "若同类问题在新样本中复现，且用户愿意试用最小辅助流程，则推进对应单点原型或内容改版。",
             "refute": "若问题靠重看视频或一次答疑即可解决，或无法复现，则暂缓产品化。",
@@ -223,40 +242,32 @@ def _behavior_groups(item_index: Dict[str, dict]) -> Dict[str, List[str]]:
     return grouped
 
 
-def _minimal_opportunities(themes: Sequence[dict]) -> List[dict]:
+def _minimal_opportunities(themes: Sequence[dict], profile=None) -> List[dict]:
+    templates = list(getattr(profile, "opportunity_templates", None) or [])
     opportunities: List[dict] = []
     seen_names: set[str] = set()
-    for theme in _reportable_themes(themes):
+    for theme in _reportable_themes(themes, _noise_markers(profile)):
         name = str(theme.get("theme_name") or "")
         definition = str(theme.get("theme_definition") or theme.get("definition") or "")
         implication = str(theme.get("implication") or "")
         candidate: Optional[dict] = None
-        if any(keyword in name for keyword in ("方向", "判断")):
-            candidate = {
-                "name": "训练前方向判断辅助",
-                "problem": "用户不知道该练哪一侧，或担心方向判断错误。",
-                "experiment": "让用户上传一段标准姿态视频，只返回方向提示并明确非医疗诊断；验证其是否比自行判断更可靠。",
-            }
-        elif any(keyword in name for keyword in ("动作", "质控", "发力", "反馈")):
-            candidate = {
-                "name": "单动作执行反馈",
-                "problem": "用户找不到发力感，或无法判断一个具体动作是否做对。",
-                "experiment": "只选择一个动作，对比普通视频组与反馈组的完成率、主观确定感和纠错次数。",
-            }
-        elif any(keyword in name for keyword in ("安排", "规划", "下一步", "降阶")):
-            candidate = {
-                "name": "单次训练下一步建议",
-                "problem": "用户不知道当前动作之后该练什么，或是否需要降阶。",
-                "experiment": "只提供一次训练的下一步建议，验证用户是否采纳及是否减少反复搜索。",
-            }
-        elif name:
+        for tpl in templates:
+            keywords = tpl.get("match") or []
+            if any(keyword in name for keyword in keywords):
+                candidate = {
+                    "name": str(tpl.get("name") or f"围绕「{name}」的单点验证"),
+                    "problem": str(tpl.get("problem") or _theme_summary(theme, profile)),
+                    "experiment": str(tpl.get("experiment") or ""),
+                }
+                break
+        if candidate is None and name:
             candidate = {
                 "name": f"围绕「{name}」的单点验证",
-                "problem": _theme_summary(theme),
+                "problem": _theme_summary(theme, profile),
                 "experiment": (
                     implication
                     if implication and not implication.startswith("围绕")
-                    else "在一支视频中补充针对性说明或降阶提示，对比同类提问与中途放弃表达是否下降。"
+                    else "在一支内容中补充针对性说明或降阶提示，对比同类提问与中途放弃表达是否下降。"
                 ),
             }
         if candidate and candidate["name"] not in seen_names:
@@ -343,7 +354,13 @@ def build_readable_report(
     performance: Optional[dict] = None,
     open_themes: Optional[Sequence[dict]] = None,
     qual_stats: Optional[dict] = None,
+    profile: Any = None,
 ) -> str:
+    if profile is None:
+        from .project_profiles import builtin_profiles
+
+        profile = builtin_profiles()["kineo"]
+    noise_markers = _noise_markers(profile)
     summary = research.get("dataset_summary") or {}
     item_index = _index_evidence_items(card_rows)
     # Count analyzed cards from raw dicts (no EvidenceCard materialisation).
@@ -356,7 +373,7 @@ def build_readable_report(
     open_theme_list = [dict(theme) for theme in (open_themes or []) if isinstance(theme, dict)]
     # The LLM research outline may contain broad labels; decision pages must
     # instead be anchored in the evidence-bearing, action-filtered clusters.
-    themes = _reportable_themes(open_theme_list) or _reportable_themes(research_themes)
+    themes = _reportable_themes(open_theme_list, noise_markers) or _reportable_themes(research_themes, noise_markers)
     coverage_themes = open_theme_list or research_themes
     coverage_label = "开放主题覆盖率" if open_theme_list else "主要主题覆盖率"
 
@@ -364,7 +381,7 @@ def build_readable_report(
         finding
         for finding in (research.get("unexpected_findings") or [])
         if _finding_has_required_evidence(finding, item_index)
-        and _is_reportable_finding(finding)
+        and _is_reportable_finding(finding, noise_markers)
     ]
     eligible_findings.sort(key=lambda f: _finding_score(f, records), reverse=True)
     findings = eligible_findings[:MAX_REPORT_FINDINGS]
@@ -395,7 +412,9 @@ def build_readable_report(
     coverage = covered / usable if usable else 0.0
     low_information = int(summary.get("low_information_comments", 0) or 0)
     unclustered_valid = max(0, usable - covered - low_information)
-    decision_keywords = ("方向", "判断", "动作", "困难", "问题", "障碍", "疼痛", "规划", "积液", "甩泥")
+    decision_keywords = tuple(
+        getattr(profile, "decision_keywords", None) or ()
+    ) or DEFAULT_DECISION_KEYWORDS
     top_theme = (
         max(
             themes,
@@ -413,7 +432,7 @@ def build_readable_report(
         top_theme.get("unique_user_count")
         or (_users_for_ids(records, _theme_record_ids(top_theme)) if top_theme else 0)
     )
-    action = _priority_insight(themes)
+    action = _priority_insight(themes, profile)
 
     summary_text = (
         f"本次分析 {summary.get('total_comments', len(records))} 条评论，涉及 "
@@ -505,7 +524,7 @@ def build_readable_report(
                 "",
                 f"- **【事实】用户在说什么**：{';'.join(quotes) if quotes else '—（暂无代表原话）'}",
                 f"- **【事实】证据规模**：{len(rids)} 条评论 / {_users_for_ids(records, rids)} 名用户。",
-                    f"- **【推断】这意味着什么**：{_theme_summary(theme)}",
+                    f"- **【推断】这意味着什么**：{_theme_summary(theme, profile)}",
                 "- **【限制】当前不能证明什么**：不能证明所有用户都存在该问题，也不能证明其愿意付费。",
                 f"- **【建议】下一步**：{str(theme.get('implication') or '围绕该主题做内容/产品单点验证。').strip()}",
                 "",
@@ -532,7 +551,7 @@ def build_readable_report(
                     f"- **事实规模**：{len(rids)} 条评论 / {_users_for_ids(records, rids)} 名用户。",
                     f"- **问题场景**：{theme.get('theme_definition') or theme.get('definition') or '—'}",
                     f"- **代表原话**：{';'.join(quotes) if quotes else '—'}",
-                    f"- **产品含义**：{_theme_implication(theme)}",
+                    f"- **产品含义**：{_theme_implication(theme, profile)}",
                     "",
                 ]
             )
@@ -555,7 +574,7 @@ def build_readable_report(
     lines.append("")
 
     lines.extend(["## 5. 值得验证的机会", ""])
-    for opportunity in _minimal_opportunities(themes)[:3]:
+    for opportunity in _minimal_opportunities(themes, profile)[:3]:
         lines.extend(
             [
                 f"### {opportunity['name']}",

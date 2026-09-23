@@ -489,6 +489,8 @@ def build_report_markdown(
     all_cards: Optional[List[Dict[str, Any]]] = None,
     all_results: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
+    from .project_profiles import resolve_profile
+
     config = load_config(run_id)
     progress = load_progress(run_id).model_dump()
     if (
@@ -524,6 +526,7 @@ def build_report_markdown(
             run_id=run_label,
             open_themes=open_themes,
             qual_stats=qual_stats,
+            profile=resolve_profile(config),
         )
         if research_report.strip():
             theme_lines = _collect_theme_section(run_id, source_files=source_files)

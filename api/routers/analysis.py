@@ -132,6 +132,7 @@ class CreateRunRequest(BaseModel):
     analysis_limit: int = Field(default=100, ge=0, description="0 = analyze all pending per batch")
     use_mock: bool = False
     research_targets: str = ""
+    profile_id: str = "kineo"
     model: ModelSettings = Field(default_factory=ModelSettings)
 
 
@@ -218,6 +219,40 @@ async def get_runs() -> Dict[str, Any]:
 @router.get("/pricing")
 async def get_pricing(base_url: str = DEFAULT_BASE_URL, model_name: str = DEFAULT_MODEL) -> Dict[str, Any]:
     return normalize_model_settings(base_url=base_url, model_name=model_name)
+
+
+@router.get("/profiles")
+async def get_profiles() -> Dict[str, Any]:
+    """List project/scenario profiles (built-in + user-defined)."""
+    from api.services.insight.project_profiles import list_profiles
+
+    return {"profiles": [p.model_dump() for p in list_profiles()]}
+
+
+class UpsertProfileRequest(BaseModel):
+    profile: Dict[str, Any] = Field(default_factory=dict)
+
+
+@router.put("/profiles/{profile_id}")
+async def put_profile(profile_id: str, body: UpsertProfileRequest) -> Dict[str, Any]:
+    from api.services.insight.project_profiles import ProjectProfile, upsert_profile
+
+    payload = dict(body.profile or {})
+    payload["profile_id"] = profile_id
+    try:
+        profile = ProjectProfile.model_validate(payload)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"档案格式不正确: {exc}") from exc
+    return upsert_profile(profile).model_dump()
+
+
+@router.delete("/profiles/{profile_id}")
+async def delete_profile_route(profile_id: str) -> Dict[str, Any]:
+    from api.services.insight.project_profiles import delete_profile
+
+    if not delete_profile(profile_id):
+        raise HTTPException(status_code=404, detail="自定义档案不存在（内置档案不可删除）")
+    return {"deleted": profile_id}
 
 
 @router.post("/estimate")
@@ -357,6 +392,7 @@ async def post_create_run(body: CreateRunRequest) -> Dict[str, Any]:
         analysis_limit=body.analysis_limit,
         use_mock=body.use_mock,
         research_targets=parse_research_targets(body.research_targets),
+        project_id=(body.profile_id or "kineo").strip() or "kineo",
         created_at=datetime.now(timezone.utc).isoformat(),
         analysis_version="evidence_items_v1",
     )
@@ -1242,3 +1278,71 @@ async def get_research_report(run_id: str) -> Dict[str, Any]:
         "semantic_removed_count": len(global_review.get("removed_claim_ids") or []),
         "semantic_downgraded_count": len(global_review.get("downgraded_claim_ids") or []),
     }
+
+
+class ContentPlanRequest(BaseModel):
+    api_key: Optional[str] = None
+    use_mock: Optional[bool] = None
+    max_topics: int = Field(default=12, ge=1, le=50)
+    draft_topics: int = Field(default=5, ge=0, le=20)
+
+
+@router.post("/runs/{run_id}/content/generate")
+async def post_generate_content(run_id: str, body: ContentPlanRequest) -> Dict[str, Any]:
+    """Build ranked content topics from insights and optionally AI-draft them."""
+    from api.services.insight.content_plan import build_content_plan, content_plan_markdown
+    from api.services.insight.storage import load_content_plan, save_content_plan, _run_dir
+
+    try:
+        config = load_config(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="任务不存在") from exc
+    use_mock = config.use_mock if body.use_mock is None else body.use_mock
+    doc = build_content_plan(
+        run_id,
+        use_mock=use_mock,
+        api_key=body.api_key or "",
+        max_topics=body.max_topics,
+        draft_topics=body.draft_topics,
+    )
+    payload = doc.model_dump()
+    save_content_plan(run_id, payload)
+    try:
+        (_run_dir(run_id) / "content_plan.md").write_text(
+            content_plan_markdown(doc), encoding="utf-8"
+        )
+    except OSError:
+        pass
+    return payload
+
+
+@router.get("/runs/{run_id}/content")
+async def get_content_plan(run_id: str) -> Dict[str, Any]:
+    from api.services.insight.storage import load_content_plan
+
+    try:
+        load_config(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="任务不存在") from exc
+    return load_content_plan(run_id)
+
+
+@router.get("/runs/{run_id}/export/content.md")
+async def export_content_markdown(run_id: str) -> Response:
+    from api.services.insight.content_plan import ContentPlanDocument, content_plan_markdown
+    from api.services.insight.storage import load_content_plan
+
+    try:
+        load_config(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="任务不存在") from exc
+    payload = load_content_plan(run_id)
+    if not payload:
+        raise HTTPException(status_code=404, detail="尚未生成内容选题")
+    doc = ContentPlanDocument.model_validate(payload)
+    markdown = content_plan_markdown(doc)
+    return Response(
+        content=markdown,
+        media_type="text/markdown; charset=utf-8",
+        headers=_attachment_headers(f"{run_id}_内容选题.md", "content_plan.md"),
+    )

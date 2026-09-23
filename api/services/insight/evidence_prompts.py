@@ -35,7 +35,7 @@ subtype 仅行为可用 a尝试/c完成一次/n持续/p计划/x停止/f付费求
 8) 玩梗跑题→o；广告→s；乱码→g；AI摘要→m。
 """.strip()
 
-RESEARCH_SYSTEM_PROMPT = """你是数据集级评论研究分析师。输入是全量 evidence_items 的代码聚合组与代码统计。
+RESEARCH_SYSTEM_PROMPT_TEMPLATE = """你是数据集级评论研究分析师。输入是全量 evidence_items 的代码聚合组与代码统计。
 
 职责：主题归并、假设评估、反例和最多 3 个意外发现。
 
@@ -46,9 +46,7 @@ RESEARCH_SYSTEM_PROMPT = """你是数据集级评论研究分析师。输入是�
 - 普通引用只输出 "R1"；假设引用输出 {{"r":"R1","s":"d|b|w"}}，分别代表 direct、behavioral、weak_context。
 - weak_context 不得撑结论。
 - 主题只能从 cluster_ids 选择，禁止把代表引用数量当成主题总量。
-- H1：只有部分已行动样本且缺未行动对照时，结论必须 mixed 或 insufficient。
-- H2：方向判断/动作标准问题最多构成中等支持，不等于必须实时视觉识别。
-- H3：记不住动作/不知道下一步/需要降阶只能构成弱支持或证据不足。
+{hypothesis_rules}
 - 禁止声称付费意愿、市场空白、需求已验证或「大部分用户」，除非代码统计直接支持。
 - 只输出用户消息定义的精简字段，单行 JSON，禁止额外解释。
 
@@ -56,11 +54,26 @@ RESEARCH_SYSTEM_PROMPT = """你是数据集级评论研究分析师。输入是�
 - H1：{h1}
 - H2：{h2}
 - H3：{h3}
-""".format(
-    h1=HYPOTHESIS_SHORT["H1"],
-    h2=HYPOTHESIS_SHORT["H2"],
-    h3=HYPOTHESIS_SHORT["H3"],
-)
+"""
+
+
+def build_research_system_prompt(profile: Any = None) -> str:
+    """Render the research system prompt for a project profile."""
+    from .project_profiles import builtin_profiles
+
+    if profile is None:
+        profile = builtin_profiles()["kineo"]
+    short = getattr(profile, "hypothesis_short", None) or {}
+    return RESEARCH_SYSTEM_PROMPT_TEMPLATE.format(
+        hypothesis_rules=(getattr(profile, "hypothesis_rules", "") or "").strip(),
+        h1=short.get("H1", ""),
+        h2=short.get("H2", ""),
+        h3=short.get("H3", ""),
+    )
+
+
+# Default (fitness) prompt kept for backward compatibility.
+RESEARCH_SYSTEM_PROMPT = build_research_system_prompt()
 
 REVIEW_SYSTEM_PROMPT = """结构审查员（仅异常抽检时使用）。检查 record_id、原话可追溯、反例、个案夸大、弱证据撑结论。
 输出 JSON：{"structural_review_passed":bool,"issues":[{"type":"...","description":"...","related_record_ids":[]}],"corrected_sections":{}}
@@ -121,9 +134,11 @@ def build_research_user_message(
     known_record_ids: List[str],
     dataset_summary: Optional[dict] = None,
     project_context: str = "",
+    hypotheses: Optional[dict] = None,
 ) -> str:
+    hypo = hypotheses or HYPOTHESES
     payload = {
-        "hypotheses": {hid: HYPOTHESES[hid] for hid in ("H1", "H2", "H3")},
+        "hypotheses": {hid: hypo.get(hid, HYPOTHESES[hid]) for hid in ("H1", "H2", "H3")},
         "project_context": (project_context or DEFAULT_PROJECT_CONTEXT_COMPACT)[:2000],
         "code_dataset_summary": dataset_summary or {},
         "known_record_id_count": len(known_record_ids),

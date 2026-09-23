@@ -714,6 +714,21 @@ def save_research_report(run_id: str, markdown: str) -> None:
     (_run_dir(run_id) / "research_report.md").write_text(markdown or "", encoding="utf-8")
 
 
+def save_content_plan(run_id: str, payload: Dict[str, Any]) -> None:
+    _write_json(_run_dir(run_id) / "content_plan.json", payload)
+
+
+def load_content_plan(run_id: str) -> Dict[str, Any]:
+    path = _run_dir(run_id) / "content_plan.json"
+    if not path.exists():
+        return {}
+    try:
+        data = _read_json(path)
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
 def load_research_report(run_id: str) -> str:
     path = _run_dir(run_id) / "research_report.md"
     if not path.exists():

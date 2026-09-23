@@ -9,7 +9,11 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
 from pydantic import ValidationError
 
-from .evidence_prompts import RESEARCH_SYSTEM_PROMPT, build_research_user_message
+from .evidence_prompts import (
+    RESEARCH_SYSTEM_PROMPT,
+    build_research_system_prompt,
+    build_research_user_message,
+)
 from .evidence_schemas import (
     DatasetSummaryCounts,
     EvidenceLevel,
@@ -1015,19 +1019,19 @@ def run_research_analysis(
     clusters = build_research_clusters(records, card_rows)
     compact_clusters, refs_by_alias = _alias_research_cluster_refs(clusters)
     code_summary = compute_dataset_summary(records, list(card_rows)).model_dump()
+    from .project_profiles import resolve_profile
+
+    profile = resolve_profile(config)
     messages = [
-        {"role": "system", "content": RESEARCH_SYSTEM_PROMPT},
+        {"role": "system", "content": build_research_system_prompt(profile)},
         {
             "role": "user",
             "content": build_research_user_message(
                 evidence_clusters=compact_clusters,
                 known_record_ids=known_ids,
                 dataset_summary=code_summary,
-                project_context=(
-                    getattr(config, "project_context", "")
-                    or getattr(config, "project_context_compact", "")
-                    or ""
-                ),
+                project_context=(profile.context_full or profile.context_compact or ""),
+                hypotheses=profile.hypotheses,
             ),
         },
     ]

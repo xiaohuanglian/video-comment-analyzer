@@ -3023,3 +3023,39 @@ summary:focus-visible {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Project profile selector / editor */
+.insight-profile-editor {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border-color, #d9d9d9);
+  border-radius: 8px;
+}
+.insight-profile-editor textarea {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.insight-profile-field select {
+  min-width: 12rem;
+}
+
+/* Content plan (D4) */
+.insight-content-topic {
+  border-top: 1px solid var(--border-color, #e5e5e5);
+  padding: 0.75rem 0;
+}
+.insight-content-topic h4 {
+  margin: 0 0 0.4rem;
+}
+.insight-content-topic pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--code-bg, #f6f6f6);
+  padding: 0.6rem;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}

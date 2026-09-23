@@ -21,6 +21,14 @@
   const btnInsightClearSelection = $("btnInsightClearSelection");
   const insightRunName = $("insightRunName");
   const insightRunHistory = $("insightRunHistory");
+  const insightProfileSelect = $("insightProfileSelect");
+  const btnInsightEditProfile = $("btnInsightEditProfile");
+  const insightProfileEditor = $("insightProfileEditor");
+  const insightProfileJson = $("insightProfileJson");
+  const btnInsightSaveProfile = $("btnInsightSaveProfile");
+  const btnInsightDuplicateProfile = $("btnInsightDuplicateProfile");
+  const btnInsightCloseProfile = $("btnInsightCloseProfile");
+  const insightProfileStatus = $("insightProfileStatus");
   const insightBaseUrl = $("insightBaseUrl");
   const insightModelName = $("insightModelName");
   const insightApiKey = $("insightApiKey");
@@ -64,6 +72,11 @@
   const insightResultsPager = $("insightResultsPager");
   const insightResearchCard = $("insightResearchCard");
   const insightResearchReport = $("insightResearchReport");
+  const insightContentCard = $("insightContentCard");
+  const insightContentPlan = $("insightContentPlan");
+  const insightContentStatus = $("insightContentStatus");
+  const btnInsightGenerateContent = $("btnInsightGenerateContent");
+  const btnInsightExportContent = $("btnInsightExportContent");
   const insightFilterKeyword = $("insightFilterKeyword");
   const insightFilterIntent = $("insightFilterIntent");
   const insightFilterVideo = $("insightFilterVideo");
@@ -1555,6 +1568,7 @@
 
   async function loadResearchReport(runId) {
     if (!insightResearchCard || !insightResearchReport) return;
+    loadContentPlan(runId).catch(() => {});
     try {
       const data = await apiFetch(`/api/analysis/runs/${encodeURIComponent(runId)}/research-report`);
       if (!data?.has_report) {
@@ -1589,6 +1603,84 @@
     } catch (_err) {
       insightResearchCard.hidden = true;
     }
+  }
+
+  function renderContentPlan(doc) {
+    if (!insightContentPlan) return;
+    const topics = doc?.topics || [];
+    if (!topics.length) {
+      insightContentPlan.innerHTML = '<p class="hint">暂无选题：请先完成评论分析并生成开放主题。</p>';
+      return;
+    }
+    const html = topics
+      .map((t) => {
+        const parts = [`<h4>${t.rank}. ${escapeHtml(t.title || t.theme_name || "")}</h4>`];
+        if (t.source_question) {
+          parts.push(`<p><strong>用户真实问题</strong>：${escapeHtml(t.source_question)}</p>`);
+        }
+        const demand = `需求规模：${t.demand_users || 0} 名用户 / ${t.demand_comments || 0} 条评论`;
+        const kw = t.keywords?.length ? ` · 关键词：${escapeHtml(t.keywords.join("、"))}` : "";
+        parts.push(`<p class="hint">${demand}${kw}</p>`);
+        if (t.content_angle) parts.push(`<p><strong>角度</strong>：${escapeHtml(t.content_angle)}</p>`);
+        if (t.outline?.length) {
+          parts.push(`<ul>${t.outline.map((o) => `<li>${escapeHtml(o)}</li>`).join("")}</ul>`);
+        }
+        if (t.draft) {
+          parts.push(
+            `<details><summary>查看草稿（${escapeHtml(t.draft_format || "")}）</summary><pre>${escapeHtml(t.draft)}</pre></details>`
+          );
+        }
+        if (t.limitations) parts.push(`<p class="hint">限制：${escapeHtml(t.limitations)}</p>`);
+        return `<div class="insight-content-topic">${parts.join("")}</div>`;
+      })
+      .join("");
+    insightContentPlan.innerHTML = `<p class="hint">${escapeHtml(doc.summary || "")}</p>${html}`;
+  }
+
+  async function loadContentPlan(runId) {
+    if (!insightContentCard || !insightContentPlan) return;
+    try {
+      const doc = await apiFetch(`/api/analysis/runs/${encodeURIComponent(runId)}/content`);
+      if (!doc || !doc.topics || !doc.topics.length) {
+        insightContentPlan.innerHTML = "";
+        return;
+      }
+      insightContentCard.hidden = false;
+      renderContentPlan(doc);
+    } catch (_err) {
+      /* content card stays hidden until generated */
+    }
+  }
+
+  async function generateContentPlan() {
+    if (!state.currentRunId) {
+      insightContentStatus.textContent = "请先创建或加载任务";
+      insightContentStatus.className = "inline-status error";
+      return;
+    }
+    if (btnInsightGenerateContent) btnInsightGenerateContent.disabled = true;
+    insightContentStatus.textContent = "正在生成选题与草稿…";
+    insightContentStatus.className = "inline-status loading";
+    try {
+      const doc = await apiFetch(`/api/analysis/runs/${encodeURIComponent(state.currentRunId)}/content/generate`, {
+        method: "POST",
+        body: JSON.stringify({ api_key: getApiKey(), max_topics: 12, draft_topics: 5 }),
+      });
+      if (insightContentCard) insightContentCard.hidden = false;
+      renderContentPlan(doc);
+      insightContentStatus.textContent = `已生成 ${doc.topics?.length || 0} 个选题（${doc.generator || ""}）`;
+      insightContentStatus.className = "inline-status success";
+    } catch (err) {
+      insightContentStatus.textContent = `生成失败：${err.message}`;
+      insightContentStatus.className = "inline-status error";
+    } finally {
+      if (btnInsightGenerateContent) btnInsightGenerateContent.disabled = false;
+    }
+  }
+
+  function exportContentMarkdown() {
+    if (!state.currentRunId) return;
+    window.open(`/api/analysis/runs/${encodeURIComponent(state.currentRunId)}/export/content.md`, "_blank");
   }
 
   async function loadResultsLight(runId) {
@@ -1835,6 +1927,80 @@
     await loadResultsLight(runId);
   }
 
+  const PROFILE_KEY = "insightProfileId";
+  let profilesCache = [];
+
+  async function loadProfiles() {
+    try {
+      const data = await apiFetch("/api/analysis/profiles");
+      profilesCache = data.profiles || [];
+    } catch (err) {
+      profilesCache = [];
+    }
+    if (!insightProfileSelect) return;
+    const current = insightProfileSelect.value || sessionStorage.getItem(PROFILE_KEY) || "kineo";
+    insightProfileSelect.innerHTML = "";
+    for (const p of profilesCache) {
+      const opt = document.createElement("option");
+      opt.value = p.profile_id;
+      opt.textContent = p.is_builtin ? `${p.name}（内置）` : p.name;
+      insightProfileSelect.appendChild(opt);
+    }
+    insightProfileSelect.value = profilesCache.some((p) => p.profile_id === current)
+      ? current
+      : profilesCache[0]?.profile_id || "kineo";
+    sessionStorage.setItem(PROFILE_KEY, insightProfileSelect.value);
+  }
+
+  function currentProfile() {
+    const pid = insightProfileSelect?.value || "kineo";
+    return profilesCache.find((p) => p.profile_id === pid) || null;
+  }
+
+  function openProfileEditor() {
+    const profile = currentProfile();
+    if (!profile) return;
+    insightProfileJson.value = JSON.stringify(profile, null, 2);
+    insightProfileEditor.hidden = false;
+    insightProfileStatus.className = "inline-status";
+    insightProfileStatus.textContent = profile.is_builtin
+      ? "内置档案：可直接改内容，或用「另存为新档案」保存为自定义档案。"
+      : "自定义档案：修改后点「保存档案」。";
+  }
+
+  async function saveProfile({ duplicate = false } = {}) {
+    let payload;
+    try {
+      payload = JSON.parse(insightProfileJson.value);
+    } catch (err) {
+      insightProfileStatus.textContent = `JSON 解析失败：${err.message}`;
+      insightProfileStatus.className = "inline-status error";
+      return;
+    }
+    if (duplicate) {
+      payload.profile_id = `${payload.profile_id || "custom"}-copy-${Date.now().toString().slice(-4)}`;
+      payload.is_builtin = false;
+    }
+    if (!payload.profile_id) {
+      insightProfileStatus.textContent = "profile_id 不能为空";
+      insightProfileStatus.className = "inline-status error";
+      return;
+    }
+    try {
+      const saved = await apiFetch(`/api/analysis/profiles/${encodeURIComponent(payload.profile_id)}`, {
+        method: "PUT",
+        body: JSON.stringify({ profile: payload }),
+      });
+      insightProfileStatus.textContent = `已保存档案：${saved.name || saved.profile_id}`;
+      insightProfileStatus.className = "inline-status success";
+      await loadProfiles();
+      if (insightProfileSelect) insightProfileSelect.value = saved.profile_id;
+    } catch (err) {
+      insightProfileStatus.textContent = `保存失败：${err.message}`;
+      insightProfileStatus.className = "inline-status error";
+    }
+  }
+
   async function createRun({ signal } = {}) {
     const paths = Array.from(state.selectedPaths);
     if (!paths.length) {
@@ -1853,6 +2019,7 @@
         file_paths: paths,
         use_mock: false,
         analysis_limit: getAnalysisLimit(),
+        profile_id: insightProfileSelect?.value || "kineo",
         model: getModelSettings(),
       }),
     });
@@ -2059,11 +2226,22 @@
   btnInsightVerifyModel?.addEventListener("click", verifyModelConnection);
   btnInsightStartRun?.addEventListener("click", startAnalysis);
   btnInsightClusterThemes?.addEventListener("click", clusterThemes);
+  btnInsightGenerateContent?.addEventListener("click", generateContentPlan);
+  btnInsightExportContent?.addEventListener("click", exportContentMarkdown);
   btnInsightCancelClusterThemes?.addEventListener("click", cancelThemeCluster);
   insightRunHistory?.addEventListener("change", (event) => {
     const runId = event.target.value;
     if (runId) selectRunFromHistory(runId);
   });
+  insightProfileSelect?.addEventListener("change", (event) => {
+    sessionStorage.setItem(PROFILE_KEY, event.target.value);
+  });
+  btnInsightEditProfile?.addEventListener("click", openProfileEditor);
+  btnInsightCloseProfile?.addEventListener("click", () => {
+    if (insightProfileEditor) insightProfileEditor.hidden = true;
+  });
+  btnInsightSaveProfile?.addEventListener("click", () => saveProfile());
+  btnInsightDuplicateProfile?.addEventListener("click", () => saveProfile({ duplicate: true }));
   insightApiKey?.addEventListener("change", persistApiKey);
   insightSourceSearch?.addEventListener("input", (event) => {
     state.searchQuery = event.target.value || "";
@@ -2110,6 +2288,7 @@
   btnInsightStopRun?.addEventListener("click", stopAnalyze);
 
   loadStoredApiKey();
+  loadProfiles();
   loadRunHistory().then(() => {
     const savedRunId = sessionStorage.getItem(RUN_ID_STORAGE);
     if (savedRunId) selectRunFromHistory(savedRunId);
