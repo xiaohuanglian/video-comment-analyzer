@@ -139,6 +139,9 @@ class CrawlerManager:
                         **os.environ,
                         "PYTHONUNBUFFERED": "1",
                         "VC_CRAWLER_COOKIES": config.cookies or "",
+                        # Web UI always auto-launches its own Chrome; do NOT make the
+                        # crawler subprocess wait for a manually-opened browser on 9222.
+                        "CDP_CONNECT_EXISTING": "0",
                     }
                 )
 
