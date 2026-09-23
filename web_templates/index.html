@@ -358,6 +358,7 @@
             <textarea id="insightProfileJson" rows="12" spellcheck="false"></textarea>
           </label>
           <div class="action-row">
+            <button class="btn ghost sm" type="button" id="btnInsightSuggestProfile">AI 根据评论生成档案</button>
             <button class="btn primary sm" type="button" id="btnInsightSaveProfile">保存档案</button>
             <button class="btn secondary sm" type="button" id="btnInsightDuplicateProfile">另存为新档案</button>
             <button class="btn ghost sm" type="button" id="btnInsightCloseProfile">关闭</button>
@@ -518,15 +519,8 @@
         <div>
           <p class="eyebrow">评论区回复</p>
           <h2>找出值得回复的人，生成针对性回复</h2>
-          <p>本板块<strong>独立运作</strong>：只读取前两板块已产出的分析任务（无需重新上传 CSV）。流程为<strong>人工确认 → AI 生成 → 人工确认 → 受控回复</strong>：① 算法筛选值得回复的用户 → ② 你勾选确认 → ③ AI 按每个人各自的意图生成回复内容 → ④ 你逐条审核通过 → ⑤ 点击「开始回复」，按设定的<strong>最小间隔、每日上限与允许时段</strong>受控发送，可随时停止。任何环节都需你手动点击开始。</p>
+          <p>筛选用户 → 你确认 → AI 生成回复 → 你审核 → 受控发送。所有 AI 环节都需手动开始，只发送你审核通过的内容。</p>
         </div>
-        <dl class="outreach-flow-legend">
-          <div><dt>① 筛选对象</dt><dd><strong>纯算法</strong>（关键词匹配 + 评分合并），不用大模型</dd></div>
-          <div><dt>② 人工确认</dt><dd>你勾选确认要回复的用户后才进入下一步</dd></div>
-          <div><dt>③ 生成内容</dt><dd><strong>需要大模型</strong>（API Key 可在本板块填写），按用户意图逐条生成</dd></div>
-          <div><dt>④ 人工确认</dt><dd>逐条审核通过后才进入发送队列</dd></div>
-          <div><dt>⑤ 开始回复</dt><dd>受频率与时段控制，仅发送你审核通过的内容，可随时停止</dd></div>
-        </dl>
       </div>
 
       <article class="card flow-card">
@@ -534,7 +528,7 @@
           <div class="step-number">A</div>
           <div class="step-header-copy">
             <h3>关联分析任务</h3>
-            <p class="hint">从已有分析任务中选择；读取源 CSV 同目录 <code>.insight/</code> 中的结果。与第二板块无强制同步，可单独选择任务。</p>
+            <p class="hint">选择前两板块已产出的分析任务（无需重新上传 CSV）。</p>
           </div>
         </div>
         <label class="setting-field">
@@ -555,7 +549,7 @@
           <div class="step-number">B</div>
           <div class="step-header-copy">
             <h3>目标人群与关注方向</h3>
-            <p class="hint">仅在本板块填写；用于算法筛选值得回复的用户（不需大模型）。保存后点击「筛选回复对象」生效。可留空表示不限定。</p>
+            <p class="hint">可选。用于筛选值得回复的用户（纯算法，不需大模型）。留空表示不限定。</p>
           </div>
         </div>
         <label class="setting-field outreach-research-targets-field">
@@ -570,7 +564,7 @@
           <div class="step-number">C</div>
           <div class="step-header-copy">
             <h3>值得回复的用户</h3>
-            <p class="hint">按用户合并，优先展示符合目标人群的对象；评分仅供参考，不代表付费意愿。勾选后点击「生成回复内容」，AI 会按每个人各自的意图逐条生成（不复用模板）。生成后请逐条人工审核。</p>
+            <p class="hint">勾选确认要回复的用户，再点「生成回复内容」。评分仅供参考。</p>
           </div>
         </div>
         <div class="action-row outreach-candidate-actions">
@@ -616,7 +610,7 @@
         <label class="setting-field outreach-template-field">
           <span>回复参考话术（仅作风格参考，AI 会按每个人的评论单独生成）</span>
           <textarea id="outreachTemplate" rows="5" placeholder="默认会针对对方评论里的具体问题给出做法，必要时提一个澄清问题；不推销、不留联系方式"></textarea>
-          <span class="hint">回复是公开评论，必须真正帮到对方：针对其原话作答、给具体信息，不推销、不导流、不做疗效/收益承诺。生成结果需<strong>人工逐条审核通过</strong>后才会进入受控发送队列。</span>
+          <span class="hint">公开回复要真正帮到对方：针对原话作答，不推销、不留联系方式。审核通过后才会发送。</span>
         </label>
         <p class="inline-status" id="outreachCandidatesStatus"></p>
         <div id="outreachCandidatesPanel" class="outreach-candidates-panel">
@@ -630,7 +624,7 @@
           <div class="step-number">D</div>
           <div class="step-header-copy">
             <h3>开始回复（受控）</h3>
-            <p class="hint">只有你在上一步<strong>审核通过</strong>的回复才会被发送。发送受最小间隔、随机抖动、每日上限与允许时段控制，可随时停止。未通过审核或平台不支持自动发送的条目不会被发送。</p>
+            <p class="hint">只发送你审核通过的回复；受间隔、每日上限与时段控制，可随时停止。</p>
           </div>
         </div>
         <div class="outreach-reply-controls">

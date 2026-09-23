@@ -28,6 +28,7 @@
   const btnInsightSaveProfile = $("btnInsightSaveProfile");
   const btnInsightDuplicateProfile = $("btnInsightDuplicateProfile");
   const btnInsightCloseProfile = $("btnInsightCloseProfile");
+  const btnInsightSuggestProfile = $("btnInsightSuggestProfile");
   const insightProfileStatus = $("insightProfileStatus");
   const insightBaseUrl = $("insightBaseUrl");
   const insightModelName = $("insightModelName");
@@ -2065,6 +2066,43 @@
       : "自定义档案：修改后点「保存档案」。";
   }
 
+  async function suggestProfileFromComments() {
+    if (!state.currentRunId) {
+      insightProfileStatus.textContent = "请先在左侧勾选 CSV 并创建任务（需要评论样本）";
+      insightProfileStatus.className = "inline-status error";
+      return;
+    }
+    const apiKey = getApiKey();
+    if (!apiKey) {
+      insightProfileStatus.textContent = "生成档案需要 API Key（先在模型设置里填写）";
+      insightProfileStatus.className = "inline-status error";
+      return;
+    }
+    if (btnInsightSuggestProfile) btnInsightSuggestProfile.disabled = true;
+    insightProfileStatus.textContent = "正在根据评论生成档案…";
+    insightProfileStatus.className = "inline-status loading";
+    try {
+      const data = await apiFetch("/api/analysis/profiles/suggest", {
+        method: "POST",
+        body: JSON.stringify({
+          run_id: state.currentRunId,
+          api_key: apiKey,
+          model: getModelSettings(),
+        }),
+      });
+      const profile = data.profile || {};
+      if (!profile.profile_id) profile.profile_id = `custom-${Date.now().toString().slice(-4)}`;
+      insightProfileJson.value = JSON.stringify(profile, null, 2);
+      insightProfileStatus.textContent = "已生成建议档案，请检查后点「保存档案」（或「另存为新档案」）。";
+      insightProfileStatus.className = "inline-status success";
+    } catch (err) {
+      insightProfileStatus.textContent = `生成失败：${err.message}`;
+      insightProfileStatus.className = "inline-status error";
+    } finally {
+      if (btnInsightSuggestProfile) btnInsightSuggestProfile.disabled = false;
+    }
+  }
+
   async function saveProfile({ duplicate = false } = {}) {
     let payload;
     try {
@@ -2338,6 +2376,7 @@
     if (insightProfileEditor) insightProfileEditor.hidden = true;
   });
   btnInsightSaveProfile?.addEventListener("click", () => saveProfile());
+  btnInsightSuggestProfile?.addEventListener("click", suggestProfileFromComments);
   btnInsightDuplicateProfile?.addEventListener("click", () => saveProfile({ duplicate: true }));
   insightApiKey?.addEventListener("change", persistApiKey);
   insightSourceSearch?.addEventListener("input", (event) => {

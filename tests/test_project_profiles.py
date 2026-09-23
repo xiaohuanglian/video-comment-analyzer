@@ -91,3 +91,19 @@ def test_report_noise_markers_are_profile_scoped():
     custom = pp.ProjectProfile(profile_id="x", name="x", noise_markers=["广告"])
     assert _is_reportable_theme(noise, custom.noise_markers) is True
     assert len(_reportable_themes([noise], custom.noise_markers)) == 1
+
+def test_suggest_profile_normalizes_and_validates():
+    from api.services.insight.profile_suggestion import suggest_profile, validate_suggested_profile
+
+    data = suggest_profile(
+        ["怎么学 AI", "提示词总是写不好", "有没有入门教程"],
+        model_name="deepseek-v4-flash",
+        base_url="https://api.deepseek.com",
+        use_mock=True,
+    )
+    profile = validate_suggested_profile(data)
+    assert profile.name
+    assert profile.hypotheses["H1"]
+    assert profile.hypothesis_short["H3"]
+    assert profile.decision_keywords
+    assert profile.is_builtin is False
