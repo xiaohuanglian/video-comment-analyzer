@@ -10,6 +10,7 @@ from playwright.async_api import BrowserContext
 from base.base_crawler import AbstractApiClient
 from proxy.proxy_mixin import ProxyRefreshMixin
 from tools import utils
+from tools.crawl_pacing import CrawlPacer
 from tools.httpx_util import make_async_client
 from var import request_keyword_var
 
@@ -35,6 +36,7 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
     ):
         self.proxy = proxy
         self.timeout = timeout
+        self._pacer = CrawlPacer(platform="dy")
         self.headers = headers
         self._host = "https://www.douyin.com"
         self.cookie_urls = [
@@ -264,7 +266,7 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
             if callback:  # If there is a callback function, execute the callback function
                 await callback(aweme_id, comments)
 
-            await asyncio.sleep(crawl_interval)
+            await self._pacer.sleep("after aweme comment page")
             if not is_fetch_sub_comments:
                 continue
             # Get secondary reviews
@@ -287,7 +289,7 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
                         result.extend(sub_comments)
                         if callback:  # If there is a callback function, execute the callback function
                             await callback(aweme_id, sub_comments)
-                        await asyncio.sleep(crawl_interval)
+                        await self._pacer.sleep("after sub-comment page")
         return result
 
     async def get_user_info(self, sec_user_id: str):

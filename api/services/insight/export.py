@@ -594,8 +594,8 @@ def build_report_markdown(
             f"| 已行动用户 | {summary.get('trained_users', 0)} | 有 tried / continued 证据 |",
             f"| 可定位主页 | {summary.get('contactable_homepage_count', 0)} | 可推导 B 站用户空间链接 |",
             f"| 感谢信号 | {summary.get('gratitude_signal_count', 0)} | 含 gratitude 标签 |",
-            f"| 需个性化判断 | {summary.get('personalized_needed_count', 0)} | 单向视频不足 |",
-            f"| 需实时观察 | {summary.get('realtime_needed_count', 0)} | 需实时/个性化反馈 |",
+            f"| 需结合个人情况 | {summary.get('personalized_needed_count', 0)} | 一次回复难以解决 |",
+            f"| 需看到实际操作 | {summary.get('realtime_needed_count', 0)} | 需实时/个性化反馈 |",
             f"| 高产品适配 | {summary.get('product_fit_high_count', 0)} | product_fit = high |",
             f"| 高优先级潜在用户 | {summary.get('high_priority_user_count', 0)} | 用户级，综合评分 ≥ 7 |",
             f"| 高优先级候选评论 | {summary.get('high_priority_candidate_comment_count', 0)} | 评论级，供交叉核对 |",
@@ -616,7 +616,7 @@ def build_report_markdown(
     for key, info in (summary.get("signal_coverage") or {}).items():
         lines.append(f"| {label_signal(key)} | {info.get('count', 0)} | {info.get('coverage_pct', 0)}% |")
 
-    lines.extend(["", "## 单向视频关系", "", "| 关系 | 条数 | 覆盖率 |", "| --- | ---: | ---: |"])
+    lines.extend(["", "## 一次回复能解决吗", "", "| 情况 | 条数 | 覆盖率 |", "| --- | ---: | ---: |"])
     for key, info in (summary.get("single_video_stats") or {}).items():
         if info.get("count", 0) <= 0:
             continue

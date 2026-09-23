@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .field_mapping import resolve_source_links
+from .labels import SINGLE_VIDEO_LABELS
 from .prompts import HYPOTHESES
 from .user_identity import user_key
 
@@ -21,13 +22,7 @@ VALID_INTENTS = {
     "other_valid",
 }
 
-SINGLE_VIDEO_LABELS = {
-    "video_sufficient": "视频本身足够",
-    "one_reply_sufficient": "一次回复即可",
-    "personalized_judgment_needed": "需个性化判断",
-    "realtime_observation_needed": "需实时观察",
-    "unclear": "证据不足，无法判断",
-}
+# SINGLE_VIDEO_LABELS is imported from .labels (single source of truth).
 
 HYPOTHESIS_RELATION_LABELS = {
     "supports": "支持",

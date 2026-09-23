@@ -1827,7 +1827,7 @@
       <div class="insight-summary-grid">
         <div class="insight-summary-col">
           <div class="insight-summary-card"><h4>评论意图分布</h4><ul>${intentHtml || "<li>—</li>"}</ul></div>
-          <div class="insight-summary-card"><h4>一条回复够不够</h4><ul>${videoHtml || "<li>—</li>"}</ul></div>
+          <div class="insight-summary-card"><h4>一次回复能解决吗</h4><ul>${videoHtml || "<li>—</li>"}</ul></div>
         </div>
         <div class="insight-summary-col">
           <div class="insight-summary-card"><h4>评论中出现的信号</h4><ul class="insight-signal-list">${signalHtml || "<li>—</li>"}</ul></div>
