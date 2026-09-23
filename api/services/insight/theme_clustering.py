@@ -35,8 +35,11 @@ MAX_SAMPLE_QUOTES = 2
 LLM_RETRY_ATTEMPTS = 3
 # Round1 historically emits ~2.5k–4k completion tokens per 40-signal batch when
 # many included_signal_ids are returned. A tight cap truncates JSON mid-string.
-ROUND1_MAX_TOKENS = 6000
-ROUND2_MAX_TOKENS = 4000
+ROUND1_MAX_TOKENS = 8000
+ROUND2_MAX_TOKENS = 8000
+MAX_TOKENS_CEILING = 16000
+# Below this batch size splitting further makes no sense; surface the error.
+MIN_SPLIT_BATCH = 3
 ROUND1_MAX_WORKERS = 2
 
 
@@ -283,15 +286,20 @@ def _llm_json_call(
             usage = parse_usage(getattr(completion, "usage", None))
             choice = completion.choices[0]
             finish_reason = str(getattr(choice, "finish_reason", "") or "")
-            raw = choice.message.content or "{}"
+            raw = choice.message.content or ""
             if finish_reason == "length":
-                raise json.JSONDecodeError("output truncated by max_tokens", raw, 0)
-            return schema_model.model_validate(json.loads(raw)), usage
+                # Some providers report "length" even when the JSON is complete;
+                # accept it when it still parses.
+                try:
+                    return schema_model.model_validate(json.loads(raw)), usage
+                except Exception:
+                    raise json.JSONDecodeError("output truncated by max_tokens", raw or "{}", 0)
+            return schema_model.model_validate(json.loads(raw or "{}")), usage
         except Exception as exc:  # API, JSON and schema failures are all retryable once.
             last_error = exc
             if attempt + 1 < LLM_RETRY_ATTEMPTS:
                 if _is_truncated_json_error(exc, raw, finish_reason):
-                    token_budget = min(token_budget * 2, 12000)
+                    token_budget = min(token_budget * 2, MAX_TOKENS_CEILING)
                 time.sleep(0.6 * (2**attempt))
     raise RuntimeError(f"主题模型调用失败，已重试 {LLM_RETRY_ATTEMPTS} 次：{last_error}")
 
@@ -314,7 +322,7 @@ def _cluster_round1_batch(
             max_tokens=max_tokens,
         )
     except RuntimeError as exc:
-        if len(batch) <= 8 or not _is_truncated_json_error(exc):
+        if len(batch) <= MIN_SPLIT_BATCH or not _is_truncated_json_error(exc):
             raise
         mid = max(1, len(batch) // 2)
         left, left_usage = _cluster_round1_batch(
@@ -415,6 +423,64 @@ def _cluster_round1_llm(
     return all_candidates, prompt_tokens, completion_tokens, cache_hits
 
 
+def _merge_usage(left_usage, right_usage):
+    return type(left_usage)(
+        prompt_tokens=left_usage.prompt_tokens + right_usage.prompt_tokens,
+        completion_tokens=left_usage.completion_tokens + right_usage.completion_tokens,
+        prompt_cache_hit_tokens=(
+            left_usage.prompt_cache_hit_tokens + right_usage.prompt_cache_hit_tokens
+        ),
+        prompt_cache_miss_tokens=(
+            left_usage.prompt_cache_miss_tokens + right_usage.prompt_cache_miss_tokens
+        ),
+    )
+
+
+def _cluster_round2_batch(
+    client,
+    config: RunConfig,
+    candidate_by_id: Dict[str, CandidateThemeLLM],
+    candidate_ids: List[str],
+    *,
+    max_tokens: int = ROUND2_MAX_TOKENS,
+):
+    """Call Round2 for a set of candidates; split on truncated JSON."""
+    payload = [
+        {
+            "candidate_id": candidate_id,
+            "theme_name": candidate_by_id[candidate_id].theme_name,
+            "theme_type": candidate_by_id[candidate_id].theme_type,
+            "definition": candidate_by_id[candidate_id].definition,
+            "signal_count": len(candidate_by_id[candidate_id].included_signal_ids),
+            "relation_to_existing_hypotheses": candidate_by_id[
+                candidate_id
+            ].relation_to_existing_hypotheses,
+        }
+        for candidate_id in candidate_ids
+    ]
+    try:
+        return _llm_json_call(
+            client,
+            model=config.model_name,
+            system=ROUND2_SYSTEM,
+            user=build_round2_user_message(payload),
+            schema_model=Round2ResponseLLM,
+            max_tokens=max_tokens,
+        )
+    except RuntimeError as exc:
+        if len(candidate_ids) <= MIN_SPLIT_BATCH or not _is_truncated_json_error(exc):
+            raise
+        mid = max(1, len(candidate_ids) // 2)
+        left, left_usage = _cluster_round2_batch(
+            client, config, candidate_by_id, candidate_ids[:mid], max_tokens=max_tokens
+        )
+        right, right_usage = _cluster_round2_batch(
+            client, config, candidate_by_id, candidate_ids[mid:], max_tokens=max_tokens
+        )
+        merged = Round2ResponseLLM(themes=list(left.themes) + list(right.themes))
+        return merged, _merge_usage(left_usage, right_usage)
+
+
 def _cluster_round2_llm(
     client,
     config: RunConfig,
@@ -428,24 +494,8 @@ def _cluster_round2_llm(
     candidate_by_id = {
         f"c{index:04d}": candidate for index, candidate in enumerate(candidates, start=1)
     }
-    payload = [
-        {
-            "candidate_id": candidate_id,
-            "theme_name": candidate.theme_name,
-            "theme_type": candidate.theme_type,
-            "definition": candidate.definition,
-            "signal_count": len(candidate.included_signal_ids),
-            "relation_to_existing_hypotheses": candidate.relation_to_existing_hypotheses,
-        }
-        for candidate_id, candidate in candidate_by_id.items()
-    ]
-    parsed, usage = _llm_json_call(
-        client,
-        model=config.model_name,
-        system=ROUND2_SYSTEM,
-        user=build_round2_user_message(payload),
-        schema_model=Round2ResponseLLM,
-        max_tokens=ROUND2_MAX_TOKENS,
+    parsed, usage = _cluster_round2_batch(
+        client, config, candidate_by_id, list(candidate_by_id.keys())
     )
     themes: List[ThemeRecord] = []
     for index, item in enumerate(parsed.themes, start=1):

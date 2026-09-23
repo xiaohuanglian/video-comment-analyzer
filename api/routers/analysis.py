@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field
 
 from api.services.insight.analyzer import build_summary, reconcile_stale_progress, run_analysis_batch
 from api.services.insight.export import (
-    auto_export_candidates_outreach,
     build_candidates_csv,
     build_outreach_csv,
     build_report_json,
@@ -207,6 +206,11 @@ class VerifyModelRequest(BaseModel):
     model: ModelSettings = Field(default_factory=ModelSettings)
 
 
+class InsightNarrativeRequest(BaseModel):
+    api_key: Optional[str] = None
+    use_mock: Optional[bool] = None
+
+
 @router.get("/sources")
 async def get_sources(grouped: bool = True) -> Dict[str, Any]:
     if grouped:
@@ -323,9 +327,24 @@ async def post_verify_model(body: VerifyModelRequest) -> Dict[str, Any]:
         platform="bilibili",
     )
     try:
-        cards, usage = call_evidence_batch_llm(
-            [record], config, body.api_key.strip()
-        )
+        # The model occasionally returns malformed JSON on the first try; retry once
+        # so a transient 400 is not shown to the user as a connectivity failure.
+        last_exc: Optional[Exception] = None
+        cards = usage = None
+        for attempt in range(2):
+            try:
+                cards, usage = call_evidence_batch_llm(
+                    [record], config, body.api_key.strip()
+                )
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if attempt == 0:
+                    import time as _time
+
+                    _time.sleep(0.6)
+        if cards is None or usage is None:
+            raise last_exc or RuntimeError("模型调用失败")
         card = cards[record.internal_record_id]
         analysis = outreach_analysis_from_card(card)
         cost = estimate_cost(
@@ -356,6 +375,53 @@ async def post_verify_model(body: VerifyModelRequest) -> Dict[str, Any]:
         if "401" in detail or "authentication" in detail.lower() or "api key" in detail.lower():
             raise HTTPException(status_code=401, detail="API Key 无效或未授权，请检查 DeepSeek 控制台") from exc
         raise HTTPException(status_code=400, detail=detail[:300]) from exc
+
+
+@router.get("/runs/{run_id}/insight-narrative")
+async def get_insight_narrative(run_id: str) -> Dict[str, Any]:
+    """Return a previously generated plain-language readout, if any."""
+    import json
+
+    from api.services.insight.storage import _run_dir
+
+    try:
+        load_config(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="任务不存在") from exc
+    path = _run_dir(run_id) / "insight_narrative.json"
+    if not path.exists():
+        return {"text": "", "generated": False}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"text": "", "generated": False}
+    data["generated"] = True
+    return data
+
+
+@router.post("/runs/{run_id}/insight-narrative")
+async def post_insight_narrative(run_id: str, body: InsightNarrativeRequest) -> Dict[str, Any]:
+    """Generate a short natural-language readout of this run's statistics."""
+    import json
+
+    from api.services.insight.insight_narrative import build_insight_narrative
+    from api.services.insight.storage import _run_dir
+
+    try:
+        config = load_config(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="任务不存在") from exc
+    use_mock = config.use_mock if body.use_mock is None else body.use_mock
+    if not use_mock and not (body.api_key or "").strip():
+        raise HTTPException(status_code=400, detail="生成中文解读需要 API Key")
+    result = build_insight_narrative(run_id, api_key=body.api_key or "", use_mock=use_mock)
+    try:
+        (_run_dir(run_id) / "insight_narrative.json").write_text(
+            json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except OSError:
+        pass
+    return {**result, "generated": True}
 
 
 @router.post("/runs")
@@ -1087,12 +1153,10 @@ async def post_build_candidates(run_id: str) -> Dict[str, Any]:
     doc = build_candidates(results, research_targets=config.research_targets)
     save_candidates(run_id, doc)
     summary = build_summary(run_id)
-    try:
-        export_paths = auto_export_candidates_outreach(run_id)
-    except OSError:
-        export_paths = {}
+    # Do NOT auto-export here: the user must confirm the筛选 result on the web first.
+    # Export is an explicit action via the "导出用户 CSV" button.
     payload = doc.model_dump()
-    payload["export_paths"] = {**(summary.get("export_paths") or {}), **export_paths}
+    payload["export_paths"] = summary.get("export_paths") or {}
     return payload
 
 
@@ -1153,12 +1217,9 @@ async def post_generate_outreach(run_id: str, body: OutreachGenerateRequest) -> 
     for key in body.user_keys:
         merge_candidate_updates(candidates_doc, user_key=key, contact_status="preparing")
     save_candidates(run_id, candidates_doc)
-    try:
-        export_paths = auto_export_candidates_outreach(run_id)
-    except OSError:
-        export_paths = {}
+    # Export stays manual: the generated replies must be reviewed first.
     payload = doc.model_dump()
-    payload["export_paths"] = export_paths
+    payload["export_paths"] = {}
     return payload
 
 

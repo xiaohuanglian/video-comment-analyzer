@@ -2352,6 +2352,24 @@ body {
   width: 100%;
 }
 
+.insight-narrative-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 10px 0 4px;
+}
+
+.insight-narrative {
+  margin: 6px 0 12px;
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-left: 3px solid #6366f1;
+  border-radius: 8px;
+  background: #f8fafc;
+  line-height: 1.7;
+}
+
 .insight-pager {
   display: flex;
   flex-wrap: wrap;

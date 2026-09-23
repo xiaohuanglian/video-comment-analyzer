@@ -76,10 +76,15 @@
   const insightContentStatus = $("insightContentStatus");
   const btnInsightGenerateContent = $("btnInsightGenerateContent");
   const btnInsightExportContent = $("btnInsightExportContent");
+  const btnInsightNarrative = $("btnInsightNarrative");
+  const insightNarrative = $("insightNarrative");
   const insightFilterKeyword = $("insightFilterKeyword");
   const insightFilterIntent = $("insightFilterIntent");
   const insightFilterVideo = $("insightFilterVideo");
   const insightFilterFit = $("insightFilterFit");
+  const insightFilterRecordStatus = $("insightFilterRecordStatus");
+  const insightFilterExpression = $("insightFilterExpression");
+  const insightFilterEvidenceType = $("insightFilterEvidenceType");
   const insightFilterHypothesis = $("insightFilterHypothesis");
   const insightFilterStatus = $("insightFilterStatus");
   const btnInsightClearFilters = $("btnInsightClearFilters");
@@ -147,6 +152,7 @@
     themesDoc: null,
     themeClusterRunning: false,
     themeClusterStatus: "idle",
+    narrativeRunId: null,
     filters: {
       keyword: "",
       intent: "",
@@ -156,6 +162,9 @@
       hypothesis: "",
       signal: "",
       themeRecordIds: null,
+      record_status: "",
+      expression: "",
+      evidence_type: "",
     },
   };
 
@@ -1086,6 +1095,57 @@
   function renderSummary(summary) {
     renderInsightDashboard(summary);
     if (summary?.total_analyzed) populateFilterSelects(summary);
+    if (state.currentRunId && state.narrativeRunId !== state.currentRunId) {
+      state.narrativeRunId = state.currentRunId;
+      loadInsightNarrative(state.currentRunId);
+    }
+  }
+
+  async function loadInsightNarrative(runId) {
+    if (!insightNarrative) return;
+    try {
+      const data = await apiFetch(`/api/analysis/runs/${encodeURIComponent(runId)}/insight-narrative`);
+      if (data?.generated && data.text) {
+        insightNarrative.hidden = false;
+        insightNarrative.innerHTML = `<p>${escapeHtml(data.text)}</p>`;
+      } else {
+        insightNarrative.hidden = true;
+        insightNarrative.innerHTML = "";
+      }
+    } catch (_err) {
+      insightNarrative.hidden = true;
+    }
+  }
+
+  async function generateInsightNarrative() {
+    if (!state.currentRunId) return;
+    const apiKey = getApiKey();
+    if (!apiKey) {
+      if (insightNarrative) {
+        insightNarrative.hidden = false;
+        insightNarrative.innerHTML =
+          '<p class="inline-status error">请先填写 API Key（无 Key 时可用 mock 任务生成模板解读）。</p>';
+      }
+      return;
+    }
+    if (btnInsightNarrative) btnInsightNarrative.disabled = true;
+    if (insightNarrative) {
+      insightNarrative.hidden = false;
+      insightNarrative.innerHTML = '<p class="hint">正在生成解读…</p>';
+    }
+    try {
+      const data = await apiFetch(
+        `/api/analysis/runs/${encodeURIComponent(state.currentRunId)}/insight-narrative`,
+        { method: "POST", body: JSON.stringify({ api_key: apiKey }) }
+      );
+      if (insightNarrative) insightNarrative.innerHTML = `<p>${escapeHtml(data.text || "")}</p>`;
+    } catch (err) {
+      if (insightNarrative) {
+        insightNarrative.innerHTML = `<p class="inline-status error">生成失败：${escapeHtml(err.message)}</p>`;
+      }
+    } finally {
+      if (btnInsightNarrative) btnInsightNarrative.disabled = false;
+    }
   }
 
   function metricCard(label, value, filterKey, filterValue) {
@@ -1113,17 +1173,17 @@
         ${metricCard(analyzedLabel, summary.total_analyzed)}
         ${metricCard("有效评论", summary.valid_comments, "intent_valid", "1")}
         ${metricCard("独立用户", summary.unique_users)}
-        ${metricCard("已行动用户", summary.trained_users)}
-        ${metricCard("感谢信号", summary.gratitude_signal_count, "signal", "gratitude")}
-        ${metricCard("签到", summary.check_in_count, "intent", "check_in")}
-        ${metricCard("结果反馈", summary.result_feedback_count, "intent", "result_feedback")}
-        ${metricCard("提问", summary.question_count, "intent", "question")}
-        ${metricCard("具体困难", summary.difficulty_count, "intent", "difficulty_help_request")}
-        ${metricCard("需个性化判断", summary.personalized_needed_count, "video", "personalized_judgment_needed")}
-        ${metricCard("需实时观察", summary.realtime_needed_count, "video", "realtime_observation_needed")}
-        ${metricCard("高产品适配", summary.product_fit_high_count, "fit", "high")}
-        ${metricCard("匹配目标人群", summary.research_matched_user_count ?? summary.high_priority_user_count ?? 0)}
-        ${metricCard("可定位主页", summary.contactable_homepage_count)}
+        ${metricCard("有过行动的用户", summary.trained_users)}
+        ${metricCard("表达感谢", summary.gratitude_signal_count, "signal", "gratitude")}
+        ${metricCard("签到打卡", summary.check_in_count, "intent", "check_in")}
+        ${metricCard("反馈使用结果", summary.result_feedback_count, "intent", "result_feedback")}
+        ${metricCard("提出疑问", summary.question_count, "intent", "question")}
+        ${metricCard("遇到具体困难", summary.difficulty_count, "intent", "difficulty_help_request")}
+        ${metricCard("需要针对性回答", summary.personalized_needed_count, "video", "personalized_judgment_needed")}
+        ${metricCard("需要看到实际过程", summary.realtime_needed_count, "video", "realtime_observation_needed")}
+        ${metricCard("与产品/内容高度契合", summary.product_fit_high_count, "fit", "high")}
+        ${metricCard("符合目标人群", summary.research_matched_user_count ?? summary.high_priority_user_count ?? 0)}
+        ${metricCard("能找到主页", summary.contactable_homepage_count)}
       </div>`;
   }
 
@@ -1490,7 +1550,11 @@
     const params = new URLSearchParams();
     params.set("page", String(page));
     params.set("page_size", String(state.evidencePage.pageSize || 50));
-    if (state.filters.keyword) params.set("keyword", state.filters.keyword);
+    const f = state.filters;
+    if (f.keyword) params.set("keyword", f.keyword);
+    if (f.record_status) params.set("record_status", f.record_status);
+    if (f.expression) params.set("primary_expression", f.expression);
+    if (f.evidence_type) params.set("evidence_type", f.evidence_type);
     const data = await apiFetch(
       `/api/analysis/runs/${encodeURIComponent(state.currentRunId)}/evidence/items?${params.toString()}`
     );
@@ -1640,13 +1704,17 @@
     try {
       const doc = await apiFetch(`/api/analysis/runs/${encodeURIComponent(runId)}/content`);
       if (!doc || !doc.topics || !doc.topics.length) {
-        insightContentPlan.innerHTML = "";
+        insightContentPlan.innerHTML =
+          '<p class="hint">还没有选题：完成评论分析后，点「生成内容选题」即可。</p>';
         return;
       }
       insightContentCard.hidden = false;
       renderContentPlan(doc);
     } catch (_err) {
-      /* content card stays hidden until generated */
+      if (insightContentPlan && !insightContentPlan.innerHTML.trim()) {
+        insightContentPlan.innerHTML =
+          '<p class="hint">还没有选题：完成评论分析后，点「生成内容选题」即可。</p>';
+      }
     }
   }
 
@@ -1711,6 +1779,7 @@
     }
     await loadResearchReport(runId);
     state.evidenceMode = true;
+    setupEvidenceFilters();
     await loadEvidencePage(1);
   }
 
@@ -1753,16 +1822,37 @@
       .join("");
 
     insightDashboard.innerHTML = `
-      <p class="hint insight-coverage-note">信息信号为覆盖率统计，同一评论可含多个标签，覆盖率之和可能超过 100%。</p>
+      <p class="hint insight-coverage-note">每条评论可能有多个标签，所以下面的占比加起来可能超过 100%。点击任一项可筛选评论明细。</p>
       <div class="insight-summary-grid">
         <div class="insight-summary-col">
-          <div class="insight-summary-card"><h4>主要沟通目的</h4><ul>${intentHtml || "<li>—</li>"}</ul></div>
-          <div class="insight-summary-card"><h4>单向视频关系</h4><ul>${videoHtml || "<li>—</li>"}</ul></div>
+          <div class="insight-summary-card"><h4>评论意图分布</h4><ul>${intentHtml || "<li>—</li>"}</ul></div>
+          <div class="insight-summary-card"><h4>一条回复够不够</h4><ul>${videoHtml || "<li>—</li>"}</ul></div>
         </div>
         <div class="insight-summary-col">
-          <div class="insight-summary-card"><h4>信息信号覆盖率</h4><ul class="insight-signal-list">${signalHtml || "<li>—</li>"}</ul></div>
+          <div class="insight-summary-card"><h4>评论中出现的信号</h4><ul class="insight-signal-list">${signalHtml || "<li>—</li>"}</ul></div>
         </div>
       </div>`;
+  }
+
+  function setupEvidenceFilters() {
+    const fillOptions = (select, labels, allLabel) => {
+      if (!select) return;
+      select.innerHTML =
+        `<option value="">${allLabel}</option>` +
+        Object.entries(labels)
+          .map(([k, v]) => `<option value="${escapeHtml(k)}">${escapeHtml(v)}</option>`)
+          .join("");
+    };
+    fillOptions(insightFilterRecordStatus, RECORD_STATUS_LABELS, "全部记录状态");
+    fillOptions(insightFilterExpression, EXPRESSION_LABELS, "全部表达");
+    fillOptions(insightFilterEvidenceType, EVIDENCE_TYPE_LABELS, "全部证据类型");
+    [insightFilterIntent, insightFilterVideo, insightFilterFit].forEach((el) => {
+      if (el) el.hidden = true;
+    });
+    [insightFilterRecordStatus, insightFilterExpression, insightFilterEvidenceType].forEach((el) => {
+      if (el) el.hidden = false;
+    });
+    syncFilterControls();
   }
 
   function populateFilterSelects(summary) {
@@ -1804,6 +1894,9 @@
     } else if (key === "signal") state.filters.signal = value;
     else if (key === "video") state.filters.video = value;
     else if (key === "fit") state.filters.fit = value;
+    else if (key === "record_status") state.filters.record_status = value;
+    else if (key === "expression") state.filters.expression = value;
+    else if (key === "evidence_type") state.filters.evidence_type = value;
     else if (key === "hypothesis") state.filters.hypothesis = value;
     syncFilterControls();
     loadResultsPage(1);
@@ -1813,6 +1906,9 @@
     if (insightFilterIntent) insightFilterIntent.value = state.filters.intent;
     if (insightFilterVideo) insightFilterVideo.value = state.filters.video;
     if (insightFilterFit) insightFilterFit.value = state.filters.fit;
+    if (insightFilterRecordStatus) insightFilterRecordStatus.value = state.filters.record_status;
+    if (insightFilterExpression) insightFilterExpression.value = state.filters.expression;
+    if (insightFilterEvidenceType) insightFilterEvidenceType.value = state.filters.evidence_type;
     if (insightFilterHypothesis) insightFilterHypothesis.value = state.filters.hypothesis;
     if (insightFilterKeyword) insightFilterKeyword.value = state.filters.keyword;
   }
@@ -1827,6 +1923,9 @@
       hypothesis: "",
       signal: "",
       themeRecordIds: null,
+      record_status: "",
+      expression: "",
+      evidence_type: "",
     };
     syncFilterControls();
     loadResultsPage(1);
@@ -2276,11 +2375,24 @@
     state.filters.fit = e.target.value;
     loadResultsPage(1);
   });
+  insightFilterRecordStatus?.addEventListener("change", (e) => {
+    state.filters.record_status = e.target.value;
+    loadEvidencePage(1);
+  });
+  insightFilterExpression?.addEventListener("change", (e) => {
+    state.filters.expression = e.target.value;
+    loadEvidencePage(1);
+  });
+  insightFilterEvidenceType?.addEventListener("change", (e) => {
+    state.filters.evidence_type = e.target.value;
+    loadEvidencePage(1);
+  });
   insightFilterHypothesis?.addEventListener("change", (e) => {
     state.filters.hypothesis = e.target.value;
     loadResultsPage(1);
   });
   btnInsightClearFilters?.addEventListener("click", clearFilters);
+  btnInsightNarrative?.addEventListener("click", generateInsightNarrative);
 
   btnInsightRetryFailed?.addEventListener("click", retryFailed);
   btnInsightStopRun?.addEventListener("click", stopAnalyze);

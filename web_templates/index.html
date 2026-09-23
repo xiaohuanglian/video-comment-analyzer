@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>视频评论分析</title>
-  <link rel="stylesheet" href="/static/style.css?v=28" />
+  <link rel="stylesheet" href="/static/style.css?v=29" />
 </head>
 <body>
   <header class="topbar">
@@ -416,6 +416,11 @@
         <div id="insightOverview" class="insight-overview">
           <p class="hint">暂无统计，请先运行分析。</p>
         </div>
+        <div class="insight-narrative-bar">
+          <button class="btn ghost sm" type="button" id="btnInsightNarrative">生成一句话解读</button>
+          <span class="hint">让 AI 把上面的数字写成一段人话（需 API Key）。</span>
+        </div>
+        <div id="insightNarrative" class="insight-narrative" hidden></div>
         <div id="insightContradictions" class="insight-contradictions" hidden></div>
         <div id="insightDashboard" class="insight-dashboard"></div>
       </article>
@@ -455,12 +460,12 @@
         <div id="insightResearchReport" class="insight-research-report"></div>
       </article>
 
-      <article class="card flow-card" id="insightContentCard" hidden>
+      <article class="card flow-card" id="insightContentCard">
         <div class="step-header">
           <div class="step-number">D4</div>
           <div class="step-header-copy">
             <h3>内容选题与生成</h3>
-            <p class="hint">把评论需求转成可发布的内容选题，并让 AI 生成多形态草稿（<strong>需手动点击生成，需人工审核后发布</strong>）。</p>
+            <p class="hint">把评论里反复出现的需求转成可发布的内容选题，并让 AI 写出多形态草稿（<strong>手动点击生成，人工审核后再发布</strong>）。</p>
           </div>
         </div>
         <div class="action-row">
@@ -468,7 +473,9 @@
           <button class="btn secondary sm" type="button" id="btnInsightExportContent">导出 Markdown</button>
         </div>
         <p class="inline-status" id="insightContentStatus"></p>
-        <div id="insightContentPlan" class="insight-content-plan"></div>
+        <div id="insightContentPlan" class="insight-content-plan">
+          <p class="hint">完成评论分析后，点「生成内容选题」即可看到结果（基于代码统计的需求，不依赖开放主题）。</p>
+        </div>
       </article>
 
       <article class="card flow-card">
@@ -476,7 +483,7 @@
           <div class="step-number">E</div>
           <div class="step-header-copy">
             <h3>评论明细</h3>
-            <p class="hint">按目的、信号、视频关系筛选；证据路径任务显示主表达与证据项。</p>
+            <p class="hint">按记录状态、表达类型、证据类型（或目的/信号/视频关系）筛选下方明细。</p>
           </div>
         </div>
         <div class="insight-filter-bar" id="insightFilterBar">
@@ -484,6 +491,9 @@
           <select id="insightFilterIntent"><option value="">全部目的</option></select>
           <select id="insightFilterVideo"><option value="">全部视频关系</option></select>
           <select id="insightFilterFit"><option value="">全部适配度</option></select>
+          <select id="insightFilterRecordStatus" hidden><option value="">全部记录状态</option></select>
+          <select id="insightFilterExpression" hidden><option value="">全部表达</option></select>
+          <select id="insightFilterEvidenceType" hidden><option value="">全部证据类型</option></select>
           <button class="btn ghost sm" type="button" id="btnInsightClearFilters">清除筛选</button>
         </div>
         <p class="inline-status" id="insightFilterStatus"></p>
