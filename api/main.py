@@ -14,7 +14,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from .routers import crawler_router, data_router, websocket_router, bilibili_router, creator_router, analysis_router
 from .services.platform_capabilities import PLATFORM_CAPABILITIES
@@ -107,6 +107,12 @@ async def serve_frontend():
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok"}
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Avoid noisy 404s from browsers requesting a favicon."""
+    return Response(status_code=204)
 
 
 @app.get("/api/env/check")
