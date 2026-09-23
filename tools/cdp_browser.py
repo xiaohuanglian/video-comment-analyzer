@@ -243,6 +243,13 @@ class CDPBrowserManager:
             utils.logger.info(f"[CDPBrowserManager] User data directory: {user_data_dir}")
 
         # Launch browser
+        if user_data_dir:
+            # Self-heal: a previous crashed/killed run can leave a Chrome alive
+            # holding this profile (singleton lock), which makes the new launch
+            # exit immediately and the debug port never open.
+            self.launcher.kill_stale_browsers(user_data_dir)
+            self.launcher.clear_stale_profile_locks(user_data_dir)
+
         self.launcher.browser_process = self.launcher.launch_browser(
             browser_path=browser_path,
             debug_port=self.debug_port,
@@ -254,7 +261,12 @@ class CDPBrowserManager:
         if not self.launcher.wait_for_browser_ready(
             self.debug_port, config.BROWSER_LAUNCH_TIMEOUT
         ):
-            raise RuntimeError(f"Browser failed to start within {config.BROWSER_LAUNCH_TIMEOUT} seconds")
+            raise RuntimeError(
+                f"Browser failed to start within {config.BROWSER_LAUNCH_TIMEOUT} seconds "
+                f"(debug port {self.debug_port}, profile {user_data_dir}). "
+                "A leftover browser may still hold this profile; "
+                "run `pkill -f browser_data/cdp_` then retry."
+            )
 
         # Extra wait for CDP service to fully start
         await asyncio.sleep(1)
