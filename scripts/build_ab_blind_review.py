@@ -607,7 +607,7 @@ def main() -> None:
     parser.add_argument("--evidence-run", default=DEFAULT_EVIDENCE_RUN)
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
-    parser.add_argument("--secret", default="kineo-ab-blind-20260720")
+    parser.add_argument("--secret", default="vca-ab-blind-20260720")
     parser.add_argument("--out-dir", default=str(APP_DIR / "data" / ".insight" / "ab_review"))
     args = parser.parse_args()
     result = build_pack(

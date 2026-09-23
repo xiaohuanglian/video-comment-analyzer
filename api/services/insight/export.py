@@ -857,6 +857,10 @@ def build_outreach_csv(run_id: str) -> bytes:
             "user_key",
             "用户名",
             "联系状态",
+            "审核状态",
+            "发送状态",
+            "发送时间",
+            "发送失败原因",
             "生成草稿",
             "编辑后内容",
             "模型",
@@ -865,13 +869,25 @@ def build_outreach_csv(run_id: str) -> bytes:
             "产品经理备注",
         ]
     )
+    review_labels = {"draft": "待审核", "approved": "已通过", "rejected": "不回复"}
+    send_labels = {
+        "pending": "待发送",
+        "queued": "已入队",
+        "sending": "发送中",
+        "sent": "已发送",
+        "failed": "发送失败",
+        "skipped": "已跳过",
+    }
     for entry in doc.entries:
-        content = entry.edited_content or entry.generated_draft
         writer.writerow(
             [
                 entry.user_key,
                 entry.username,
                 CONTACT_STATUS_LABELS.get(entry.contact_status, entry.contact_status),
+                review_labels.get(entry.review_status, entry.review_status),
+                send_labels.get(entry.send_status, entry.send_status),
+                entry.sent_at,
+                entry.send_error,
                 entry.generated_draft,
                 entry.edited_content,
                 entry.model_name,

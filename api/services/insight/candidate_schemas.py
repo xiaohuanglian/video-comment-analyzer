@@ -32,6 +32,12 @@ CONTACT_STATUS_LABELS = {
 Priority = Literal["high", "medium", "low"]
 ContactabilityLevel = Literal["high", "medium", "low"]
 
+# Human gate on the generated draft: only `approved` entries may be sent.
+ReviewStatus = Literal["draft", "approved", "rejected"]
+# Execution state of a reply once the user starts the controlled reply run.
+SendStatus = Literal["pending", "queued", "sending", "sent", "failed", "skipped"]
+ReplyRunStatus = Literal["idle", "running", "stopping", "stopped", "completed", "failed"]
+
 
 class CandidateComment(BaseModel):
     record_id: str
@@ -88,8 +94,55 @@ class OutreachEntry(BaseModel):
     generated_at: str = ""
     contact_status: ContactStatus = "preparing"
     product_manager_note: str = ""
+    # --- human gate + controlled send -------------------------------------
+    review_status: ReviewStatus = "draft"
+    reviewed_at: str = ""
+    platform: str = ""
+    # Target identifiers resolved from the candidate's source records so a
+    # sender can post the reply without guessing.
+    target_content_id: str = ""  # e.g. bilibili video id / note id
+    target_comment_id: str = ""  # the comment being replied to
+    send_status: SendStatus = "pending"
+    sent_at: str = ""
+    send_error: str = ""
+    attempts: int = 0
+
+    @property
+    def final_content(self) -> str:
+        """The exact text that will be posted (edited draft wins)."""
+        return (self.edited_content or self.generated_draft or "").strip()
+
+
+class ReplyControl(BaseModel):
+    """Frequency / timing guardrails for the controlled reply run."""
+
+    interval_seconds: int = Field(default=90, ge=10, le=86400, description="两条回复之间的最小间隔秒数")
+    jitter_seconds: int = Field(default=20, ge=0, le=3600, description="随机抖动秒数，避免固定节奏")
+    daily_limit: int = Field(default=30, ge=1, le=500, description="单个自然日内最多发送条数")
+    time_window_start: str = Field(default="09:00", description="允许发送的起始时间 HH:MM")
+    time_window_end: str = Field(default="22:00", description="允许发送的结束时间 HH:MM")
+
+    @property
+    def window_minutes(self) -> tuple[int, int]:
+        def _parse(value: str) -> int:
+            try:
+                hh, mm = str(value).split(":", 1)
+                return max(0, min(23, int(hh))) * 60 + max(0, min(59, int(mm)))
+            except (ValueError, AttributeError):
+                return 0
+
+        return _parse(self.time_window_start), _parse(self.time_window_end)
 
 
 class OutreachDocument(BaseModel):
     updated_at: str = ""
     entries: List[OutreachEntry] = Field(default_factory=list)
+    # --- controlled reply run state ---------------------------------------
+    reply_control: ReplyControl = Field(default_factory=ReplyControl)
+    reply_status: ReplyRunStatus = "idle"
+    reply_started_at: str = ""
+    reply_finished_at: str = ""
+    last_reply_at: str = ""
+    reply_message: str = ""
+    replies_sent_today: int = 0
+    replies_today_date: str = ""
