@@ -258,6 +258,13 @@ def get_reply_run(run_id: str) -> Optional[ReplyRun]:
     return _runs.get(run_id)
 
 
+def _prune_dead() -> None:
+    """Drop finished runs so the registry does not grow unbounded."""
+    for rid, run in list(_runs.items()):
+        if not run.is_alive():
+            _runs.pop(rid, None)
+
+
 def is_reply_running(run_id: str) -> bool:
     run = _runs.get(run_id)
     return bool(run and run.is_alive())
@@ -272,6 +279,7 @@ def start_reply_run(
 ) -> bool:
     """Start a run; returns False if one is already active for this run id."""
     with _registry_lock:
+        _prune_dead()
         existing = _runs.get(run_id)
         if existing and existing.is_alive():
             return False

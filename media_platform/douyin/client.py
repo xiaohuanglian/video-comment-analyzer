@@ -253,13 +253,24 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         result = []
         comments_has_more = 1
         comments_cursor = 0
+        empty_pages = 0
         while comments_has_more and len(result) < max_count:
             comments_res = await self.get_aweme_comments(aweme_id, comments_cursor)
             comments_has_more = comments_res.get("has_more", 0)
             comments_cursor = comments_res.get("cursor", 0)
-            comments = comments_res.get("comments", [])
+            comments = comments_res.get("comments") or []
             if not comments:
+                # 风控或翻页卡住时平台可能返回空页：退避重试几次后退出，避免空转打爆接口
+                empty_pages += 1
+                await self._pacer.sleep("empty comment page")
+                if empty_pages >= 3:
+                    utils.logger.warning(
+                        f"[DouYinClient.get_aweme_all_comments] aweme_id={aweme_id} "
+                        f"连续 {empty_pages} 页无评论，停止翻页（可能触发风控或已无更多评论）"
+                    )
+                    break
                 continue
+            empty_pages = 0
             if len(result) + len(comments) > max_count:
                 comments = comments[:max_count - len(result)]
             result.extend(comments)
@@ -277,15 +288,21 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
                     comment_id = comment.get("cid")
                     sub_comments_has_more = 1
                     sub_comments_cursor = 0
+                    empty_sub_pages = 0
 
                     while sub_comments_has_more:
                         sub_comments_res = await self.get_sub_comments(aweme_id, comment_id, sub_comments_cursor)
                         sub_comments_has_more = sub_comments_res.get("has_more", 0)
                         sub_comments_cursor = sub_comments_res.get("cursor", 0)
-                        sub_comments = sub_comments_res.get("comments", [])
+                        sub_comments = sub_comments_res.get("comments") or []
 
                         if not sub_comments:
+                            empty_sub_pages += 1
+                            await self._pacer.sleep("empty sub-comment page")
+                            if empty_sub_pages >= 3:
+                                break
                             continue
+                        empty_sub_pages = 0
                         result.extend(sub_comments)
                         if callback:  # If there is a callback function, execute the callback function
                             await callback(aweme_id, sub_comments)

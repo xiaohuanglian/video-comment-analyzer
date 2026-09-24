@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 from collections import Counter
 
 import aiofiles
@@ -24,8 +25,15 @@ class AsyncWordCloudGenerator:
             jieba.add_word(word)
 
     def load_stop_words(self):
-        with open(self.stop_words_file, 'r', encoding='utf-8') as f:
-            return set(f.read().strip().split('\n'))
+        # docs/ 下的停用词/字体文件是可选资源（不在版本库中）；缺失时降级而不是崩溃。
+        try:
+            with open(self.stop_words_file, 'r', encoding='utf-8') as f:
+                return set(f.read().strip().split('\n'))
+        except (FileNotFoundError, OSError):
+            utils.logger.warning(
+                f"[words] 停用词文件不存在：{self.stop_words_file}，改用空停用词表（词云功能仍可用）"
+            )
+            return set()
 
     async def generate_word_frequency_and_cloud(self, data, save_words_prefix):
         all_text = ' '.join(item['content'] for item in data)
@@ -45,28 +53,36 @@ class AsyncWordCloudGenerator:
         await self.generate_word_cloud(word_freq, save_words_prefix)
 
     async def generate_word_cloud(self, word_freq, save_words_prefix):
+        font_path = config.FONT_PATH
+        if font_path and not os.path.exists(font_path):
+            utils.logger.warning(
+                f"[words] 中文字体文件不存在：{font_path}，跳过词云图片生成"
+                f"（词频 JSON 已生成；如需词云请将中文字体放到该路径）"
+            )
+            return
         await plot_lock.acquire()
-        top_20_word_freq = {word: freq for word, freq in
-                            sorted(word_freq.items(), key=lambda item: item[1], reverse=True)[:20]}
-        wordcloud = WordCloud(
-            font_path=config.FONT_PATH,
-            width=800,
-            height=400,
-            background_color='white',
-            max_words=200,
-            stopwords=self.stop_words,
-            colormap='viridis',
-            contour_color='steelblue',
-            contour_width=1
-        ).generate_from_frequencies(top_20_word_freq)
+        try:
+            top_20_word_freq = {word: freq for word, freq in
+                                sorted(word_freq.items(), key=lambda item: item[1], reverse=True)[:20]}
+            wordcloud = WordCloud(
+                font_path=font_path or None,
+                width=800,
+                height=400,
+                background_color='white',
+                max_words=200,
+                stopwords=self.stop_words,
+                colormap='viridis',
+                contour_color='steelblue',
+                contour_width=1
+            ).generate_from_frequencies(top_20_word_freq)
 
-        # Save word cloud image
-        plt.figure(figsize=(10, 5), facecolor='white')
-        plt.imshow(wordcloud, interpolation='bilinear')
+            # Save word cloud image
+            plt.figure(figsize=(10, 5), facecolor='white')
+            plt.imshow(wordcloud, interpolation='bilinear')
 
-        plt.axis('off')
-        plt.tight_layout(pad=0)
-        plt.savefig(f"{save_words_prefix}_word_cloud.png", format='png', dpi=300)
-        plt.close()
-
-        plot_lock.release()
+            plt.axis('off')
+            plt.tight_layout(pad=0)
+            plt.savefig(f"{save_words_prefix}_word_cloud.png", format='png', dpi=300)
+            plt.close()
+        finally:
+            plot_lock.release()
