@@ -109,7 +109,7 @@ def test_auto_export_writes_beside_source_csv(tmp_path, monkeypatch):
     report = report_file.read_text(encoding="utf-8")
     assert "评论洞察决策报告" in report
     assert "主要沟通目的" in report
-    assert "单向视频关系" in report
+    assert "一次回复能解决吗" in report
     assert "访谈与实验" not in report
     assert "访谈结果按首页" not in report
     assert "## 当前优先行动" in report

@@ -1884,7 +1884,7 @@
     }
     if (insightFilterVideo) {
       insightFilterVideo.innerHTML =
-        '<option value="">全部视频关系</option>' +
+        '<option value="">全部一次回复能否解决</option>' +
         Object.entries(SINGLE_VIDEO_LABELS)
           .map(([k, label]) => `<option value="${k}">${escapeHtml(label)}</option>`)
           .join("");
@@ -2008,7 +2008,7 @@
     }
     const thead = `<tr>
       <th>评论</th><th>用户</th><th>平台</th><th>视频</th><th>目的</th><th>信号</th>
-      <th>行为证据</th><th>具体问题</th><th>内容关系</th><th>新发现</th><th>适配</th><th>置信度</th>
+      <th>行为证据</th><th>具体问题</th><th>一次回复能否解决</th><th>新发现</th><th>适配</th><th>置信度</th>
     </tr>`;
     const tbody = rows
       .map((row) => {
