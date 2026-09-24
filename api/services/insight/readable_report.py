@@ -281,6 +281,8 @@ def _qual_stats_section(qual_stats: Optional[dict]) -> List[str]:
     if not qual_stats:
         return []
     lines: List[str] = ["## 评论结构（本视频）", ""]
+    intent_labels = qual_stats.get("intent_labels") or None
+    signal_labels = qual_stats.get("signal_labels") or None
     intent_counts = qual_stats.get("primary_intent_counts") or {}
     intent_pct = qual_stats.get("primary_intent_percentages") or {}
     if intent_counts:
@@ -294,7 +296,7 @@ def _qual_stats_section(qual_stats: Optional[dict]) -> List[str]:
         )
         for key in sorted(intent_counts.keys(), key=lambda k: (-intent_counts.get(k, 0), k)):
             lines.append(
-                f"| {label_intent(key)} | {intent_counts.get(key, 0)} | {intent_pct.get(key, 0)}% |"
+                f"| {label_intent(key, intent_labels)} | {intent_counts.get(key, 0)} | {intent_pct.get(key, 0)}% |"
             )
         lines.append("")
 
@@ -317,7 +319,7 @@ def _qual_stats_section(qual_stats: Optional[dict]) -> List[str]:
             if int((info or {}).get("count") or 0) <= 0:
                 continue
             lines.append(
-                f"| {label_signal(key)} | {info.get('count', 0)} | {info.get('coverage_pct', 0)}% |"
+                f"| {label_signal(key, signal_labels)} | {info.get('count', 0)} | {info.get('coverage_pct', 0)}% |"
             )
         lines.append("")
 

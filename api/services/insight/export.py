@@ -80,7 +80,23 @@ _RESULTS_CSV_HEADER = [
 ]
 
 
-def _results_csv_row(row: Dict[str, Any]) -> List[Any]:
+def _taxonomy_labels(run_id: str):
+    """Return (intent_labels, signal_labels) for a run's profile (or None)."""
+    try:
+        from .project_profiles import intent_label_map, resolve_profile, signal_label_map
+
+        profile = resolve_profile(load_config(run_id))
+        return intent_label_map(profile), signal_label_map(profile)
+    except Exception:
+        return None, None
+
+
+def _results_csv_row(
+    row: Dict[str, Any],
+    *,
+    intent_labels: Optional[Dict[str, str]] = None,
+    signal_labels: Optional[Dict[str, str]] = None,
+) -> List[Any]:
     source = row.get("source") or {}
     analysis = row.get("analysis") or {}
     return [
@@ -92,8 +108,8 @@ def _results_csv_row(row: Dict[str, Any]) -> List[Any]:
         source.get("video_title") or "",
         source.get("creator_name") or "",
         source.get("creator_type") or "",
-        label_intent(str(analysis.get("primary_intent") or "")),
-        "，".join(label_signal(str(s)) for s in (analysis.get("signals") or [])),
+        label_intent(str(analysis.get("primary_intent") or ""), intent_labels),
+        "，".join(label_signal(str(s), signal_labels) for s in (analysis.get("signals") or [])),
         TRAINING_EVIDENCE_LABELS.get(
             str(analysis.get("actual_training_evidence") or ""),
             analysis.get("actual_training_evidence") or "",
@@ -132,11 +148,12 @@ def build_results_csv(
     rows: Optional[List[Dict[str, Any]]] = None,
 ) -> bytes:
     selected = _select_results_rows(run_id, source_files, rows)
+    intent_labels, signal_labels = _taxonomy_labels(run_id)
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow(_RESULTS_CSV_HEADER)
     for row in selected:
-        writer.writerow(_results_csv_row(row))
+        writer.writerow(_results_csv_row(row, intent_labels=intent_labels, signal_labels=signal_labels))
     return buffer.getvalue().encode("utf-8-sig")
 
 
@@ -149,12 +166,13 @@ def write_results_csv(
 ) -> None:
     """Stream results to a CSV file without building the whole blob in memory."""
     selected = _select_results_rows(run_id, source_files, rows)
+    intent_labels, signal_labels = _taxonomy_labels(run_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(_RESULTS_CSV_HEADER)
         for row in selected:
-            writer.writerow(_results_csv_row(row))
+            writer.writerow(_results_csv_row(row, intent_labels=intent_labels, signal_labels=signal_labels))
 
 
 def _elapsed_seconds(progress: Dict[str, Any]) -> int | None:
@@ -478,7 +496,29 @@ def _scoped_qual_stats(
         ]
     if not rows:
         return {}
-    return build_statistics(rows, total_records=total_records or len(rows))
+    intent_labels = signal_labels = None
+    valid_intents = None
+    try:
+        from .project_profiles import (
+            intent_label_map,
+            resolve_intents,
+            resolve_profile,
+            signal_label_map,
+        )
+
+        profile = resolve_profile(load_config(run_id))
+        intent_labels = intent_label_map(profile)
+        signal_labels = signal_label_map(profile)
+        valid_intents = {item.key for item in resolve_intents(profile) if item.key}
+    except Exception:
+        pass
+    return build_statistics(
+        rows,
+        total_records=total_records or len(rows),
+        intent_labels=intent_labels,
+        signal_labels=signal_labels,
+        valid_intents=valid_intents,
+    )
 
 
 def build_report_markdown(
@@ -548,6 +588,8 @@ def build_report_markdown(
     rows = all_results if all_results is not None else load_results(run_id)
     analyzed = summary.get("total_analyzed") or len(rows)
     total_records = progress.get("total_records") or analyzed
+    _intent_labels = summary.get("intent_labels") or None
+    _signal_labels = summary.get("signal_labels") or None
 
     lines = [
         f"# 评论洞察报告：{config.name}",
@@ -610,11 +652,11 @@ def build_report_markdown(
     counts = summary.get("primary_intent_counts") or {}
     intents = summary.get("primary_intent_percentages") or {}
     for key in sorted(intents.keys(), key=lambda k: (-counts.get(k, 0), k)):
-        lines.append(f"| {label_intent(key)} | {counts.get(key, 0)} | {intents.get(key, 0)}% |")
+        lines.append(f"| {label_intent(key, _intent_labels)} | {counts.get(key, 0)} | {intents.get(key, 0)}% |")
 
     lines.extend(["", "## 信息信号覆盖率", "", "> 同一评论可含多个信号，覆盖率之和可能超过 100%。", "", "| 信号 | 条数 | 覆盖率 |", "| --- | ---: | ---: |"])
     for key, info in (summary.get("signal_coverage") or {}).items():
-        lines.append(f"| {label_signal(key)} | {info.get('count', 0)} | {info.get('coverage_pct', 0)}% |")
+        lines.append(f"| {label_signal(key, _signal_labels)} | {info.get('count', 0)} | {info.get('coverage_pct', 0)}% |")
 
     lines.extend(["", "## 一次回复能解决吗", "", "| 情况 | 条数 | 覆盖率 |", "| --- | ---: | ---: |"])
     for key, info in (summary.get("single_video_stats") or {}).items():
@@ -655,7 +697,7 @@ def build_report_markdown(
             if len(comment) > 120:
                 comment = comment[:120] + "…"
             problems = "；".join(str(p) for p in (analysis.get("specific_problems") or []))
-            signals = "，".join(label_signal(str(s)) for s in (analysis.get("signals") or [])[:4])
+            signals = "，".join(label_signal(str(s), _signal_labels) for s in (analysis.get("signals") or [])[:4])
             lines.append(f"- **{user}** · {label_single_video(str(analysis.get('single_video_relation') or ''))}")
             lines.append(f"  - 评论：「{comment}」")
             if problems:

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .field_mapping import resolve_source_links
-from .labels import SINGLE_VIDEO_LABELS
+from .labels import INTENT_LABELS, SIGNAL_LABELS, SINGLE_VIDEO_LABELS
 from .prompts import HYPOTHESES
 from .user_identity import user_key
 
@@ -178,8 +178,12 @@ def build_statistics(
     *,
     total_records: int = 0,
     hypotheses: Optional[Dict[str, str]] = None,
+    intent_labels: Optional[Dict[str, str]] = None,
+    signal_labels: Optional[Dict[str, str]] = None,
+    valid_intents: Optional[Set[str]] = None,
 ) -> Dict[str, Any]:
     hypo_labels = hypotheses or HYPOTHESES
+    known_intents = set(valid_intents) if valid_intents else VALID_INTENTS
     total_analyzed = len(results)
     intent_counts: Dict[str, int] = defaultdict(int)
     signal_counts: Dict[str, int] = defaultdict(int)
@@ -238,7 +242,7 @@ def build_statistics(
             source_files.add(source_file)
 
         intent = analysis.get("primary_intent") or ""
-        if intent in VALID_INTENTS:
+        if intent in known_intents:
             valid_comments += 1
         intent_counts[intent] += 1
 
@@ -373,6 +377,8 @@ def build_statistics(
         "contactable_homepage_count": contactable_homepage,
         "primary_intent_counts": dict(intent_counts),
         "primary_intent_percentages": intent_percentages,
+        "intent_labels": intent_labels or INTENT_LABELS,
+        "signal_labels": signal_labels or SIGNAL_LABELS,
         "signal_counts": dict(signal_counts),
         "signal_coverage": signal_coverage,
         "hypothesis_counts": hypothesis_counts,

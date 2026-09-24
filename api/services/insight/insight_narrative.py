@@ -36,7 +36,7 @@ def _top_signal(summary: Dict[str, Any]) -> Optional[str]:
     key, info = max(coverage.items(), key=lambda kv: (kv[1] or {}).get("count", 0))
     from .labels import label_signal
 
-    return f"{label_signal(key)}（{ (info or {}).get('count', 0) } 条）"
+    return f"{label_signal(key, summary.get('signal_labels') or None)}（{ (info or {}).get('count', 0) } 条）"
 
 
 def _top_intent(summary: Dict[str, Any]) -> Optional[str]:
@@ -46,7 +46,7 @@ def _top_intent(summary: Dict[str, Any]) -> Optional[str]:
     key, count = max(counts.items(), key=lambda kv: kv[1])
     from .labels import label_intent
 
-    return f"{label_intent(key)}（{count} 条）"
+    return f"{label_intent(key, summary.get('intent_labels') or None)}（{count} 条）"
 
 
 def _theme_names(run_id: str, limit: int = 5) -> List[str]:

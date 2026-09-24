@@ -642,7 +642,22 @@
   ];
 
   function labelSignal(signal) {
-    return SIGNAL_LABELS[signal] || signal;
+    return activeSignalLabels[signal] || signal;
+  }
+
+  // Business-facing taxonomy labels. The active profile can rename/add
+  // intents & signals; we merge its maps over the built-in defaults so the
+  // dashboard, filters and reports read naturally for any business.
+  let activeIntentLabels = { ...INTENT_LABELS };
+  let activeSignalLabels = { ...SIGNAL_LABELS };
+
+  function setTaxonomyLabels(summary) {
+    activeIntentLabels = { ...INTENT_LABELS, ...(summary?.intent_labels || {}) };
+    activeSignalLabels = { ...SIGNAL_LABELS, ...(summary?.signal_labels || {}) };
+  }
+
+  function labelIntent(key) {
+    return activeIntentLabels[key] || key;
   }
 
   async function apiFetch(path, options = {}) {
@@ -1799,11 +1814,12 @@
       return;
     }
 
+    setTaxonomyLabels(summary);
     const intents = summary.primary_intent_percentages || {};
     const intentHtml = Object.entries(intents)
       .map(([key, pct]) => {
         const count = summary.primary_intent_counts?.[key] || 0;
-        return `<li><button type="button" class="insight-filter-link" data-filter-key="intent" data-filter-value="${escapeHtml(key)}">${escapeHtml(INTENT_LABELS[key] || key)}：${count}（${pct}%）</button></li>`;
+        return `<li><button type="button" class="insight-filter-link" data-filter-key="intent" data-filter-value="${escapeHtml(key)}">${escapeHtml(labelIntent(key))}：${count}（${pct}%）</button></li>`;
       })
       .join("");
 
@@ -1858,11 +1874,12 @@
 
   function populateFilterSelects(summary) {
     if (!summary?.total_analyzed) return;
+    setTaxonomyLabels(summary);
     if (insightFilterIntent) {
       insightFilterIntent.innerHTML =
         '<option value="">全部目的</option>' +
         Object.keys(summary.primary_intent_counts || {})
-          .map((k) => `<option value="${escapeHtml(k)}">${escapeHtml(INTENT_LABELS[k] || k)}</option>`)
+          .map((k) => `<option value="${escapeHtml(k)}">${escapeHtml(labelIntent(k))}</option>`)
           .join("");
     }
     if (insightFilterVideo) {

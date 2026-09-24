@@ -107,3 +107,42 @@ def test_suggest_profile_normalizes_and_validates():
     assert profile.hypothesis_short["H3"]
     assert profile.decision_keywords
     assert profile.is_builtin is False
+
+
+def test_profile_taxonomy_drives_statistics_labels():
+    from api.services.insight import project_profiles as pp
+    from api.services.insight.labels import label_intent, label_signal
+    from api.services.insight.statistics import build_statistics
+
+    profile = pp.ProjectProfile(
+        profile_id="t",
+        name="t",
+        intents=[{"key": "pricing", "label": "问价格"}],
+        signals=[{"key": "wants_trial", "label": "想试用"}],
+    )
+    intent_labels = pp.intent_label_map(profile)
+    signal_labels = pp.signal_label_map(profile)
+    assert intent_labels == {"pricing": "问价格"}
+    assert label_intent("pricing", intent_labels) == "问价格"
+    assert label_signal("wants_trial", signal_labels) == "想试用"
+
+    summary = build_statistics(
+        [{"analysis": {"primary_intent": "pricing", "signals": ["wants_trial"]}, "source": {}}],
+        total_records=1,
+        intent_labels=intent_labels,
+        signal_labels=signal_labels,
+        valid_intents=set(intent_labels),
+    )
+    assert summary["valid_comments"] == 1
+    assert summary["intent_labels"]["pricing"] == "问价格"
+    assert summary["signal_labels"]["wants_trial"] == "想试用"
+
+
+def test_query_filter_accepts_custom_intent():
+    from api.services.insight.query_filters import match_result_row
+
+    assert match_result_row({"analysis": {"primary_intent": "pricing"}}, intent_valid=True)
+    assert not match_result_row(
+        {"analysis": {"primary_intent": "invalid_or_unclear"}}, intent_valid=True
+    )
+    assert not match_result_row({"analysis": {}}, intent_valid=True)

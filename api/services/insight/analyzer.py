@@ -644,13 +644,32 @@ def build_summary(run_id: str) -> Dict[str, object]:
         row["card"] = card
     progress = load_progress(run_id)
     try:
-        from .project_profiles import resolve_profile
+        from .project_profiles import (
+            intent_label_map,
+            resolve_intents,
+            resolve_profile,
+            signal_label_map,
+        )
         from .storage import load_config as _load_config
 
-        hypo = resolve_profile(_load_config(run_id)).hypotheses
+        profile = resolve_profile(_load_config(run_id))
+        hypo = profile.hypotheses
+        intent_labels = intent_label_map(profile)
+        signal_labels = signal_label_map(profile)
+        valid_intents = {item.key for item in resolve_intents(profile) if item.key}
     except Exception:
         hypo = None
-    summary = build_statistics(results, total_records=progress.total_records, hypotheses=hypo)
+        intent_labels = None
+        signal_labels = None
+        valid_intents = None
+    summary = build_statistics(
+        results,
+        total_records=progress.total_records,
+        hypotheses=hypo,
+        intent_labels=intent_labels,
+        signal_labels=signal_labels,
+        valid_intents=valid_intents,
+    )
     candidates_doc = load_candidates(run_id)
     if candidates_doc.candidates:
         summary = apply_candidates_to_summary(summary, candidates_doc.candidates)

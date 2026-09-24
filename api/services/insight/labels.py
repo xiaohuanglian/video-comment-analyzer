@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from typing import Dict, Optional
+
 INTENT_LABELS = {
     "gratitude_recognition": "感谢与认可",
     "check_in": "签到",
@@ -77,11 +79,15 @@ TRAINING_EVIDENCE_LABELS = {
 }
 
 
-def label_intent(key: str) -> str:
+def label_intent(key: str, labels: Optional[Dict[str, str]] = None) -> str:
+    if labels and key in labels:
+        return labels[key]
     return INTENT_LABELS.get(key, key)
 
 
-def label_signal(key: str) -> str:
+def label_signal(key: str, labels: Optional[Dict[str, str]] = None) -> str:
+    if labels and key in labels:
+        return labels[key]
     return SIGNAL_LABELS.get(key, key)
 
 
