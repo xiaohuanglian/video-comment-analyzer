@@ -327,9 +327,9 @@ def _qual_stats_section(qual_stats: Optional[dict]) -> List[str]:
     if video_stats:
         lines.extend(
             [
-                "### 单向视频关系",
+                "### 一次回复能解决吗",
                 "",
-                "| 关系 | 条数 | 覆盖率 |",
+                "| 情况 | 条数 | 覆盖率 |",
                 "| --- | ---: | ---: |",
             ]
         )
