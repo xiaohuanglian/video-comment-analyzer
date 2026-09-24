@@ -60,6 +60,7 @@ uv run playwright install chromium
 
 - `intents`：评论的主要沟通目的分类（如提问 / 反馈 / 不满）。
 - `signals`：值得关注的用户表达信号。
+- `realtime_tokens` / `personalized_tokens` / `positive_result_tokens`：「一次回复能否解决」的判定词表（实时观察 / 需结合个人情况 / 正向结果）。
 
 仪表盘、筛选、CSV 与报告都会按当前档案显示这些维度。修改 label 或增删维度即可贴合自己的业务，**无需改代码**；也可以点「AI 根据评论生成档案」，让模型基于当前任务的真实评论直接产出建议档案。
 

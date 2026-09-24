@@ -30,7 +30,7 @@ def _rec(rid: str, text: str) -> SourceRecord:
 
 
 def test_record_status_not_invalid_for_thanks_and_save():
-    thanks = extract_evidence_card_mock(_rec("t1", "谢谢教练"))
+    thanks = extract_evidence_card_mock(_rec("t1", "谢谢老师"))
     save = extract_evidence_card_mock(_rec("t2", "收藏退出一气呵成"))
     assert thanks.record_status == RecordStatus.USABLE
     assert save.record_status == RecordStatus.USABLE
@@ -57,16 +57,16 @@ def test_self_reported_ability_not_planned():
 
 
 def test_sanitize_drops_empty_quotes():
-    record = _rec("q", "我练了三天")
+    record = _rec("q", "我学了三天")
     card = EvidenceCard(
         record_id="q",
         record_status=RecordStatus.USABLE,
-        explicit_facts=[{"fact": "练了", "evidence_quote": ""}],
+        explicit_facts=[{"fact": "学了", "evidence_quote": ""}],
         training_behavior=[
             {
                 "type": "attempted",
                 "text": "已练",
-                "evidence_quote": "我练了三天",
+                "evidence_quote": "我学了三天",
                 "certainty": "explicit",
             }
         ],
@@ -76,11 +76,11 @@ def test_sanitize_drops_empty_quotes():
     assert cleaned.explicit_facts == []
     assert cleaned.problem_or_need == []
     assert len(cleaned.training_behavior) == 1
-    assert cleaned.training_behavior[0].evidence_quote == "我练了三天"
+    assert cleaned.training_behavior[0].evidence_quote == "我学了三天"
 
 
 def test_compound_question_and_praise():
-    card = extract_evidence_card_mock(_rec("c1", "谢谢教练，臀桥酸正常吗？"))
+    card = extract_evidence_card_mock(_rec("c1", "谢谢老师，这一步没做对正常吗？"))
     assert card.primary_expression == PrimaryExpression.QUESTION
     assert card.record_status == RecordStatus.USABLE
     assert card.explicit_facts or card.problem_or_need
@@ -99,7 +99,7 @@ def test_quantitative_evidence_when_numbers_present():
 
 
 def test_batch_still_aligns():
-    records = [_rec(f"id{i}", f"这个动作怎么做{i}？") for i in range(10)]
+    records = [_rec(f"id{i}", f"这个步骤怎么做{i}？") for i in range(10)]
     result = extract_batch_with_split(records, use_mock=True, batch_size=10)
     assert result.stats.failed == 0
     assert len(result.cards) == 10

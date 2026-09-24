@@ -18,10 +18,10 @@ def _make_rows(n: int) -> str:
 
 def _setup_run(tmp_path, monkeypatch, *, total: int = 120, analysis_limit: int = 100):
     data_dir = tmp_path / "data"
-    csv_path = data_dir / "健身类" / "博主" / "视频" / "comments.csv"
+    csv_path = data_dir / "教程类" / "博主" / "视频" / "comments.csv"
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     csv_path.write_text(_make_rows(total), encoding="utf-8")
-    rel = "健身类/博主/视频/comments.csv"
+    rel = "教程类/博主/视频/comments.csv"
     monkeypatch.setattr("api.services.insight.ingestion.DATA_DIR", data_dir)
     monkeypatch.setattr("api.services.insight.storage.DATA_DIR", data_dir)
     monkeypatch.setattr("api.services.insight.storage.RUNS_ROOT", data_dir / "analysis_runs")

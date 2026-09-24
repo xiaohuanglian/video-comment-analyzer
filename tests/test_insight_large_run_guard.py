@@ -35,9 +35,9 @@ def _make_run(run_id: str, count: int, *, use_mock: bool = False, budget: float 
     records = [
         SourceRecord(
             internal_record_id=f"r{i}",
-            source_file="健身类/博主/视频/comments.csv",
+            source_file="教程类/博主/视频/comments.csv",
             source_row_number=i,
-            comment_text=f"这个动作练了几次还是找不到发力感 {i}",
+            comment_text=f"这个步骤学了几次还是找不到发力感 {i}",
             user_id=f"u{i}",
             username=f"用户{i}",
         )
@@ -46,7 +46,7 @@ def _make_run(run_id: str, count: int, *, use_mock: bool = False, budget: float 
     config = RunConfig(
         run_id=run_id,
         name="guard",
-        file_paths=["健身类/博主/视频/comments.csv"],
+        file_paths=["教程类/博主/视频/comments.csv"],
         field_mapping=FieldMapping(comment_text="comment_text"),
         use_mock=use_mock,
         created_at="2026-01-01T00:00:00Z",

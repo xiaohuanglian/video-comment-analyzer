@@ -18,9 +18,9 @@ from api.services.insight.validation import validate_analysis
 
 
 SAMPLE_CSV = """comment_id,video_id,content,user_id,nickname,like_count
-1,100,这个动作一周练几次？,u1,测试用户,0
+1,100,这个教程一周学几次？,u1,测试用户,0
 2,100,已打卡。,u2,打卡人,1
-3,100,谢谢教练，跟着练了一周腰舒服多了，但我做臀桥时大腿后侧酸，这正常吗？,u3,训练者,3
+3,100,谢谢老师，跟着学了一周情况好转多了，但我做这一步时大腿后侧酸，这正常吗？,u3,训练者,3
 """
 
 
@@ -33,17 +33,17 @@ def client():
 def sample_csv(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    csv_path = data_dir / "健身类" / "测试博主" / "视频_BV1test" / "comments_2026-07-19.csv"
+    csv_path = data_dir / "教程类" / "测试博主" / "视频_BV1test" / "comments_2026-07-19.csv"
     csv_path.parent.mkdir(parents=True)
     csv_path.write_text(SAMPLE_CSV, encoding="utf-8")
     monkeypatch.setattr("api.services.insight.ingestion.DATA_DIR", data_dir)
     monkeypatch.setattr("api.services.insight.storage.DATA_DIR", data_dir)
     monkeypatch.setattr("api.services.insight.storage.RUNS_ROOT", data_dir / "analysis_runs")
-    return "健身类/测试博主/视频_BV1test/comments_2026-07-19.csv"
+    return "教程类/测试博主/视频_BV1test/comments_2026-07-19.csv"
 
 
 def test_detect_comment_column():
-    mapping = detect_field_mapping(["comment_id", "content", "nickname"], "健身类/x.csv")
+    mapping = detect_field_mapping(["comment_id", "content", "nickname"], "教程类/x.csv")
     assert mapping.comment_text == "content"
 
 

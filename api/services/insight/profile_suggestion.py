@@ -20,6 +20,8 @@ SUGGEST_SYSTEM = (
     "context_compact, context_full,\n"
     "hypotheses(H1-H3 完整描述), hypothesis_short(H1-H3 短语),\n"
     "hypothesis_rules, decision_keywords(数组), noise_markers(数组),\n"
+    "realtime_tokens(数组，表示需要实时观察/示范的词), personalized_tokens(数组，表示需结合个人情况判断的词),\n"
+    "positive_result_tokens(数组，表示取得正向结果的词),\n"
     "intents(数组，每项 {key,label,description})，signals(数组，每项 {key,label,description})，\n"
     "theme_risk_tokens(数组), theme_difficulty_tokens(数组), theme_question_tokens(数组),\n"
     "content_persona, content_platforms(数组)。\n"
@@ -33,6 +35,9 @@ SUGGEST_SYSTEM = (
 _LIST_FIELDS = (
     "decision_keywords",
     "noise_markers",
+    "realtime_tokens",
+    "personalized_tokens",
+    "positive_result_tokens",
     "theme_risk_tokens",
     "theme_difficulty_tokens",
     "theme_question_tokens",

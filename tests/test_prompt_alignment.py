@@ -11,7 +11,7 @@ def test_hypotheses_are_domain_neutral():
         assert HYPOTHESES[hid]
         assert HYPOTHESIS_SHORT[hid]
     joined = " ".join(HYPOTHESES.values()) + " ".join(HYPOTHESIS_SHORT.values())
-    for banned in ("健身", "训练", "跟练", "动作", "肌群", "教练"):
+    for banned in ("教程", "训练", "跟练", "步骤", "肌群", "老师"):
         assert banned not in joined
 
 

@@ -42,13 +42,13 @@ def test_versions():
 
 
 def test_empty_quote_dropped():
-    record = _rec("q", "我练了三天")
+    record = _rec("q", "我学了三天")
     card = EvidenceCard(
         record_id="q",
         evidence_items=[
             {
                 "type": "behavior",
-                "text": "练了",
+                "text": "学了",
                 "evidence_quote": "",
                 "speaker_scope": "self",
                 "certainty": "high",
@@ -56,8 +56,8 @@ def test_empty_quote_dropped():
             },
             {
                 "type": "behavior",
-                "text": "练了三天",
-                "evidence_quote": "我练了三天",
+                "text": "学了三天",
+                "evidence_quote": "我学了三天",
                 "speaker_scope": "self",
                 "certainty": "high",
                 "subtype": "attempted",
@@ -66,7 +66,7 @@ def test_empty_quote_dropped():
     )
     cleaned = sanitize_evidence_card(record, card)
     assert len(cleaned.evidence_items) == 1
-    assert cleaned.evidence_items[0].evidence_quote == "我练了三天"
+    assert cleaned.evidence_items[0].evidence_quote == "我学了三天"
 
 
 def test_illegal_type_rejected():
@@ -78,7 +78,7 @@ def test_illegal_type_rejected():
 
 
 def test_bookmark_is_engagement_and_action_gap_not_attempted():
-    card = extract_evidence_card_mock(_rec("g", "收藏永不停止，锻炼从不开始"))
+    card = extract_evidence_card_mock(_rec("g", "收藏永不停止，学习从不开始"))
     types = {i.type for i in card.evidence_items}
     assert EvidenceItemType.ENGAGEMENT in types
     assert EvidenceItemType.ACTION_GAP in types
@@ -137,7 +137,7 @@ def test_quantitative_progress():
 
 
 def test_concurrent_mock_no_misalign():
-    records = [_rec(f"id{i}", f"这个动作怎么做{i}？") for i in range(24)]
+    records = [_rec(f"id{i}", f"这个步骤怎么做{i}？") for i in range(24)]
     result = extract_batch_with_split(records, use_mock=True, batch_size=8, concurrency=4)
     assert result.stats.failed == 0
     assert len(result.cards) == 24
@@ -219,7 +219,7 @@ def test_writer_queue_serializes(tmp_path, monkeypatch):
     q = EvidenceWriterQueue("run_test")
     q.start()
     for i in range(5):
-        rec = _rec(f"id{i}", f"练了{i}次")
+        rec = _rec(f"id{i}", f"学了{i}次")
         card = extract_evidence_card_mock(rec)
         q.put(rec, card)
     q.close()
@@ -279,7 +279,7 @@ def test_cache_skips_empty_usable_and_respects_compact():
 def test_candidates_from_evidence_card():
     from api.services.insight.candidates import build_candidates
 
-    card = extract_evidence_card_mock(_rec("u1", "收藏永不停止，锻炼从不开始"))
+    card = extract_evidence_card_mock(_rec("u1", "收藏永不停止，学习从不开始"))
     rows = [
         {
             "record_id": "u1",
@@ -288,7 +288,7 @@ def test_candidates_from_evidence_card():
                 "username": "tester",
                 "user_id": "uid1",
                 "platform": "bilibili",
-                "comment_text": "收藏永不停止，锻炼从不开始",
+                "comment_text": "收藏永不停止，学习从不开始",
                 "user_homepage_url": "https://example.com/u",
             },
             "card": card.model_dump(),

@@ -51,7 +51,7 @@ def test_findings_ranked_by_user_count_and_hidden_counted(monkeypatch):
 
 
 def test_report_states_analyzed_coverage():
-    records = [_rec("r1", "这个动作怎么做？")]
+    records = [_rec("r1", "这个步骤怎么做？")]
     research = {
         "dataset_summary": {"total_comments": 1, "unique_users": 1, "usable_comments": 1},
         "unexpected_findings": [],

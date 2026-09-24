@@ -25,8 +25,8 @@ def _card() -> EvidenceCard:
         evidence_items=[
             EvidenceItem(
                 type=EvidenceItemType.PROBLEM,
-                text="动作疑问",
-                evidence_quote="这个动作怎么做？",
+                text="步骤疑问",
+                evidence_quote="这个步骤怎么做？",
                 speaker_scope=SpeakerScope.SELF,
                 certainty=ItemCertainty.HIGH,
             )
@@ -42,7 +42,7 @@ def test_index_assigns_stable_ids_from_raw_dicts():
     assert item["type"] == "problem"
     assert item["speaker_scope"] == "self"
     assert item["certainty"] == "high"
-    assert item["evidence_quote"] == "这个动作怎么做？"
+    assert item["evidence_quote"] == "这个步骤怎么做？"
 
 
 def test_load_evidence_cards_can_drop_source(tmp_path, monkeypatch):

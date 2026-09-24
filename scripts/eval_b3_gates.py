@@ -31,7 +31,7 @@ PERSONAL_BEHAVIOR_MARKERS = (
     "刚刚试",
     "试了试",
     "做完",
-    "办卡",
+    "报名",
     "零基础，直接",
     "明天继续",
     "会做几个",
@@ -158,7 +158,7 @@ def evaluate(run_id: str, sample_path: Path) -> dict:
             if _has_gap(card):
                 gap_hit += 1
 
-        if card.record_status.value == "usable" and ("办卡" in text or ("健身房" in text and "办" in text)):
+        if card.record_status.value == "usable" and any(k in text for k in ("报名", "购买", "付费", "办卡")):
             paid_expected.append(rid)
             if _has_paid(card):
                 paid_hit += 1
@@ -243,7 +243,7 @@ def main() -> None:
     if len(sys.argv) < 3:
         raise SystemExit(
             "用法: python scripts/eval_b3_gates.py <run_id> <highrisk_sample.json> [out_dir]\n"
-            "示例: python scripts/eval_b3_gates.py ab_evidence_戴夫健身_2_30_items_v1 ./tmp/b3_highrisk_30.json"
+            "示例: python scripts/eval_b3_gates.py ab_evidence_<run>_30_items_v1 ./tmp/b3_highrisk_30.json"
         )
     run_id = sys.argv[1]
     sample_path = Path(sys.argv[2])

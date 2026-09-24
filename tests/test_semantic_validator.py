@@ -137,7 +137,7 @@ def test_paid_failure_claim_rejects_cost_saving_quote():
 
 
 def test_plan_is_not_accepted_as_completed_action():
-    record = _record("r1", "我计划明天开始练")
+    record = _record("r1", "我计划明天开始学")
     analysis = _analysis(record, "用户已经行动")
     rows = [_row(record, item_type=EvidenceItemType.BEHAVIOR, subtype="planned")]
 
@@ -148,7 +148,7 @@ def test_plan_is_not_accepted_as_completed_action():
 
 
 def test_sales_pitch_is_not_accepted_as_purchase():
-    record = _record("r1", "教练一直向我推销付费课程")
+    record = _record("r1", "老师一直向我推销付费课程")
     analysis = _analysis(record, "用户已经付费购买课程")
     rows = [_row(record, item_type=EvidenceItemType.OPINION)]
 
@@ -158,7 +158,7 @@ def test_sales_pitch_is_not_accepted_as_purchase():
 
 
 def test_other_person_experience_is_not_attributed_to_commenter():
-    record = _record("r1", "我朋友练了以后舒服多了")
+    record = _record("r1", "我朋友学了以后舒服多了")
     analysis = _analysis(record, "用户本人已经获得结果")
     rows = [
         _row(
@@ -184,7 +184,7 @@ def test_pain_after_action_is_not_positive_effect():
 
 
 def test_minor_sample_cannot_be_called_prevalent():
-    record = _record("r1", "我练了三天")
+    record = _record("r1", "我学了三天")
     analysis = _analysis(record, "大部分用户都有这个问题", total=10)
     rows = [_row(record, item_type=EvidenceItemType.BEHAVIOR, subtype="attempted")]
 
@@ -194,8 +194,8 @@ def test_minor_sample_cannot_be_called_prevalent():
 
 
 def test_comment_correlation_cannot_be_reported_as_causality():
-    record = _record("r1", "我练了三天，感觉舒服一点")
-    analysis = _analysis(record, "这证明该动作必然提升训练效果")
+    record = _record("r1", "我学了三天，感觉舒服一点")
+    analysis = _analysis(record, "这证明该步骤必然提升训练效果")
     rows = [_row(record, item_type=EvidenceItemType.RESULT)]
 
     claim = build_claim_ledger(analysis, [record], rows)[0]
@@ -204,8 +204,8 @@ def test_comment_correlation_cannot_be_reported_as_causality():
 
 
 def test_short_self_report_cannot_be_reported_as_medical_proof():
-    record = _record("r1", "我练了三天，感觉舒服一点")
-    analysis = _analysis(record, "医学证明该动作治疗有效")
+    record = _record("r1", "我学了三天，感觉舒服一点")
+    analysis = _analysis(record, "医学证明该步骤治疗有效")
     rows = [_row(record, item_type=EvidenceItemType.RESULT)]
 
     claim = build_claim_ledger(analysis, [record], rows)[0]
@@ -215,7 +215,7 @@ def test_short_self_report_cannot_be_reported_as_medical_proof():
 
 def test_cross_video_reference_is_rejected():
     allowed = _record("a1", "视频A评论", "a.csv")
-    foreign = _record("b1", "我练了三天", "b.csv")
+    foreign = _record("b1", "我学了三天", "b.csv")
     analysis = _analysis(foreign, "用户尝试了训练")
     rows = [_row(foreign, item_type=EvidenceItemType.BEHAVIOR, subtype="attempted")]
 
@@ -226,7 +226,7 @@ def test_cross_video_reference_is_rejected():
 
 
 def test_agent_insufficient_verdict_removes_claim():
-    record = _record("r1", "我练了三天")
+    record = _record("r1", "我学了三天")
     analysis = _analysis(record, "用户尝试训练")
     rows = [_row(record, item_type=EvidenceItemType.BEHAVIOR, subtype="attempted")]
 
@@ -261,11 +261,11 @@ def test_agent_insufficient_verdict_removes_claim():
 
 
 def test_item_text_is_rebound_to_quote_and_unsupported_self_scope_is_lowered():
-    record = _record("r1", "朋友练完舒服了")
+    record = _record("r1", "朋友学完舒服了")
     item = EvidenceItem(
         type=EvidenceItemType.RESULT,
         text="用户本人训练后改善",
-        evidence_quote="朋友练完舒服了",
+        evidence_quote="朋友学完舒服了",
         speaker_scope=SpeakerScope.SELF,
         certainty=ItemCertainty.HIGH,
     )
@@ -307,7 +307,7 @@ def test_open_theme_paid_failure_is_removed_before_export():
 
 
 def test_open_theme_with_fabricated_quote_is_removed():
-    record = _record("r1", "原评论只说动作很难")
+    record = _record("r1", "原评论只说步骤很难")
     doc = ThemesDocument(
         themes=[
             ThemeRecord(

@@ -10,18 +10,18 @@ from api.services.insight.storage import create_run
 
 SAMPLE = """comment_id,content,user_id,nickname
 1,已打卡,u1,用户1
-2,谢谢教练，臀桥时腿后侧酸，这正常吗？,u2,用户2
-3,这个动作一周练几次？,u3,用户3
+2,谢谢老师，这一步时腿后侧酸，这正常吗？,u2,用户2
+3,这个教程一周学几次？,u3,用户3
 4,我看第二遍就会了,u4,用户4
 """
 
 
 def _setup(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
-    csv_path = data_dir / "健身类" / "博主" / "视频" / "comments.csv"
+    csv_path = data_dir / "教程类" / "博主" / "视频" / "comments.csv"
     csv_path.parent.mkdir(parents=True)
     csv_path.write_text(SAMPLE, encoding="utf-8")
-    rel = "健身类/博主/视频/comments.csv"
+    rel = "教程类/博主/视频/comments.csv"
     monkeypatch.setattr("api.services.insight.ingestion.DATA_DIR", data_dir)
     monkeypatch.setattr("api.services.insight.storage.DATA_DIR", data_dir)
     monkeypatch.setattr("api.services.insight.storage.RUNS_ROOT", data_dir / "analysis_runs")

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from .evidence_schemas import (
     ActionGapItem,
@@ -27,6 +27,11 @@ from .evidence_schemas import (
     compute_evidence_level,
     normalize_certainty,
     normalize_speaker_scope,
+)
+from .prompts import (
+    PERSONALIZED_VIDEO_KEYWORDS,
+    POSITIVE_RESULT_KEYWORDS,
+    REALTIME_VIDEO_KEYWORDS,
 )
 from .schemas import SingleVideoRelation
 
@@ -66,42 +71,6 @@ TRIED_BEHAVIOR_SUBTYPES = {
     "attempted_self_correction",
     "self_reported_ability",
 }
-REALTIME_VIDEO_KEYWORDS = (
-    "帮我看",
-    "看看我",
-    "不标准",
-    "做得不对",
-    "哪里不对",
-    "标准吗",
-    "做得对吗",
-    "帮我检查",
-    "找不到感觉",
-    "感觉不到",
-)
-PERSONALIZED_VIDEO_KEYWORDS = (
-    "判断",
-    "分不清",
-    "方向",
-    "怎么测",
-    "怎么看",
-    "适合我",
-    "因人而异",
-    "受伤",
-    "疼痛",
-)
-POSITIVE_RESULT_KEYWORDS = (
-    "立竿见影",
-    "有效果",
-    "改善了",
-    "舒服",
-    "回正",
-    "成功了",
-    "矫正成功",
-    "明显",
-    "没以前",
-    "好转",
-)
-
 PAID_ACTION_KEYWORDS = (
     "我报了",
     "我报名",
@@ -399,8 +368,27 @@ def infer_training_evidence(card: EvidenceCard) -> str:
     return "none"
 
 
-def infer_single_video_relation(card: EvidenceCard) -> str:
-    """Rule-based projection for legacy statistics / candidate scoring."""
+def infer_single_video_relation(
+    card: EvidenceCard,
+    *,
+    realtime_tokens: Optional[Iterable[str]] = None,
+    personalized_tokens: Optional[Iterable[str]] = None,
+    positive_result_tokens: Optional[Iterable[str]] = None,
+) -> str:
+    """Rule-based projection for legacy statistics / candidate scoring.
+
+    The keyword pools default to the built-in vocabulary; a project profile can
+    override them (realtime_tokens / personalized_tokens / positive_result_tokens).
+    """
+    realtime = tuple(realtime_tokens) if realtime_tokens is not None else REALTIME_VIDEO_KEYWORDS
+    personalized = (
+        tuple(personalized_tokens) if personalized_tokens is not None else PERSONALIZED_VIDEO_KEYWORDS
+    )
+    positive = (
+        tuple(positive_result_tokens)
+        if positive_result_tokens is not None
+        else POSITIVE_RESULT_KEYWORDS
+    )
     if card.record_status != RecordStatus.USABLE:
         return SingleVideoRelation.UNCLEAR.value
 
@@ -409,25 +397,25 @@ def infer_single_video_relation(card: EvidenceCard) -> str:
     has_problem = any(item.type == EvidenceItemType.PROBLEM for item in (card.evidence_items or []))
     has_result = any(item.type == EvidenceItemType.RESULT for item in (card.evidence_items or []))
 
-    if any(keyword in pool for keyword in REALTIME_VIDEO_KEYWORDS):
+    if any(keyword in pool for keyword in realtime):
         return SingleVideoRelation.REALTIME.value
 
     if expression == PrimaryExpression.HELP_REQUEST.value and has_problem:
         return SingleVideoRelation.PERSONALIZED.value
 
-    if any(keyword in pool for keyword in PERSONALIZED_VIDEO_KEYWORDS):
+    if any(keyword in pool for keyword in personalized):
         return SingleVideoRelation.PERSONALIZED.value
 
     if expression == PrimaryExpression.COMPLAINT.value and has_problem:
         return SingleVideoRelation.PERSONALIZED.value
 
     if expression in {PrimaryExpression.RESULT_FEEDBACK.value, PrimaryExpression.PRAISE.value} and (
-        has_result or any(keyword in pool for keyword in POSITIVE_RESULT_KEYWORDS)
+        has_result or any(keyword in pool for keyword in positive)
     ):
         return SingleVideoRelation.VIDEO_SUFFICIENT.value
 
     if expression == PrimaryExpression.QUESTION.value and not has_problem:
-        if not any(keyword in pool for keyword in PERSONALIZED_VIDEO_KEYWORDS + REALTIME_VIDEO_KEYWORDS):
+        if not any(keyword in pool for keyword in personalized + realtime):
             return SingleVideoRelation.ONE_REPLY.value
 
     return SingleVideoRelation.UNCLEAR.value
@@ -640,12 +628,25 @@ def third_column_fields(card: EvidenceCard | dict) -> Dict[str, Any]:
     }
 
 
-def outreach_analysis_from_card(card: EvidenceCard | dict) -> Dict[str, Any]:
+def outreach_analysis_from_card(card: EvidenceCard | dict, *, profile: Any = None) -> Dict[str, Any]:
     """Project evidence card into legacy analysis-shaped dict for candidates / scoring."""
     if isinstance(card, dict):
         card = EvidenceCard.model_validate(card)
     fields = third_column_fields(card)
     training = infer_training_evidence(card)
+    token_overrides: Dict[str, Any] = {}
+    if profile is not None:
+        from .project_profiles import (
+            resolve_personalized_tokens,
+            resolve_positive_result_tokens,
+            resolve_realtime_tokens,
+        )
+
+        token_overrides = {
+            "realtime_tokens": resolve_realtime_tokens(profile),
+            "personalized_tokens": resolve_personalized_tokens(profile),
+            "positive_result_tokens": resolve_positive_result_tokens(profile),
+        }
 
     gap_subtypes = {g.get("subtype") or "" for g in fields["action_gap"]}
     if fields["paid_help"] or gap_subtypes & {"paid_but_no_result", "paid_but_not_used"}:
@@ -676,7 +677,7 @@ def outreach_analysis_from_card(card: EvidenceCard | dict) -> Dict[str, Any]:
         "help_seeking": help_seeking,
         "behavior_costs": [g.get("text") or "" for g in fields["action_gap"] if g.get("text")],
         "training_impact": impact,
-        "single_video_relation": infer_single_video_relation(card),
+        "single_video_relation": infer_single_video_relation(card, **token_overrides),
         "product_fit": fit,
         "product_fit_reason": f"evidence_level={level}",
         "product_fit_source": "rule_based_projection",

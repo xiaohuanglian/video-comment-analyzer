@@ -79,7 +79,7 @@ def test_compact_payload_restores_record_ids_and_ignores_order():
     expected = ["full:r1", "full:r2"]
     payload = {
         "r": [
-            [2, "ur", [["r", "", "s", "h", "练完舒服多了"]]],
+            [2, "ur", [["r", "", "s", "h", "学完舒服多了"]]],
             [1, "uh", [["p", "direction", "s", "h", "分不清左右"]]],
         ]
     }
@@ -99,7 +99,7 @@ def test_compact_payload_expands_behavior_and_barrier_codes():
                     "uh",
                     [
                         ["b", "c", "s", "h", "做完一次"],
-                        ["d", "", "s", "h", "动作太难"],
+                        ["d", "", "s", "h", "步骤太难"],
                     ],
                 ]
             ]
@@ -202,8 +202,8 @@ def test_compact_payload_allows_four_for_complex_comment():
                 "s": "u",
                 "x": "h",
                 "e": [
-                    ["p", "", "s", "h", "膝盖疼"],
-                    ["b", "a", "s", "h", "已经练了一周"],
+                    ["p", "", "s", "h", "有点不适"],
+                    ["b", "a", "s", "h", "已经学了一周"],
                     ["r", "", "s", "m", "还是没有改善"],
                     ["q", "duration", "s", "h", "一周"],
                 ],
@@ -215,7 +215,7 @@ def test_compact_payload_allows_four_for_complex_comment():
 
 
 def test_mock_batch_20_returns_20_aligned():
-    records = [_rec(f"id{i}", f"这个动作怎么做{i}？") for i in range(20)]
+    records = [_rec(f"id{i}", f"这个步骤怎么做{i}？") for i in range(20)]
     result = extract_batch_with_split(records, use_mock=True, batch_size=20)
     assert result.stats.failed == 0
     assert len(result.cards) == 20
@@ -228,7 +228,7 @@ def test_empty_comment_marked_spam_or_garbled():
 
 
 def test_compound_comment_extracts_gratitude_and_question():
-    text = "谢谢教练，臀桥时大腿后侧酸，这正常吗？"
+    text = "谢谢老师，这一步时大腿后侧酸，这正常吗？"
     card = extract_evidence_card_mock(_rec("e2", text))
     assert card.record_status.value == "usable"
     assert card.primary_expression == PrimaryExpression.QUESTION
@@ -242,22 +242,22 @@ def test_compound_comment_extracts_gratitude_and_question():
 
 
 def test_sanitize_drops_fabricated_quotes():
-    record = _rec("e3", "我练了三天")
+    record = _rec("e3", "我学了三天")
     card = EvidenceCard(
         record_id="e3",
         explicit_facts=[{"fact": "x", "evidence_quote": "这段话根本不存在"}],
-        problem_or_need=[{"text": "y", "evidence_quote": "我练了三天"}],
+        problem_or_need=[{"text": "y", "evidence_quote": "我学了三天"}],
     )
     cleaned = sanitize_evidence_card(record, card)
     # B2: fabricated / empty quotes are dropped entirely
     assert cleaned.explicit_facts == []
-    assert cleaned.problem_or_need[0].evidence_quote == "我练了三天"
+    assert cleaned.problem_or_need[0].evidence_quote == "我学了三天"
 
 
 def test_sanitize_does_not_treat_cost_saving_as_paid_failure():
     record = _rec(
         "paid-offer",
-        "之前有个健身教练让我报2万块钱的课，矫正骨盆旋转，做这个操让我省钱了",
+        "之前有个教程老师让我报2万块钱的课，矫正骨盆旋转，做这个操让我省钱了",
     )
     card = EvidenceCard(
         record_id=record.internal_record_id,
@@ -265,8 +265,8 @@ def test_sanitize_does_not_treat_cost_saving_as_paid_failure():
             {
                 "type": "behavior",
                 "subtype": "sought_paid_help",
-                "text": "教练让我报课",
-                "evidence_quote": "之前有个健身教练让我报2万块钱的课",
+                "text": "老师让我报课",
+                "evidence_quote": "之前有个教程老师让我报2万块钱的课",
                 "speaker_scope": "self",
                 "certainty": "high",
             },

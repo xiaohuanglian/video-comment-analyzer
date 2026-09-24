@@ -254,8 +254,17 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         comments_has_more = 1
         comments_cursor = 0
         empty_pages = 0
+        page_index = 0
         while comments_has_more and len(result) < max_count:
-            comments_res = await self.get_aweme_comments(aweme_id, comments_cursor)
+            try:
+                comments_res = await self.get_aweme_comments(aweme_id, comments_cursor)
+            except Exception as exc:  # noqa: BLE001 - 保留已抓部分，记录原因后退出
+                utils.logger.warning(
+                    f"[DouYinClient.get_aweme_all_comments] aweme_id={aweme_id} 第 {page_index + 1} 页获取失败：{exc}；"
+                    f"保留已抓 {len(result)} 条并停止翻页"
+                )
+                break
+            page_index += 1
             comments_has_more = comments_res.get("has_more", 0)
             comments_cursor = comments_res.get("cursor", 0)
             comments = comments_res.get("comments") or []
@@ -291,7 +300,13 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
                     empty_sub_pages = 0
 
                     while sub_comments_has_more:
-                        sub_comments_res = await self.get_sub_comments(aweme_id, comment_id, sub_comments_cursor)
+                        try:
+                            sub_comments_res = await self.get_sub_comments(aweme_id, comment_id, sub_comments_cursor)
+                        except Exception as exc:  # noqa: BLE001
+                            utils.logger.warning(
+                                f"[DouYinClient.get_aweme_all_comments] aweme_id={aweme_id} 子评论获取失败：{exc}；跳过该条"
+                            )
+                            break
                         sub_comments_has_more = sub_comments_res.get("has_more", 0)
                         sub_comments_cursor = sub_comments_res.get("cursor", 0)
                         sub_comments = sub_comments_res.get("comments") or []

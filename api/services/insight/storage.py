@@ -629,6 +629,12 @@ def results_for_candidates(run_id: str) -> List[Dict[str, Any]]:
     """Merge legacy results.jsonl with evidence_cards.jsonl for third-column build."""
     from .evidence_adapter import merge_projected_analysis, outreach_analysis_from_card
 
+    try:
+        from .project_profiles import resolve_profile as _resolve_profile
+
+        profile = _resolve_profile(load_config(run_id))
+    except Exception:
+        profile = None
     results = load_results(run_id)
     by_id: Dict[str, Dict[str, Any]] = {}
     ordered: List[str] = []
@@ -645,7 +651,7 @@ def results_for_candidates(run_id: str) -> List[Dict[str, Any]]:
         if not rid:
             continue
         card = card_row.get("card") or {}
-        projected = outreach_analysis_from_card(card)
+        projected = outreach_analysis_from_card(card, profile=profile)
         if rid in by_id:
             existing = dict(by_id[rid])
             analysis = merge_projected_analysis(existing.get("analysis") or {}, projected)

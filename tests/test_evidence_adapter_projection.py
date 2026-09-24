@@ -51,8 +51,8 @@ def test_infer_single_video_relation_for_realtime_form_check():
         evidence_items=[
             EvidenceItem(
                 type=EvidenceItemType.PROBLEM,
-                text="怀疑动作不标准",
-                evidence_quote="不知道是不是我动作不标准",
+                text="怀疑步骤不标准",
+                evidence_quote="不知道是不是我步骤不标准",
                 speaker_scope=SpeakerScope.SELF,
                 certainty=ItemCertainty.MEDIUM,
             )
@@ -87,8 +87,8 @@ def test_infer_training_evidence_from_ongoing_period():
         evidence_items=[
             EvidenceItem(
                 type=EvidenceItemType.BEHAVIOR,
-                text="已锻炼一星期",
-                evidence_quote="这个视频里的动作我已经锻炼一个星期了",
+                text="已学习一星期",
+                evidence_quote="这个视频里的步骤我已经学习一个星期了",
                 speaker_scope=SpeakerScope.SELF,
                 certainty=ItemCertainty.HIGH,
                 subtype="ongoing_period",
@@ -108,8 +108,8 @@ def test_infer_legacy_signals_from_problem_and_behavior():
         evidence_items=[
             EvidenceItem(
                 type=EvidenceItemType.PROBLEM,
-                text="动作是否标准",
-                evidence_quote="不知道是不是我动作不标准",
+                text="步骤是否标准",
+                evidence_quote="不知道是不是我步骤不标准",
                 speaker_scope=SpeakerScope.SELF,
                 certainty=ItemCertainty.HIGH,
             ),
@@ -136,8 +136,8 @@ def test_derive_new_signals_uses_valid_enum_types():
         evidence_items=[
             EvidenceItem(
                 type=EvidenceItemType.PROBLEM,
-                text="膝盖疼",
-                evidence_quote="练完膝盖疼",
+                text="有点不适",
+                evidence_quote="学完有点不适",
                 speaker_scope=SpeakerScope.SELF,
                 certainty=ItemCertainty.HIGH,
             ),

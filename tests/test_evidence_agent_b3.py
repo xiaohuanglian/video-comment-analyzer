@@ -54,7 +54,7 @@ def test_level_aligns_up_when_problem_present():
         record_id="m2",
         record_status=RecordStatus.USABLE,
         evidence_level=EvidenceLevel.WEAK,
-        problem_or_need=[{"text": "问动作区别", "evidence_quote": "有什么区别"}],
+        problem_or_need=[{"text": "问步骤区别", "evidence_quote": "有什么区别"}],
     )
     cleaned = sanitize_evidence_card(record, card)
     assert cleaned.evidence_level in {EvidenceLevel.MEDIUM, EvidenceLevel.STRONG}
@@ -68,7 +68,7 @@ def test_completed_once_behavior_recall():
 
 
 def test_action_gap_field():
-    card = extract_evidence_card_mock(_rec("g1", "收藏永不停止，锻炼从不开始"))
+    card = extract_evidence_card_mock(_rec("g1", "收藏永不停止，学习从不开始"))
     assert card.action_gap
     assert all(g.evidence_quote for g in card.action_gap)
     assert card.content_engagement

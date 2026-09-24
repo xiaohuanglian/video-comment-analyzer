@@ -18,24 +18,24 @@ from api.services.insight.storage import create_run, load_config, load_progress
 
 
 SAMPLE_CSV = """comment_id,video_id,content,user_id,nickname,like_count
-1,100,这个动作一周练几次？,u1,测试用户,0
+1,100,这个教程一周学几次？,u1,测试用户,0
 2,100,已打卡。,u2,打卡人,1
-3,100,谢谢教练，跟着练了一周腰舒服多了，但我做臀桥时大腿后侧酸，这正常吗？,u3,训练者,3
+3,100,谢谢老师，跟着学了一周情况好转多了，但我做这一步时大腿后侧酸，这正常吗？,u3,训练者,3
 4,100,看不懂镜像，左右腿分不清,u4,新手,0
-5,100,膝盖旧伤还能练吗,u5,康复者,2
+5,100,进度旧伤还能练吗,u5,康复者,2
 """
 
 
 @pytest.fixture()
 def sample_csv(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
-    csv_path = data_dir / "健身类" / "测试博主" / "视频_BV1test" / "comments_2026-07-19.csv"
+    csv_path = data_dir / "教程类" / "测试博主" / "视频_BV1test" / "comments_2026-07-19.csv"
     csv_path.parent.mkdir(parents=True)
     csv_path.write_text(SAMPLE_CSV, encoding="utf-8")
     monkeypatch.setattr("api.services.insight.ingestion.DATA_DIR", data_dir)
     monkeypatch.setattr("api.services.insight.storage.DATA_DIR", data_dir)
     monkeypatch.setattr("api.services.insight.storage.RUNS_ROOT", data_dir / "analysis_runs")
-    return "健身类/测试博主/视频_BV1test/comments_2026-07-19.csv"
+    return "教程类/测试博主/视频_BV1test/comments_2026-07-19.csv"
 
 
 def _make_run(sample_csv: str, *, budget_limit: float = 0.0, use_mock: bool = False) -> str:
@@ -123,8 +123,8 @@ def test_api_verify_model_rejects_invalid_key(client):
 def test_build_run_id_uses_task_name_without_date():
     from api.services.insight.run_naming import build_run_id
 
-    run_id = build_run_id("戴夫健身评论")
-    assert run_id == "戴夫健身评论"
+    run_id = build_run_id("戴夫教程评论")
+    assert run_id == "戴夫教程评论"
 
 
 def test_api_cancel_run(client, sample_csv, monkeypatch):

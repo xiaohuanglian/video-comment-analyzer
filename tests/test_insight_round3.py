@@ -36,13 +36,13 @@ def test_build_candidates_respects_user_key(tmp_path, monkeypatch):
     sample = """comment_id,content,user_id,nickname
 1,看不懂镜像,u1,用户1
 2,还是镜像问题,u1,用户1
-3,谢谢教练,u2,用户2
+3,谢谢老师,u2,用户2
 """
     data_dir = tmp_path / "data"
-    csv_path = data_dir / "健身类" / "博主" / "视频" / "comments.csv"
+    csv_path = data_dir / "教程类" / "博主" / "视频" / "comments.csv"
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     csv_path.write_text(sample, encoding="utf-8")
-    rel = "健身类/博主/视频/comments.csv"
+    rel = "教程类/博主/视频/comments.csv"
     monkeypatch.setattr("api.services.insight.ingestion.DATA_DIR", data_dir)
     monkeypatch.setattr("api.services.insight.storage.DATA_DIR", data_dir)
     monkeypatch.setattr("api.services.insight.storage.RUNS_ROOT", data_dir / "analysis_runs")
@@ -74,7 +74,7 @@ def test_results_pagination_and_filter():
         },
         {
             "record_id": "2",
-            "source": {"comment_text": "谢谢教练", "username": "b"},
+            "source": {"comment_text": "谢谢老师", "username": "b"},
             "analysis": {"primary_intent": "gratitude_recognition", "signals": ["gratitude"], "new_signals": []},
         },
     ]

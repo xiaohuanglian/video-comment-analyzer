@@ -25,19 +25,19 @@ def _patch_data_dir(monkeypatch, data_dir):
 
 
 SAMPLE_CSV = """comment_id,content,user_id,nickname
-1,这个动作练完膝盖疼,uid1,用户A
+1,这个教程学完有点不适,uid1,用户A
 2,感谢博主讲解很清晰,uid2,用户B
 """
 
 
 def _setup_run(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
-    csv_path = data_dir / "健身类" / "博主" / "视频" / "comments.csv"
+    csv_path = data_dir / "教程类" / "博主" / "视频" / "comments.csv"
     csv_path.parent.mkdir(parents=True)
     csv_path.write_text(SAMPLE_CSV, encoding="utf-8")
     _patch_data_dir(monkeypatch, data_dir)
 
-    rel = "健身类/博主/视频/comments.csv"
+    rel = "教程类/博主/视频/comments.csv"
     records = ingest_files([rel])
     run_id = build_run_id("导出测试", exists=lambda c: run_exists_in_csv_dir([rel], c))
     create_run(
@@ -79,7 +79,7 @@ def test_export_results_csv(tmp_path, monkeypatch):
     content = build_results_csv(run_id)
     text = content.decode("utf-8-sig")
     assert "评论" in text
-    assert "用户A" in text or "膝盖疼" in text
+    assert "用户A" in text or "有点不适" in text
 
 
 def test_export_report_markdown(tmp_path, monkeypatch):
@@ -97,8 +97,8 @@ def test_auto_export_writes_beside_source_csv(tmp_path, monkeypatch):
     paths = auto_export_artifacts(run_id)
     assert paths["results_csv"].endswith("视频_评论分析_分析结果.csv")
     assert "report_md" not in paths
-    csv_file = data_dir / "健身类" / "博主" / "视频" / "视频_评论分析_分析结果.csv"
-    report_file = data_dir / "健身类" / "博主" / "视频" / "视频_评论分析_洞察报告.md"
+    csv_file = data_dir / "教程类" / "博主" / "视频" / "视频_评论分析_分析结果.csv"
+    report_file = data_dir / "教程类" / "博主" / "视频" / "视频_评论分析_洞察报告.md"
     assert csv_file.exists()
     assert not report_file.exists()
     _save_reviewed_themes(
@@ -126,12 +126,12 @@ def test_open_themes_refresh_exported_research_report(tmp_path, monkeypatch):
             themes=[
                 ThemeRecord(
                     theme_id="OT1",
-                    theme_name="动作疼痛反馈",
+                    theme_name="步骤不适反馈",
                     theme_type="problem",
-                    definition="用户练习后反馈膝盖疼痛",
-                    implication="先验证动作安全提示",
+                    definition="用户练习后反馈不适",
+                    implication="先验证步骤安全提示",
                     record_ids=record_ids,
-                    representative_quotes=["这个动作练完膝盖疼"],
+                    representative_quotes=["这个教程学完有点不适"],
                 )
             ],
         ),
@@ -139,33 +139,33 @@ def test_open_themes_refresh_exported_research_report(tmp_path, monkeypatch):
 
     assembled = build_report_markdown(run_id)
     assert "## 开放主题（归并结果）" in assembled
-    assert "动作疼痛反馈" in assembled
+    assert "步骤不适反馈" in assembled
     assert assembled.count("## 开放主题（归并结果）") == 1
     assert "开放主题覆盖率" in assembled or "主要主题覆盖率" in assembled
 
     auto_export_artifacts(run_id)
-    report_file = data_dir / "健身类" / "博主" / "视频" / "视频_评论分析_洞察报告.md"
+    report_file = data_dir / "教程类" / "博主" / "视频" / "视频_评论分析_洞察报告.md"
     exported = report_file.read_text(encoding="utf-8")
-    assert "动作疼痛反馈" in exported
+    assert "步骤不适反馈" in exported
     assert "主要沟通目的" in exported
 
 
 def test_multi_video_exports_are_scoped_per_source(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
-    first = data_dir / "健身类" / "博主" / "视频A" / "comments.csv"
-    second = data_dir / "健身类" / "博主" / "视频B" / "comments.csv"
+    first = data_dir / "教程类" / "博主" / "视频A" / "comments.csv"
+    second = data_dir / "教程类" / "博主" / "视频B" / "comments.csv"
     first.parent.mkdir(parents=True)
     second.parent.mkdir(parents=True)
     first.write_text(
-        "comment_id,content,user_id,nickname\n1,动作A练完疼,u1,甲\n",
+        "comment_id,content,user_id,nickname\n1,步骤A学完有点不适,u1,甲\n",
         encoding="utf-8",
     )
     second.write_text(
-        "comment_id,content,user_id,nickname\n2,动作B练完舒服,u2,乙\n",
+        "comment_id,content,user_id,nickname\n2,步骤B学完舒服,u2,乙\n",
         encoding="utf-8",
     )
     _patch_data_dir(monkeypatch, data_dir)
-    paths = ["健身类/博主/视频A/comments.csv", "健身类/博主/视频B/comments.csv"]
+    paths = ["教程类/博主/视频A/comments.csv", "教程类/博主/视频B/comments.csv"]
     records = ingest_files(paths)
     run_id = "多视频导出"
     create_run(
@@ -196,20 +196,20 @@ def test_multi_video_exports_are_scoped_per_source(tmp_path, monkeypatch):
 
     csv_a = (first.parent / "视频A_评论分析_分析结果.csv").read_text(encoding="utf-8-sig")
     csv_b = (second.parent / "视频B_评论分析_分析结果.csv").read_text(encoding="utf-8-sig")
-    assert "动作A练完疼" in csv_a and "动作B练完舒服" not in csv_a
-    assert "动作B练完舒服" in csv_b and "动作A练完疼" not in csv_b
+    assert "步骤A学完有点不适" in csv_a and "步骤B学完舒服" not in csv_a
+    assert "步骤B学完舒服" in csv_b and "步骤A学完有点不适" not in csv_b
 
     alias_b = second.parent / ".insight" / run_id
     assert alias_b.is_dir() and not alias_b.is_symlink()
     spine_results = (alias_b / "results.jsonl").read_text(encoding="utf-8")
-    assert "动作B练完舒服" in spine_results
-    assert "动作A练完疼" not in spine_results
+    assert "步骤B学完舒服" in spine_results
+    assert "步骤A学完有点不适" not in spine_results
 
     alias_a = first.parent / ".insight" / run_id
     assert alias_a.is_dir() and not alias_a.is_symlink()
     chris_results = (alias_a / "results.jsonl").read_text(encoding="utf-8")
-    assert "动作A练完疼" in chris_results
-    assert "动作B练完舒服" not in chris_results
+    assert "步骤A学完有点不适" in chris_results
+    assert "步骤B学完舒服" not in chris_results
 
     canonical = data_dir / ".insight_runs" / run_id
     assert canonical.is_dir()

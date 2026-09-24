@@ -12,7 +12,7 @@ def test_resolve_bilibili_homepage_from_raw_data():
         "user_id": "1944301400",
         "user_homepage_url": "",
         "comment_url": "",
-        "source_file": "健身类/戴夫健身/「_SpineCare_」如何纠正骨盆旋_BV1U64y1Q76K/comments_2026-07-18.csv",
+        "source_file": "教程类/戴夫教程/「_SpineCare_」如何纠正骨盆旋_BV1U64y1Q76K/comments_2026-07-18.csv",
         "raw_data": {"video_id": "759022531", "comment_id": "221823890672"},
     }
     homepage, comment_url = resolve_source_links(source)

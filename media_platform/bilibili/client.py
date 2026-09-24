@@ -704,7 +704,7 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
                 fans_list = fans_list[:max_count - len(result)]
             if callback:  # If there is a callback function, execute it
                 await callback(creator_info, fans_list)
-            await asyncio.sleep(crawl_interval)
+            await self._pacer.sleep("after creator fans page")
             if not fans_list:
                 break
             result.extend(fans_list)
@@ -738,7 +738,7 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
                 followings_list = followings_list[:max_count - len(result)]
             if callback:  # If there is a callback function, execute it
                 await callback(creator_info, followings_list)
-            await asyncio.sleep(crawl_interval)
+            await self._pacer.sleep("after creator followings page")
             if not followings_list:
                 break
             result.extend(followings_list)
@@ -773,6 +773,6 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
                 dynamics_list = dynamics_list[:max_count - len(result)]
             if callback:
                 await callback(creator_info, dynamics_list)
-            await asyncio.sleep(crawl_interval)
+            await self._pacer.sleep("after creator dynamics page")
             result.extend(dynamics_list)
         return result

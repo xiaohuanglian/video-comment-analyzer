@@ -45,7 +45,7 @@ def test_execute_theme_cluster_writes_progress_and_completes(tmp_path, monkeypat
     first.parent.mkdir(parents=True)
     second.parent.mkdir(parents=True)
     first.write_text(
-        "comment_id,content,user_id,nickname\n1,膝盖特别疼,u1,甲\n2,不敢再练,u2,乙\n",
+        "comment_id,content,user_id,nickname\n1,进度特别疼,u1,甲\n2,不敢再练,u2,乙\n",
         encoding="utf-8",
     )
     second.write_text(
@@ -71,8 +71,8 @@ def test_execute_theme_cluster_writes_progress_and_completes(tmp_path, monkeypat
     by_file = {}
     for record in stored:
         by_file.setdefault(record.source_file, []).append(record)
-    _append_signal(run_id, by_file[paths[0]][0], "膝盖疼痛")
-    _append_signal(run_id, by_file[paths[0]][1], "膝盖不敢练")
+    _append_signal(run_id, by_file[paths[0]][0], "不适")
+    _append_signal(run_id, by_file[paths[0]][1], "进度不敢练")
     _append_signal(run_id, by_file[paths[1]][0], "脚前方甩泥")
     _append_signal(run_id, by_file[paths[1]][1], "步态甩泥")
 
@@ -93,7 +93,7 @@ def test_mark_theme_cluster_starting_clears_stale_failure(tmp_path, monkeypatch)
     csv_path = data_dir / "运康类" / "A" / "视频A" / "comments.csv"
     csv_path.parent.mkdir(parents=True)
     csv_path.write_text(
-        "comment_id,content,user_id,nickname\n1,膝盖特别疼,u1,甲\n",
+        "comment_id,content,user_id,nickname\n1,进度特别疼,u1,甲\n",
         encoding="utf-8",
     )
     _patch_data_dir(monkeypatch, data_dir)
@@ -137,7 +137,7 @@ def test_reconcile_theme_progress_marks_dead_worker(tmp_path, monkeypatch):
     csv_path = data_dir / "运康类" / "A" / "视频A" / "comments.csv"
     csv_path.parent.mkdir(parents=True)
     csv_path.write_text(
-        "comment_id,content,user_id,nickname\n1,膝盖特别疼,u1,甲\n",
+        "comment_id,content,user_id,nickname\n1,进度特别疼,u1,甲\n",
         encoding="utf-8",
     )
     _patch_data_dir(monkeypatch, data_dir)
