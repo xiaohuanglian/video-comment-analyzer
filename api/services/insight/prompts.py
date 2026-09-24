@@ -54,3 +54,42 @@ SIGNAL_ENUM = [
     "changed_plan",
     "other_new_signal",
 ]
+
+# Default keyword pools for the "一次回复能否解决" rule-based projection.
+# Projects can override them in their profile (realtime_tokens /
+# personalized_tokens / positive_result_tokens).
+REALTIME_VIDEO_KEYWORDS = (
+    "帮我看",
+    "看看我",
+    "不标准",
+    "做得不对",
+    "哪里不对",
+    "标准吗",
+    "做得对吗",
+    "帮我检查",
+    "找不到感觉",
+    "感觉不到",
+)
+PERSONALIZED_VIDEO_KEYWORDS = (
+    "判断",
+    "分不清",
+    "方向",
+    "怎么测",
+    "怎么看",
+    "适合我",
+    "因人而异",
+    "受伤",
+    "疼痛",
+)
+POSITIVE_RESULT_KEYWORDS = (
+    "立竿见影",
+    "有效果",
+    "改善了",
+    "舒服",
+    "回正",
+    "成功了",
+    "矫正成功",
+    "明显",
+    "没以前",
+    "好转",
+)

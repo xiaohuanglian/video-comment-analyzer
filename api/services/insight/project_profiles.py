@@ -22,6 +22,11 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from .paths import DATA_DIR
+from .prompts import (
+    PERSONALIZED_VIDEO_KEYWORDS,
+    POSITIVE_RESULT_KEYWORDS,
+    REALTIME_VIDEO_KEYWORDS,
+)
 
 PROFILES_FILE_NAME = "project_profiles.json"
 
@@ -60,6 +65,9 @@ class ProjectProfile(BaseModel):
     theme_risk_tokens: List[str] = Field(default_factory=list)
     theme_difficulty_tokens: List[str] = Field(default_factory=list)
     theme_question_tokens: List[str] = Field(default_factory=list)
+    realtime_tokens: List[str] = Field(default_factory=list)  # “需实时观察”判定词（空=内置）
+    personalized_tokens: List[str] = Field(default_factory=list)  # “需结合个人情况”判定词
+    positive_result_tokens: List[str] = Field(default_factory=list)  # “正向结果”判定词
     content_persona: str = ""  # tone/voice for generated content
     content_platforms: List[str] = Field(default_factory=list)
     opportunity_templates: List[Dict[str, Any]] = Field(default_factory=list)
@@ -108,6 +116,9 @@ def _builtin_default() -> ProjectProfile:
         theme_risk_tokens=["风险", "坑", "骗", "割韭菜", "后悔"],
         theme_difficulty_tokens=["不会", "难", "搞不定", "学不会", "麻烦", "卡住"],
         theme_question_tokens=["怎么", "能不能", "可以", "吗", "如何", "为什么"],
+        realtime_tokens=list(REALTIME_VIDEO_KEYWORDS),
+        personalized_tokens=list(PERSONALIZED_VIDEO_KEYWORDS),
+        positive_result_tokens=list(POSITIVE_RESULT_KEYWORDS),
         content_persona="既懂 AI 又能把复杂概念讲明白的老师型创作者口吻；具体、有示范、不夸大、不制造焦虑、不硬推广。",
         content_platforms=["短视频", "图文", "长文", "课程/直播"],
         intents=default_intents(),
@@ -274,3 +285,20 @@ def intent_label_map(profile: Any) -> Dict[str, str]:
 
 def signal_label_map(profile: Any) -> Dict[str, str]:
     return {item.key: item.label for item in resolve_signals(profile) if item.key}
+
+
+def _resolve_tokens(profile: Any, field: str, defaults) -> List[str]:
+    items = list(getattr(profile, field, None) or []) if profile is not None else []
+    return items if items else list(defaults)
+
+
+def resolve_realtime_tokens(profile: Any) -> List[str]:
+    return _resolve_tokens(profile, "realtime_tokens", REALTIME_VIDEO_KEYWORDS)
+
+
+def resolve_personalized_tokens(profile: Any) -> List[str]:
+    return _resolve_tokens(profile, "personalized_tokens", PERSONALIZED_VIDEO_KEYWORDS)
+
+
+def resolve_positive_result_tokens(profile: Any) -> List[str]:
+    return _resolve_tokens(profile, "positive_result_tokens", POSITIVE_RESULT_KEYWORDS)

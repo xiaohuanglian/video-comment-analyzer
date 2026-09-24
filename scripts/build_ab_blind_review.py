@@ -22,8 +22,8 @@ if str(APP_DIR) not in sys.path:
 from api.services.insight.ab_blind_pack import select_blind_sample_ids, TARGET_TOTAL
 from api.services.insight.storage import load_evidence_cards, load_results
 
-DEFAULT_LEGACY_RUN = "戴夫健身_2"
-DEFAULT_EVIDENCE_RUN = "ab_evidence_戴夫健身_2_100"
+DEFAULT_LEGACY_RUN = ""  # pass --legacy-run with your own run_id
+DEFAULT_EVIDENCE_RUN = ""  # pass --evidence-run with your own run_id
 DEFAULT_LIMIT = 100
 DEFAULT_SEED = 20260720
 

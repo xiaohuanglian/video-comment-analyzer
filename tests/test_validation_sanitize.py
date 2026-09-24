@@ -25,7 +25,7 @@ def _record(text: str) -> SourceRecord:
 
 
 def test_sanitize_drops_signal_without_verbatim_evidence() -> None:
-    record = _record("我膝盖术后在练康复动作")
+    record = _record("我进度术后在练康复步骤")
     analysis = CommentAnalysisResult(
         record_id="r1",
         primary_intent=PrimaryIntent.QUESTION,
@@ -81,7 +81,7 @@ def test_validate_analysis_no_longer_fails_on_bad_new_signal() -> None:
 def test_sanitize_specific_problems_drops_paraphrase() -> None:
     from api.services.insight.validation import sanitize_specific_problems
 
-    record = _record("膝盖术后在练康复")
+    record = _record("进度术后在练康复")
     analysis = CommentAnalysisResult(
         record_id="r1",
         primary_intent=PrimaryIntent.QUESTION,
@@ -94,14 +94,14 @@ def test_sanitize_specific_problems_drops_paraphrase() -> None:
 def test_sanitize_specific_problems_keeps_verbatim() -> None:
     from api.services.insight.validation import sanitize_specific_problems
 
-    record = _record("膝盖术后在练康复")
+    record = _record("进度术后在练康复")
     analysis = CommentAnalysisResult(
         record_id="r1",
         primary_intent=PrimaryIntent.QUESTION,
-        specific_problems=["膝盖术后"],
+        specific_problems=["进度术后"],
     )
     cleaned = sanitize_specific_problems(record, analysis)
-    assert cleaned.specific_problems == ["膝盖术后"]
+    assert cleaned.specific_problems == ["进度术后"]
 
 
 def test_legacy_runs_root_is_under_data() -> None:

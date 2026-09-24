@@ -92,8 +92,8 @@ def test_research_clusters_cover_evidence_across_full_dataset():
     rows[-1]["card"]["evidence_items"] = [
         {
             "type": "action_gap",
-            "text": "动作无效",
-            "evidence_quote": "练了一周还是没效果",
+            "text": "步骤无效",
+            "evidence_quote": "学了一周还是没效果",
             "speaker_scope": "self",
             "certainty": "high",
             "subtype": "started_but_stopped",
@@ -177,10 +177,10 @@ def test_recount_coerces_counter_evidence_dicts_to_strings():
                 "theme_name": "效果差",
                 "comment_record_ids": ["r1"],
                 "counter_evidence": [
-                    {"record_id": "健身类/x", "note": "练一周无效果"},
+                    {"record_id": "教程类/x", "note": "练一周无效果"},
                     "部分用户反馈有效",
                 ],
-                "current_solutions": [{"text": "自己搜替代动作"}],
+                "current_solutions": [{"text": "自己搜替代步骤"}],
             }
         ],
         "hypothesis_assessment": [],
@@ -199,12 +199,12 @@ def test_recount_coerces_counter_evidence_dicts_to_strings():
         draft, known_ids={"r1", "r2"}, records=records, card_rows=rows
     )
     assert analysis.themes[0].counter_evidence == ["练一周无效果", "部分用户反馈有效"]
-    assert analysis.themes[0].current_solutions == ["自己搜替代动作"]
+    assert analysis.themes[0].current_solutions == ["自己搜替代步骤"]
     assert analysis.opportunity_hypotheses[0].counter_evidence == ["还行"]
 
 
 def test_recount_filters_unknown_ids_and_recomputes_theme_counts():
-    records = [_rec("r1", "怎么练？"), _rec("r2", "谢谢"), _rec("r3", "帮我看动作")]
+    records = [_rec("r1", "怎么练？"), _rec("r2", "谢谢"), _rec("r3", "帮我看步骤")]
     rows = _rows(records)
     draft = {
         "themes": [
@@ -252,8 +252,8 @@ def test_recount_filters_unknown_ids_and_recomputes_theme_counts():
 
 def test_research_mock_includes_support_and_weaken_slots():
     records = [
-        _rec("a", "帮我看动作哪里不对"),
-        _rec("b", "谢谢教练"),
+        _rec("a", "帮我看步骤哪里不对"),
+        _rec("b", "谢谢老师"),
         _rec("c", "已打卡"),
     ]
     rows = _rows(records)

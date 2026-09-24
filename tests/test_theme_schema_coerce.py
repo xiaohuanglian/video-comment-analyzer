@@ -27,18 +27,18 @@ def test_round1_accepts_type_alias_and_list_root():
     parsed = Round1ResponseLLM.model_validate(
         [
             {
-                "name": "膝盖运动不适",
+                "name": "进度运动不适",
                 "type": "new_problem",
-                "desc": "练完膝盖疼",
+                "desc": "学完有点不适",
                 "signals": ["s0002"],
                 "confidence": 0.9,
             }
         ]
     )
     theme = parsed.candidate_themes[0]
-    assert theme.theme_name == "膝盖运动不适"
+    assert theme.theme_name == "进度运动不适"
     assert theme.theme_type == "new_problem"
-    assert theme.definition == "练完膝盖疼"
+    assert theme.definition == "学完有点不适"
     assert theme.included_signal_ids == ["s0002"]
 
 

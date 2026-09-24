@@ -63,8 +63,8 @@ def _persist_progress(run_id: str, progress: RunProgress) -> None:
     save_progress(run_id, progress)
 
 
-def _card_to_comment_analysis(card) -> CommentAnalysisResult:
-    projected = outreach_analysis_from_card(card)
+def _card_to_comment_analysis(card, *, profile=None) -> CommentAnalysisResult:
+    projected = outreach_analysis_from_card(card, profile=profile)
     new_signals = derive_new_signals_from_card(card)
     return CommentAnalysisResult.model_validate(
         {
@@ -202,6 +202,13 @@ def _write_extraction_cards(
     writer.start()
     result_writer = BufferedResultsWriter(run_id)
     processed = 0
+    try:
+        from .project_profiles import resolve_profile as _resolve_profile
+        from .storage import load_config as _load_config
+
+        profile = _resolve_profile(_load_config(run_id))
+    except Exception:
+        profile = None
     # Incremental completion set: avoids re-reading results.jsonl every N rows (O(n^2)).
     local_done = done_ids if done_ids is not None else set()
     record_by_id = {record.internal_record_id: record for record in pending_chunk}
@@ -216,7 +223,7 @@ def _write_extraction_cards(
             if source is None:
                 continue
             writer.put(source, card, from_cache=bool(card.reused_from_record_id))
-            analysis = _card_to_comment_analysis(card)
+            analysis = _card_to_comment_analysis(card, profile=profile)
             result_writer.add(source, analysis)
             local_done.add(card.record_id)
             processed += 1
@@ -622,6 +629,13 @@ def build_summary(run_id: str) -> Dict[str, object]:
     from .storage import load_candidates, load_evidence_cards, load_progress, load_results, save_progress, save_summary
 
     results = load_results(run_id)
+    try:
+        from .project_profiles import resolve_profile as _resolve_profile
+        from .storage import load_config as _load_config_for_profile
+
+        profile = _resolve_profile(_load_config_for_profile(run_id))
+    except Exception:
+        profile = None
     cards_by_id = {
         str(row.get("record_id") or ""): row
         for row in load_evidence_cards(run_id, include_source=False)
@@ -634,7 +648,7 @@ def build_summary(run_id: str) -> Dict[str, object]:
         if not card_row:
             continue
         card = card_row.get("card") or {}
-        projected = outreach_analysis_from_card(card)
+        projected = outreach_analysis_from_card(card, profile=profile)
         analysis = merge_projected_analysis(row.get("analysis") or {}, projected)
         analysis["new_signals"] = derive_new_signals_from_card(card)
         analysis["paid_help"] = bool(

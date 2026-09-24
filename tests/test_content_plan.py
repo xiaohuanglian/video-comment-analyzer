@@ -17,11 +17,11 @@ from api.services.insight.schemas import FieldMapping, RunConfig
 from api.services.insight.storage import create_run
 
 SAMPLE_CSV = """comment_id,video_id,content,user_id,nickname,like_count
-1,100,这个动作一周练几次？,u1,用户A,0
-2,100,深蹲膝盖到底怎么摆，求教练指点,u2,用户B,0
-3,100,臀桥大腿后侧酸正常吗？,u3,用户C,1
-4,100,跟着练了一周腰舒服多了,u4,用户D,2
-5,100,收藏了但一直没开始练,u5,用户E,0
+1,100,这个教程一周学几次？,u1,用户A,0
+2,100,这个教程到底怎么学，求老师指点,u2,用户B,0
+3,100,这一步大腿后侧酸正常吗？,u3,用户C,1
+4,100,跟着学了一周情况好转多了,u4,用户D,2
+5,100,收藏了但一直没开始学,u5,用户E,0
 """
 
 
@@ -36,10 +36,10 @@ def _isolate(tmp_path, monkeypatch):
     ):
         monkeypatch.setattr(f"{mod}.DATA_DIR", data_dir, raising=False)
         monkeypatch.setattr(f"{mod}.RUNS_ROOT", data_dir / "analysis_runs", raising=False)
-    csv_path = data_dir / "健身类" / "博主" / "视频" / "comments_x.csv"
+    csv_path = data_dir / "教程类" / "博主" / "视频" / "comments_x.csv"
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     csv_path.write_text(SAMPLE_CSV, encoding="utf-8")
-    return "健身类/博主/视频/comments_x.csv"
+    return "教程类/博主/视频/comments_x.csv"
 
 
 def test_build_content_plan_from_mock_run(tmp_path, monkeypatch):
@@ -75,9 +75,9 @@ def test_build_content_plan_from_mock_run(tmp_path, monkeypatch):
 
 
 def test_keywords_and_draft_parsing():
-    keywords = _keywords_from("深蹲膝盖怎么摆")
+    keywords = _keywords_from("这个教程怎么学")
     assert keywords  # non-empty
-    assert "膝盖" in keywords
+    assert "教程" in keywords
     parsed = _parse_drafts('{"topics": [{"topic_id": "T1", "title": "x"}]}')
     assert parsed and parsed[0]["topic_id"] == "T1"
     assert _parse_drafts("not json at all") == []

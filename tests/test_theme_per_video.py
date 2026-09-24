@@ -51,8 +51,8 @@ def test_multi_video_theme_clustering_is_independent(tmp_path, monkeypatch):
     second.parent.mkdir(parents=True)
     first.write_text(
         "comment_id,content,user_id,nickname\n"
-        "1,这个动作练完膝盖特别疼,u1,甲\n"
-        "2,膝盖疼痛不敢再练了,u2,乙\n",
+        "1,这个步骤学完进度特别疼,u1,甲\n"
+        "2,不适不敢再学了,u2,乙\n",
         encoding="utf-8",
     )
     second.write_text(
@@ -83,8 +83,8 @@ def test_multi_video_theme_clustering_is_independent(tmp_path, monkeypatch):
     by_file = {}
     for record in stored:
         by_file.setdefault(record.source_file, []).append(record)
-    _append_signal(run_id, by_file[paths[0]][0], "膝盖疼痛")
-    _append_signal(run_id, by_file[paths[0]][1], "膝盖不敢练")
+    _append_signal(run_id, by_file[paths[0]][0], "不适")
+    _append_signal(run_id, by_file[paths[0]][1], "进度不敢练")
     _append_signal(run_id, by_file[paths[1]][0], "脚前方甩泥")
     _append_signal(run_id, by_file[paths[1]][1], "步态甩泥")
 

@@ -20,14 +20,14 @@ def _make_records(tmp_path, monkeypatch, count=120):
         if i % 3 == 0:
             content = "已打卡"
         elif i % 3 == 1:
-            content = "谢谢教练，" + ("详细说明" * 20) + "这正常吗？"
+            content = "谢谢老师，" + ("详细说明" * 20) + "这正常吗？"
         else:
-            content = f"问题{i}：这个动作怎么做？"
+            content = f"问题{i}：这个步骤怎么做？"
         rows.append(f"{i},{content},u{i},用户{i}")
-    csv_path = data_dir / "健身类" / "博主A" / "视频1" / "comments_2026-07-19.csv"
+    csv_path = data_dir / "教程类" / "博主A" / "视频1" / "comments_2026-07-19.csv"
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     csv_path.write_text("comment_id,content,user_id,nickname\n" + "\n".join(rows), encoding="utf-8")
-    rel = "健身类/博主A/视频1/comments_2026-07-19.csv"
+    rel = "教程类/博主A/视频1/comments_2026-07-19.csv"
     monkeypatch.setattr("api.services.insight.ingestion.DATA_DIR", data_dir)
     monkeypatch.setattr("api.services.insight.storage.DATA_DIR", data_dir)
     monkeypatch.setattr("api.services.insight.storage.RUNS_ROOT", data_dir / "analysis_runs")

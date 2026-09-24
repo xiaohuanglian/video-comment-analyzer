@@ -14,17 +14,17 @@ from api.services.insight.theme_schemas import ThemeRecord
 SAMPLE = """comment_id,content,user_id,nickname
 1,看不懂镜像，左右腿分不清,u1,用户1
 2,视频镜像把我搞晕了，不知道跟同侧还是反侧,u2,用户2
-3,谢谢教练,u3,用户3
-4,膝盖旧伤还能练吗,u4,用户4
+3,谢谢老师,u3,用户3
+4,进度旧伤还能练吗,u4,用户4
 """
 
 
 def _setup(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
-    csv_path = data_dir / "健身类" / "博主" / "视频_BV1test" / "comments_2026-07-19.csv"
+    csv_path = data_dir / "教程类" / "博主" / "视频_BV1test" / "comments_2026-07-19.csv"
     csv_path.parent.mkdir(parents=True)
     csv_path.write_text(SAMPLE, encoding="utf-8")
-    rel = "健身类/博主/视频_BV1test/comments_2026-07-19.csv"
+    rel = "教程类/博主/视频_BV1test/comments_2026-07-19.csv"
     monkeypatch.setattr("api.services.insight.ingestion.DATA_DIR", data_dir)
     monkeypatch.setattr("api.services.insight.storage.DATA_DIR", data_dir)
     monkeypatch.setattr("api.services.insight.storage.RUNS_ROOT", data_dir / "analysis_runs")

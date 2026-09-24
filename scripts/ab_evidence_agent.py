@@ -33,7 +33,7 @@ from api.services.insight.storage import (
     save_research_report,
 )
 
-DEFAULT_LEGACY_RUN = "戴夫健身_2"
+DEFAULT_LEGACY_RUN = ""  # pass --legacy-run with your own run_id
 DEFAULT_LIMIT = 100
 
 
@@ -405,7 +405,7 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     parser.add_argument("--real", action="store_true", help="Call real LLM API (needs API key)")
     parser.add_argument("--api-key", default=os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("OPENAI_API_KEY") or "")
-    parser.add_argument("--evidence-run", default="", help="B group run_id (e.g. ab_evidence_戴夫健身_2_100_b2)")
+    parser.add_argument("--evidence-run", default="", help="B group run_id (e.g. ab_evidence_<run>_100_b2)")
     parser.add_argument("--report", default="")
     parser.add_argument(
         "--record-ids-file",

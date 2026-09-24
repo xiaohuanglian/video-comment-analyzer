@@ -37,7 +37,7 @@ def test_normalize_validity_legacy_aliases():
 
 
 def test_thanks_checkin_bookmark_are_low_info_valid():
-    thanks = extract_evidence_card_mock(_rec("t1", "谢谢教练"))
+    thanks = extract_evidence_card_mock(_rec("t1", "谢谢老师"))
     checkin = extract_evidence_card_mock(_rec("t2", "今日打卡"))
     bookmark = extract_evidence_card_mock(_rec("t3", "收藏了"))
     assert thanks.record_status == RecordStatus.USABLE
@@ -55,7 +55,7 @@ def test_ad_and_garbled_are_spam():
 
 
 def test_secondary_expressions_compound():
-    card = extract_evidence_card_mock(_rec("c1", "谢谢教练，臀桥酸正常吗？"))
+    card = extract_evidence_card_mock(_rec("c1", "谢谢老师，这一步没做对正常吗？"))
     assert card.primary_expression == PrimaryExpression.QUESTION
     assert card.record_status == RecordStatus.USABLE
 
@@ -63,9 +63,9 @@ def test_secondary_expressions_compound():
 def test_secondary_does_not_affect_primary_percent_logic():
     """Secondary is multi; primary remains single — percent should only use primary."""
     cards = [
-        extract_evidence_card_mock(_rec("a", "谢谢教练，这正常吗？")),
+        extract_evidence_card_mock(_rec("a", "谢谢老师，这正常吗？")),
         extract_evidence_card_mock(_rec("b", "已打卡")),
-        extract_evidence_card_mock(_rec("c", "帮我看动作")),
+        extract_evidence_card_mock(_rec("c", "帮我看步骤")),
     ]
     primary_counts = {}
     for c in cards:
