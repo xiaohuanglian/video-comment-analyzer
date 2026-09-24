@@ -28,6 +28,19 @@ PROFILES_FILE_NAME = "project_profiles.json"
 _write_lock = threading.Lock()
 
 
+class TaxonomyItem(BaseModel):
+    """One business-facing category (intent or signal).
+
+    ``key`` is the stable machine value stored in analysis rows; ``label`` is
+    what users see. Profiles may rename, reorder or subset the built-in
+    vocabulary so the same pipeline reads naturally for any business.
+    """
+
+    key: str
+    label: str
+    description: str = ""
+
+
 class ProjectProfile(BaseModel):
     profile_id: str
     name: str
@@ -40,6 +53,8 @@ class ProjectProfile(BaseModel):
     hypotheses: Dict[str, str] = Field(default_factory=dict)  # H1..H3 full text
     hypothesis_short: Dict[str, str] = Field(default_factory=dict)
     hypothesis_rules: str = ""  # extra rule lines for the research system prompt
+    intents: List[TaxonomyItem] = Field(default_factory=list)  # 意图维度（空=内置）
+    signals: List[TaxonomyItem] = Field(default_factory=list)  # 信号维度（空=内置）
     decision_keywords: List[str] = Field(default_factory=list)
     noise_markers: List[str] = Field(default_factory=list)
     theme_risk_tokens: List[str] = Field(default_factory=list)
@@ -95,6 +110,8 @@ def _builtin_default() -> ProjectProfile:
         theme_question_tokens=["怎么", "能不能", "可以", "吗", "如何", "为什么"],
         content_persona="既懂 AI 又能把复杂概念讲明白的老师型创作者口吻；具体、有示范、不夸大、不制造焦虑、不硬推广。",
         content_platforms=["短视频", "图文", "长文", "课程/直播"],
+        intents=default_intents(),
+        signals=default_signals(),
         opportunity_templates=[],
         is_builtin=True,
     )
@@ -224,3 +241,36 @@ def resolve_profile(config: Any) -> ProjectProfile:
             }
         )
     return profile
+
+
+# --- taxonomy (business-facing intents & signals) ----------------------------
+
+def default_intents() -> List[TaxonomyItem]:
+    from .labels import INTENT_LABELS
+
+    return [TaxonomyItem(key=k, label=v) for k, v in INTENT_LABELS.items()]
+
+
+def default_signals() -> List[TaxonomyItem]:
+    from .labels import SIGNAL_LABELS
+    from .prompts import SIGNAL_ENUM
+
+    return [TaxonomyItem(key=k, label=SIGNAL_LABELS.get(k, k)) for k in SIGNAL_ENUM]
+
+
+def resolve_intents(profile: Any) -> List[TaxonomyItem]:
+    items = list(getattr(profile, "intents", None) or []) if profile is not None else []
+    return items or default_intents()
+
+
+def resolve_signals(profile: Any) -> List[TaxonomyItem]:
+    items = list(getattr(profile, "signals", None) or []) if profile is not None else []
+    return items or default_signals()
+
+
+def intent_label_map(profile: Any) -> Dict[str, str]:
+    return {item.key: item.label for item in resolve_intents(profile) if item.key}
+
+
+def signal_label_map(profile: Any) -> Dict[str, str]:
+    return {item.key: item.label for item in resolve_signals(profile) if item.key}

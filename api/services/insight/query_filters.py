@@ -6,7 +6,15 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .candidate_schemas import CandidateRecord
-from .statistics import VALID_INTENTS
+
+# Built-in intents that count as "有效". For custom profiles any concrete,
+# non-invalid intent key is accepted (see _is_valid_intent).
+from .statistics import VALID_INTENTS  # noqa: F401  (kept for backward-compat imports)
+_INVALID_INTENTS = {"", "invalid_or_unclear", "other_invalid", "unclear"}
+
+
+def _is_valid_intent(intent: str) -> bool:
+    return intent not in _INVALID_INTENTS
 
 
 def _row_analysis(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -42,7 +50,7 @@ def match_result_row(
 
     if intent_valid:
         intent = analysis.get("primary_intent") or ""
-        if intent not in VALID_INTENTS:
+        if not _is_valid_intent(intent):
             return False
 
     if primary_intent and (analysis.get("primary_intent") or "") != primary_intent:
