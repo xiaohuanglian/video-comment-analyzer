@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 
-from .routers import crawler_router, data_router, websocket_router, bilibili_router, creator_router, analysis_router
+from .routers import crawler_router, data_router, websocket_router, bilibili_router, creator_router, analysis_router, growth_router
 from .services.platform_capabilities import PLATFORM_CAPABILITIES
 from .services.browser_check import probe_browser_launch
 
@@ -83,6 +83,7 @@ app.include_router(websocket_router, prefix="/api")
 app.include_router(bilibili_router, prefix="/api")
 app.include_router(creator_router, prefix="/api")
 app.include_router(analysis_router, prefix="/api")
+app.include_router(growth_router, prefix="/api")
 
 
 @app.get("/")

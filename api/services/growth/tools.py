@@ -1,0 +1,472 @@
+# -*- coding: utf-8 -*-
+"""Agent tool registry (Phase 2).
+
+Each tool declares: input schema, output schema (loose), permission level,
+per-session call cap and timeout. Handlers wrap *existing* capabilities —
+no reimplementation of the insight pipeline.
+
+Permission levels (任务书 §4):
+- L1: autonomous inside authorized data scope & budget.
+- L2: needs task-scoped grant recorded on the session (time/budget bounded).
+- L3: always needs explicit human approval; the orchestrator never self-grants.
+"""
+
+from __future__ import annotations
+
+import time
+import uuid
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+from typing import Any, Callable, Dict, List, Optional
+
+from pydantic import BaseModel, Field
+
+from . import store
+from .models import (
+    AuditRecord,
+    ContentAsset,
+    GrowthExperiment,
+    GrowthOpportunity,
+    LearningRecord,
+    Signal,
+    utc_now_iso,
+)
+
+L1, L2, L3 = "L1", "L2", "L3"
+
+
+class ToolSpec(BaseModel):
+    name: str
+    description: str
+    args_schema: Dict[str, Any] = Field(default_factory=dict)  # JSON schema (object)
+    permission: str = L1
+    max_calls_per_session: int = 3
+    timeout_seconds: int = 30
+
+
+class ToolDenied(Exception):
+    pass
+
+
+class ToolResult(BaseModel):
+    status: str = "ok"  # ok / denied / error
+    data: Any = None
+    error: str = ""
+
+
+# --- context -----------------------------------------------------------------
+
+
+class ToolContext:
+    """Per-session execution state passed to every tool call."""
+
+    def __init__(
+        self,
+        *,
+        product_id: str,
+        session_id: str,
+        l2_grants: Optional[List[str]] = None,
+        api_key: str = "",
+        base_url: str = "",
+        model_name: str = "",
+    ) -> None:
+        self.product_id = product_id
+        self.session_id = session_id
+        self.l2_grants = set(l2_grants or [])
+        self.api_key = api_key
+        self.base_url = base_url
+        self.model_name = model_name
+
+
+# --- handlers (reuse existing modules) ---------------------------------------
+
+
+def _list_analysis_runs(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    from ..insight.run_locations import load_run_index
+
+    index = load_run_index()
+    if isinstance(index, dict):
+        entries = [{"run_id": str(k), "storage_dir": str(v)} for k, v in index.items()]
+    else:
+        entries = [r for r in (index or []) if isinstance(r, dict)]
+    return {"runs": entries[: int(args.get("limit", 20))], "total": len(entries),
+            "note": "已有评论分析任务索引；详情用 get_run_summary"}
+
+
+def _get_run_summary(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    from ..insight import storage as run_storage
+
+    run_id = str(args["run_id"])
+    try:
+        config = run_storage.load_config(run_id)
+    except FileNotFoundError:
+        raise ValueError(f"run 不存在: {run_id}")
+    summary = run_storage.load_summary(run_id)
+    progress = run_storage.load_progress(run_id)
+    return {
+        "run_id": run_id,
+        "project_id": config.project_id,
+        "total_records": progress.total_records,
+        "completed": progress.completed,
+        "summary_keys": sorted(summary.keys()) if isinstance(summary, dict) else [],
+    }
+
+
+def _get_run_top_needs(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    """Code-only aggregation over existing analysis results (no LLM)."""
+    from ..insight import storage as run_storage
+
+    run_id = str(args["run_id"])
+    limit = int(args.get("limit", 10))
+    try:
+        run_storage.load_config(run_id)
+    except FileNotFoundError:
+        raise ValueError(f"run 不存在: {run_id}")
+    needs: Counter = Counter()
+    problems: Counter = Counter()
+    quotes: Dict[str, List[str]] = {}
+    for row in run_storage.iter_results(run_id):
+        analysis = (row or {}).get("analysis") or {}
+        for field, counter in (("potential_needs", needs), ("specific_problems", problems)):
+            for item in analysis.get(field) or []:
+                text = str(item).strip()
+                if text:
+                    counter[text] += 1
+            for quote in analysis.get("evidence_quotes") or []:
+                quotes.setdefault(field, []).append(str(quote)[:120])
+    return {
+        "run_id": run_id,
+        "top_needs": needs.most_common(limit),
+        "top_problems": problems.most_common(limit),
+        "sample_quotes": {k: v[:5] for k, v in quotes.items()},
+    }
+
+
+def _import_signals_from_run(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    """Convert existing comment analysis rows into unified Signal records (code-only)."""
+    from ..insight import storage as run_storage
+
+    run_id = str(args["run_id"])
+    limit = int(args.get("limit", 200))
+    try:
+        run_storage.load_config(run_id)
+    except FileNotFoundError:
+        raise ValueError(f"run 不存在: {run_id}")
+    created: List[str] = []
+    for row in run_storage.iter_results(run_id, limit=limit):
+        src = (row or {}).get("source") or {}
+        analysis = (row or {}).get("analysis") or {}
+        needs = analysis.get("potential_needs") or []
+        problems = analysis.get("specific_problems") or []
+        if not needs and not problems:
+            continue
+        rid = str(src.get("internal_record_id") or analysis.get("record_id") or uuid.uuid4())
+        sig = Signal(
+            signal_id=f"{run_id}:{rid}",
+            product_id=ctx.product_id,
+            source_type="external_comment",
+            source_platform=str(src.get("platform") or "unknown"),
+            dataset_ref=run_id,
+            evidence_refs=[rid],
+            collected_at=utc_now_iso(),
+            signal_type=str(analysis.get("primary_intent") or ""),
+            need_or_problem=(needs or problems)[0][:200],
+            ai_classification={
+                "signals": analysis.get("signals") or [],
+                "confidence": analysis.get("confidence") or 0.0,
+                "needs": needs[:5],
+                "problems": problems[:5],
+            },
+            confidence=float(analysis.get("confidence") or 0.0),
+            evidence_quality="high",
+            usage_rights="internal_only",  # 外部评论原文默认不外发
+        )
+        created.append(sig.signal_id)
+        store.add_signals([sig])
+    return {"imported": len(created), "signal_ids": created[:20]}
+
+
+def _query_signals(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    signals = store.list_signals(ctx.product_id)
+    source_type = (args.get("source_type") or "").strip()
+    keyword = (args.get("keyword") or "").strip()
+    out = []
+    for s in signals:
+        if source_type and s.source_type != source_type:
+            continue
+        if keyword and keyword not in (s.need_or_problem + s.signal_type):
+            continue
+        out.append(s.model_dump())
+    limit = int(args.get("limit", 50))
+    return {"total": len(out), "signals": out[:limit]}
+
+
+def _query_assets(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    assets = [a.model_dump() for a in store.list_assets(ctx.product_id)]
+    topic = (args.get("topic") or "").strip()
+    if topic:
+        assets = [a for a in assets if topic in (a.get("title", "") + "".join(a.get("topics", [])) + a.get("summary", ""))]
+    return {"total": len(assets), "assets": assets[: int(args.get("limit", 50))]}
+
+
+def _upsert_asset(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    asset = ContentAsset.model_validate({**args, "product_id": ctx.product_id, "created_at": utc_now_iso()})
+    store.upsert_asset(asset)
+    return {"asset_id": asset.asset_id, "license_status": asset.license_status}
+
+
+def _match_assets_to_needs(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    """Deterministic matching; AI adds interpretation on top of these facts."""
+    signals = store.list_signals(ctx.product_id)
+    assets = store.list_assets(ctx.product_id)
+    need_counter: Counter = Counter()
+    for s in signals:
+        if s.need_or_problem:
+            need_counter[s.need_or_problem] += 1
+    matches = []
+    for need, count in need_counter.most_common(int(args.get("limit", 10))):
+        related = [
+            a.asset_id
+            for a in assets
+            if any(tok and tok in need for tok in (a.topics + [a.title]))
+            and a.license_status in {"owned", "licensed"}
+        ]
+        blocked = [
+            a.asset_id
+            for a in assets
+            if any(tok and tok in need for tok in (a.topics + [a.title]))
+            and a.license_status not in {"owned", "licensed"}
+        ]
+        matches.append({"need": need, "signal_count": count,
+                        "usable_assets": related, "blocked_unlicensed": blocked})
+    return {"matches": matches, "note": "blocked_unlicensed 素材禁止对外使用"}
+
+
+def _create_opportunity(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    opp = GrowthOpportunity.model_validate({
+        **args,
+        "product_id": ctx.product_id,
+        "opportunity_id": args.get("opportunity_id") or f"op_{uuid.uuid4().hex[:8]}",
+        "created_by": "agent",
+        "created_at": utc_now_iso(),
+    })
+    store.upsert_opportunity(opp)
+    return {"opportunity_id": opp.opportunity_id, "verdict": opp.verdict}
+
+
+def _create_experiment(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    exp = GrowthExperiment.model_validate({
+        **args,
+        "product_id": ctx.product_id,
+        "experiment_id": args.get("experiment_id") or f"exp_{uuid.uuid4().hex[:8]}",
+    })
+    store.upsert_experiment(exp)
+    return {"experiment_id": exp.experiment_id, "status": exp.status}
+
+
+def _compute_experiment_metrics(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    exp_id = str(args.get("experiment_id") or "")
+    obs = store.list_observations(ctx.product_id, experiment_id=exp_id)
+    by_kind: Dict[str, Dict[str, float]] = {}
+    for o in obs:
+        by_kind.setdefault(o.metric_kind.value, {})[o.name] = by_kind.get(o.metric_kind.value, {}).get(o.name, 0.0) + o.value
+    product = store.get_product_or_raise(ctx.product_id)
+    return {
+        "experiment_id": exp_id,
+        "metrics_by_kind": by_kind,
+        "observation_count": len(obs),
+        "attribution_capability": product.attribution_capability,
+        "note": "attribution_capability=none 时，站内转化不可验证，禁止推断注册/CAC",
+    }
+
+
+def _record_learning(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    rec = LearningRecord.model_validate({
+        **args,
+        "product_id": ctx.product_id,
+        "learning_id": args.get("learning_id") or f"l_{uuid.uuid4().hex[:8]}",
+        "created_at": utc_now_iso(),
+    })
+    store.upsert_learning(rec)
+    return {"learning_id": rec.learning_id}
+
+
+def _recall_learnings(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    recs = [r.model_dump() for r in store.list_learnings(ctx.product_id)]
+    keyword = (args.get("keyword") or "").strip()
+    if keyword:
+        recs = [r for r in recs if keyword in (r.get("what_tested", "") + r.get("outcome", ""))]
+    return {"total": len(recs), "learnings": recs[-int(args.get("limit", 20)):]}
+
+
+def _crawl_external(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    # L2：新增外部数据采集。本次仅登记任务，不自动执行爬虫。
+    return {
+        "accepted": True,
+        "note": "已授权的外部采集任务已登记；实际采集走现有采集面板（含频率控制），Agent 不直接驱动浏览器。",
+        "args": args,
+    }
+
+
+def _send_external_reply(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    # L3：对外触达。Agent 永远不获得此工具的授权（见 registry 注册 perms=L3）。
+    raise ToolDenied("对外发送必须走现有回复审核面板并人工逐条批准")
+
+
+# --- registry ----------------------------------------------------------------
+
+
+def _spec(name, description, properties, required=(), permission=L1, max_calls=3, timeout=30):
+    return ToolSpec(
+        name=name,
+        description=description,
+        args_schema={"type": "object", "properties": properties, "required": list(required)},
+        permission=permission,
+        max_calls_per_session=max_calls,
+        timeout_seconds=timeout,
+    )
+
+
+def build_registry() -> Dict[str, tuple[ToolSpec, Callable]]:
+    reg: Dict[str, tuple[ToolSpec, Callable]] = {}
+
+    def reg_tool(spec, fn):
+        reg[spec.name] = (spec, fn)
+
+    reg_tool(_spec("list_analysis_runs", "列出已有评论分析任务（run），了解可用数据", {}), _list_analysis_runs)
+    reg_tool(_spec("get_run_summary", "查看某个 run 的规模、项目与产物摘要",
+                   {"run_id": {"type": "string"}}, ("run_id",)), _get_run_summary)
+    reg_tool(_spec("get_run_top_needs", "代码级聚合某 run 的高频需求/问题与证据引用（不耗模型）",
+                   {"run_id": {"type": "string"}, "limit": {"type": "integer"}}, ("run_id",)), _get_run_top_needs)
+    reg_tool(_spec("import_signals_from_run", "把某 run 的分析结果转换为统一用户信号（限内部使用）",
+                   {"run_id": {"type": "string"}, "limit": {"type": "integer"}}, ("run_id",),
+                   max_calls=2, timeout=120), _import_signals_from_run)
+    reg_tool(_spec("query_signals", "检索本产品的统一用户信号",
+                   {"source_type": {"type": "string"}, "keyword": {"type": "string"}, "limit": {"type": "integer"}}), _query_signals)
+    reg_tool(_spec("query_assets", "检索内容资产库（含授权状态）",
+                   {"topic": {"type": "string"}, "limit": {"type": "integer"}}), _query_assets)
+    reg_tool(_spec("upsert_asset", "登记/更新一条内容资产（含授权状态 license_status）",
+                   {"asset_id": {"type": "string"}, "title": {"type": "string"},
+                    "summary": {"type": "string"}, "uri": {"type": "string"},
+                    "asset_type": {"type": "string"}, "topics": {"type": "array", "items": {"type": "string"}},
+                    "license_status": {"type": "string", "enum": ["owned", "licensed", "unknown"]}},
+                   ("asset_id", "title")), _upsert_asset)
+    reg_tool(_spec("match_assets_to_needs", "把高频需求与可用素材做确定性匹配，并标出未授权素材",
+                   {"limit": {"type": "integer"}}), _match_assets_to_needs)
+    reg_tool(_spec("create_opportunity", "登记一条增长机会（必须给出 verdict_rationale，不得只有分数）",
+                   {"target_segment": {"type": "string"}, "problem": {"type": "string"},
+                    "evidence_refs": {"type": "array", "items": {"type": "string"}},
+                    "linked_value": {"type": "string"}, "growth_mechanism": {"type": "string"},
+                    "usable_assets": {"type": "array", "items": {"type": "string"}},
+                    "recommended_action": {"type": "string"}, "risks": {"type": "array", "items": {"type": "string"}},
+                    "verdict": {"type": "string", "enum": ["recommend", "hold", "reject", "needs_data"]},
+                    "verdict_rationale": {"type": "string"}, "confidence": {"type": "number"},
+                    "uncertainty_level": {"type": "string", "enum": ["fact", "inference", "hypothesis", "guess"]},
+                    "metrics_to_verify": {"type": "array", "items": {"type": "string"}}},
+                   ("problem", "verdict", "verdict_rationale")), _create_opportunity)
+    reg_tool(_spec("create_experiment", "登记一个增长实验（假设/素材/渠道/目标指标）",
+                   {"opportunity_id": {"type": "string"}, "goal": {"type": "string"},
+                    "audience": {"type": "string"}, "hypothesis": {"type": "string"},
+                    "asset_ids": {"type": "array", "items": {"type": "string"}},
+                    "channels": {"type": "array", "items": {"type": "string"}},
+                    "target_metrics": {"type": "array", "items": {"type": "string"}},
+                    "attribution_limits": {"type": "string"}},
+                   ("goal", "hypothesis")), _create_experiment)
+    reg_tool(_spec("compute_experiment_metrics", "汇总某实验的指标观察（区分传播/导流/产品/效率）",
+                   {"experiment_id": {"type": "string"}}), _compute_experiment_metrics)
+    reg_tool(_spec("record_learning", "写入结构化增长经验或记录人工反馈原因",
+                   {"experiment_id": {"type": "string"}, "what_tested": {"type": "string"},
+                    "outcome": {"type": "string"}, "evidence_strength": {"type": "string"},
+                    "next_adjustments": {"type": "array", "items": {"type": "string"}},
+                    "human_feedback": {"type": "object"}},
+                   ("what_tested",), max_calls=5), _record_learning)
+    reg_tool(_spec("recall_learnings", "检索历史经验与人工反馈，避免重复失败方案",
+                   {"keyword": {"type": "string"}, "limit": {"type": "integer"}}), _recall_learnings)
+    reg_tool(_spec("crawl_external", "【需任务授权】登记新增外部数据采集任务",
+                   {"platform": {"type": "string"}, "target": {"type": "string"}, "reason": {"type": "string"}},
+                   ("platform", "target"), permission=L2), _crawl_external)
+    reg_tool(_spec("send_external_reply", "【人工专属】对外发送评论/私信 —— Agent 不可调用",
+                   {"to": {"type": "string"}, "content": {"type": "string"}},
+                   ("to", "content"), permission=L3, max_calls=0), _send_external_reply)
+    return reg
+
+
+REGISTRY = build_registry()
+
+
+def validate_args(spec: ToolSpec, args: Dict[str, Any]) -> Optional[str]:
+    if not isinstance(args, dict):
+        return "参数必须是 JSON 对象"
+    for key in spec.args_schema.get("required", []):
+        if key not in args or args[key] in (None, ""):
+            return f"缺少必填参数: {key}"
+    return None
+
+
+def execute_tool(name: str, args: Dict[str, Any], ctx: ToolContext, call_counts: Dict[str, int]) -> ToolResult:
+    entry = REGISTRY.get(name)
+    if entry is None:
+        return ToolResult(status="error", error=f"未知工具: {name}")
+    spec, handler = entry
+
+    status, error = "ok", ""
+    detail = ""
+    # permission gate —— 模型无法绕过
+    if spec.permission == L3:
+        status, error = "denied", "L3 操作必须人工在对应面板批准，Agent 无权执行"
+    elif spec.permission == L2 and name not in ctx.l2_grants:
+        status, error = "denied", f"需要本次任务的 L2 授权（授权范围不含 {name}）"
+    elif call_counts.get(name, 0) >= spec.max_calls_per_session:
+        status, error = "denied", f"超过本会话该工具调用次数上限（{spec.max_calls_per_session}）"
+    else:
+        err = validate_args(spec, args)
+        if err:
+            status, error = "error", err
+        else:
+            try:
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    fut = pool.submit(handler, ctx, args)
+                    data = fut.result(timeout=spec.timeout_seconds)
+                call_counts[name] = call_counts.get(name, 0) + 1
+                _audit(ctx, name, args, "L1" if spec.permission == L1 else spec.permission, "ok",
+                       output_refs=_extract_refs(data))
+                return ToolResult(status="ok", data=data)
+            except FuturesTimeout:
+                status, error = "error", f"工具超时（>{spec.timeout_seconds}s）"
+            except ToolDenied as exc:
+                status, error = "denied", str(exc)
+            except Exception as exc:  # safe exit, keep partial results
+                status, error = "error", f"{type(exc).__name__}: {exc}"
+    detail = error
+    _audit(ctx, name, args, spec.permission, status, detail=detail)
+    return ToolResult(status=status, error=error)
+
+
+def _extract_refs(data: Any) -> List[str]:
+    refs: List[str] = []
+    if isinstance(data, dict):
+        for key in ("opportunity_id", "experiment_id", "learning_id", "asset_id"):
+            if key in data and isinstance(data[key], str):
+                refs.append(data[key])
+        for key in ("signal_ids",):
+            for v in data.get(key) or []:
+                refs.append(str(v))
+    return refs[:20]
+
+
+def _audit(ctx: ToolContext, action: str, args: Dict[str, Any], permission: str, status: str,
+           detail: str = "", output_refs: Optional[List[str]] = None) -> None:
+    summary = {k: (str(v)[:120]) for k, v in (args or {}).items()}
+    store.record_audit(AuditRecord(
+        audit_id=f"au_{uuid.uuid4().hex[:10]}",
+        product_id=ctx.product_id,
+        session_id=ctx.session_id,
+        actor="agent",
+        action=action,
+        input_summary=str(summary)[:400],
+        output_refs=output_refs or [],
+        permission_level=permission,
+        status=status,
+        detail=detail[:200],
+        created_at=utc_now_iso(),
+    ))
