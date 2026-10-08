@@ -103,6 +103,12 @@ def post_asset(product_id: str, asset: ContentAsset) -> Dict[str, Any]:
     return store.upsert_asset(asset).model_dump()
 
 
+@router.get("/products/{product_id}/segments")
+def get_segments(product_id: str) -> Dict[str, Any]:
+    _require_product(product_id)
+    return {"reports": [r.model_dump() for r in store.list_segment_reports(product_id)]}
+
+
 @router.get("/products/{product_id}/opportunities")
 def get_opportunities(product_id: str) -> Dict[str, Any]:
     _require_product(product_id)

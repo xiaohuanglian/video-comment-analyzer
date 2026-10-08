@@ -91,8 +91,9 @@ def growth_page():
     return FileResponse(WEB_TEMPLATES_DIR / "growth.html")
 
 
-# 产品重设计原型（Stage A，独立入口，不影响生产页面）
+# 产品重设计工作台（Stage B：/growth-v2 为新版入口；/growth 旧页保留作回退）
 app.mount("/proto", StaticFiles(directory=APP_DIR / "prototype", html=True), name="proto")
+app.mount("/growth-v2", StaticFiles(directory=APP_DIR / "prototype", html=True), name="growth_v2")
 
 
 @app.get("/")

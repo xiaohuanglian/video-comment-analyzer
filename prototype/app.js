@@ -190,26 +190,71 @@ async function renderResult(session) {
     renderGaps(sum.data_gaps || []);
   } catch (e) {}
   const pid = state.product;
-  const [opps, briefs] = await Promise.all([
+  const [opps, briefs, segments] = await Promise.all([
     api(`/products/${pid}/opportunities`), api(`/products/${pid}/briefs`),
+    api(`/products/${pid}/segments`),
   ]);
   // 只展示【本次任务】产出的卡片（修复“历史重复对象混排”问题的原型实现）
   const myOpps = opps.opportunities.filter((o) => createdIds.includes(o.opportunity_id) || true);
   const sessionOpps = createdIds.length ? opps.opportunities.filter((o) => createdIds.includes(o.opportunity_id)) : [];
   const sessionBriefs = createdIds.length ? briefs.briefs.filter((b) => createdIds.includes(b.brief_id)) : [];
+  const sessionSegs = (segments.reports || []).filter((r) => r.created_by_session === session.session_id);
   const cards = $("resultCards");
   cards.innerHTML = "";
   const shownOpps = sessionOpps.length ? sessionOpps : [];
   const shownBriefs = sessionBriefs.length ? sessionBriefs : [];
-  if (!shownOpps.length && !shownBriefs.length) {
+  if (!shownOpps.length && !shownBriefs.length && !sessionSegs.length) {
     cards.innerHTML = `<div class="muted">本次任务没有产生新的机会或任务书（可能因证据不足被 AI 拒绝，或对象在此前任务已存在）。</div>`;
     return;
   }
   cards.insertAdjacentHTML("beforeend", '<div class="rcards" id="rcards"></div>');
   const wrap = $("rcards");
+  sessionSegs.forEach((r) => wrap.insertAdjacentHTML("beforeend", segmentCard(r)));
   shownOpps.forEach((o) => wrap.insertAdjacentHTML("beforeend", oppCard(o)));
   shownBriefs.forEach((b) => wrap.insertAdjacentHTML("beforeend", briefCard(b)));
 }
+
+function segmentCard(r) {
+  const certTag = { evidenced: "ok", inferred: "warn", unverified: "bad" };
+  const certLabel = { evidenced: "有证据", inferred: "推断", unverified: "未验证" };
+  const segs = (r.segments || []).map((s) => `<div class="hidden-row">
+    <span class="tag ${certTag[s.certainty] || ""} certainty">${certLabel[s.certainty] || esc(s.certainty)}</span>
+    <b>${esc(s.name)}</b>
+    <div class="muted">需求：${esc((s.core_needs || []).join("；") || "-")} ｜ 平台：${esc((s.platforms || []).join(",") || "-")}</div>
+    <div class="muted">产品匹配：${esc(s.product_fit)}（${esc(s.product_fit_reason || "-")}）</div>
+    <div class="muted">触达：${esc((s.reach_methods || []).join("；") || "-")}${(s.hypothesized_channels || []).length ? " ｜ 推测渠道：" + esc(s.hypothesized_channels.join(",")) : ""}</div>
+    <div class="muted">证据 ${((s.evidence_refs || []).length)} 条</div>
+  </div>`).join("");
+  return `<div class="rcard seg-card" style="grid-column:1/-1">
+    <div class="tags"><span class="tag">潜在用户研究报告</span><span class="tag warn">初步画像，非已确认目标用户</span></div>
+    <h4>用户群体（${(r.segments || []).length}）</h4>
+    ${segs}
+    <div class="row-block"><b>数据边界：</b>${esc(r.data_limitations || "-")}</div>
+    ${(r.not_recommended || []).length ? `<div class="row-block"><b>不建议当作目标：</b>${esc(r.not_recommended.join("；"))}</div>` : ""}
+  </div>`;
+}
+
+$("followupBtn").addEventListener("click", async () => {
+  const msg = $("followupInput").value.trim();
+  if (!msg || !state.sessionId) return;
+  if (!isDemo() && !hasKey()) { alert("正式模式需先连接真实模型"); return; }
+  $("followupBtn").disabled = true;
+  try {
+    const r = await api(`/agent/sessions/${state.sessionId}/followup?product_id=${state.product}`, {
+      method: "POST", body: JSON.stringify({
+        message: msg, use_mock: isDemo() || !hasKey(),
+        api_key: sessionStorage.getItem("llm_api_key") || "",
+        base_url: hasKey() ? baseURL() : "", model_name: hasKey() ? modelName() : "",
+      }),
+    });
+    $("followupInput").value = "";
+    state.sessionId = r.session_id;
+    $("workPanel").hidden = false;
+    setStatus("running", "AI 正在继续这个任务…");
+    state.polling = setInterval(poll, 1300);
+  } catch (e) { alert("追问失败：" + e.message); }
+  $("followupBtn").disabled = false;
+});
 
 function renderGaps(gaps) {
   if (!gaps.length) return;

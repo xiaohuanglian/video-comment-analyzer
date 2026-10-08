@@ -379,8 +379,8 @@ class Orchestrator:
         if research_intent and "query_signals" not in tool_names:
             return {"tool_calls": [call("query_signals", {"limit": 100})]}
         if research_intent and "create_segment_report" not in tool_names:
-            data = last_tool_data("query_signals") or {}
-            signals = data.get("signals") or []
+            # 工具结果在消息中被截断，mock 策略直接读本地存储（仅 mock 这样做）
+            signals = [s.model_dump() for s in store.list_signals(self.session.config.product_id)]
             if not signals:
                 answer = (
                     "【MOCK 演示结果，非真实模型推理】\n"

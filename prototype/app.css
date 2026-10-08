@@ -98,6 +98,10 @@ table.metrics th { background: #f1f4f9; font-weight: 600; }
 input[type="password"], input:not([type]) { display: block; width: 100%; margin-bottom: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
 .row { display: flex; gap: 8px; }
 
+.followup-box { margin-top: 14px; border-top: 1px dashed var(--line); padding-top: 12px; display: flex; gap: 10px; align-items: flex-start; }
+.followup-box textarea { flex: 1; border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; font: inherit; resize: vertical; }
+.seg-card .certainty { font-size: 11px; }
+
 @media (max-width: 860px) {
   #app { flex-direction: column; }
   .side { width: 100%; height: auto; position: static; }
