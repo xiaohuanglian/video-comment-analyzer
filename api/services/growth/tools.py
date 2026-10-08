@@ -638,9 +638,27 @@ def _crawl_external(ctx: ToolContext, args: Dict[str, Any]) -> Any:
     # L2：新增外部数据采集。本次仅登记任务，不自动执行爬虫。
     return {
         "accepted": True,
-        "note": "已授权的外部采集任务已登记；实际采集走现有采集面板（含频率控制），Agent 不直接驱动浏览器。",
+        "note": "采集需求已登记。若目标是单个 B 站视频，请改用 crawl_bilibili_comments（同样需 L2 授权）。",
         "args": args,
     }
+
+
+def _crawl_bilibili_comments(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    """L2 受控小规模采集：单个 B 站视频评论（节奏受控、不绕登录）。"""
+    from .crawl_tool import run_bilibili_comment_crawl
+
+    result = run_bilibili_comment_crawl(
+        ctx.product_id,
+        target=str(args.get("video") or ""),
+        max_comments=int(args.get("max_comments") or 50),
+        reason=str(args.get("reason") or ""),
+    )
+    status = result.get("status")
+    if status == "login_required":
+        raise ToolDenied(result["message"])
+    if status != "ok":
+        raise ValueError(result.get("message", "采集失败"))
+    return result
 
 
 def _send_external_reply(ctx: ToolContext, args: Dict[str, Any]) -> Any:
@@ -766,9 +784,15 @@ def build_registry() -> Dict[str, tuple[ToolSpec, Callable]]:
     reg_tool(_spec("review_experiments", "实验复盘：代码级事实汇总（传播/导流/产品分层 + Unknown 标记 + 归因警告）",
                    {"experiment_id": {"type": "string"}}, (), max_calls=3, timeout=60),
              _review_experiments)
-    reg_tool(_spec("crawl_external", "【需任务授权】登记新增外部数据采集任务",
+    reg_tool(_spec("crawl_external", "【需任务授权】登记未来采集需求（只是登记，不执行）",
                    {"platform": {"type": "string"}, "target": {"type": "string"}, "reason": {"type": "string"}},
                    ("platform", "target"), permission=L2), _crawl_external)
+    reg_tool(_spec("crawl_bilibili_comments", "【需任务授权】采集单个 B 站视频的评论（小規模：默认 50 条、硬顶 100、受频率控制；评论作为 raw 信号导入）",
+                   {"video": {"type": "string"},
+                    "max_comments": {"type": "integer"},
+                    "reason": {"type": "string"}},
+                   ("video", "reason"), permission=L2, max_calls=1, timeout=360),
+             _crawl_bilibili_comments)
     reg_tool(_spec("send_external_reply", "【人工专属】对外发送评论/私信 —— Agent 不可调用",
                    {"to": {"type": "string"}, "content": {"type": "string"}},
                    ("to", "content"), permission=L3, max_calls=0), _send_external_reply)

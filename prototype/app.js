@@ -51,6 +51,9 @@ function refreshModeBadge() {
 /* ---------- 工具步骤的人话映射 ---------- */
 const TOOL_PHRASES = {
   recall_learnings: "正在查阅历史经验（已排除 Mock 演示记录）",
+  query_segments: "正在查看已有的用户研究报告",
+  create_segment_report: "正在写用户研究报告",
+  crawl_bilibili_comments: "正在采集 B 站评论（已授权，受频率控制）",
   list_analysis_runs: "正在查看可用的评论分析数据",
   get_run_summary: "正在了解分析任务详情",
   get_run_top_needs: "正在统计高频用户需求",
