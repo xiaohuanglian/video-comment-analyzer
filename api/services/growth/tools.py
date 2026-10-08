@@ -73,6 +73,7 @@ class ToolContext:
         api_key: str = "",
         base_url: str = "",
         model_name: str = "",
+        mock: bool = False,
     ) -> None:
         self.product_id = product_id
         self.session_id = session_id
@@ -80,6 +81,7 @@ class ToolContext:
         self.api_key = api_key
         self.base_url = base_url
         self.model_name = model_name
+        self.mock = mock  # 本会话产出的经验记录标 mock，不进正式策略检索
 
 
 # --- handlers (reuse existing modules) ---------------------------------------
@@ -287,15 +289,33 @@ def _match_assets_to_needs(ctx: ToolContext, args: Dict[str, Any]) -> Any:
 
 
 def _create_opportunity(ctx: ToolContext, args: Dict[str, Any]) -> Any:
-    opp = GrowthOpportunity.model_validate({
+    payload = {
         **args,
         "product_id": ctx.product_id,
         "opportunity_id": args.get("opportunity_id") or f"op_{uuid.uuid4().hex[:8]}",
         "created_by": "agent",
         "created_at": utc_now_iso(),
-    })
+    }
+    # 两种模式清晰区分：有可用素材 = asset_ready；无 = demand_first（待制作，
+    # 必须写 production_need，不得声称可直接发布）
+    usable = payload.get("usable_assets") or []
+    if usable:
+        payload["opportunity_kind"] = "asset_ready"
+        assets = {a.asset_id: a for a in store.list_assets(ctx.product_id)}
+        unlicensed = [aid for aid in usable
+                      if aid in assets and assets[aid].license_status.value not in {"owned", "licensed"}]
+        if unlicensed:
+            raise ToolDenied(f"机会引用了未授权素材: {unlicensed}")
+    else:
+        payload["opportunity_kind"] = "demand_first"
+        if not str(payload.get("production_need") or "").strip():
+            raise ValueError("无可用素材的机会必须填写 production_need（应制作什么）")
+        if payload.get("verdict") == "recommend":
+            payload["verdict"] = "hold"  # 待制作机会不直接 recommend 发布
+    opp = GrowthOpportunity.model_validate(payload)
     store.upsert_opportunity(opp)
-    return {"opportunity_id": opp.opportunity_id, "verdict": opp.verdict}
+    return {"opportunity_id": opp.opportunity_id, "verdict": opp.verdict,
+            "opportunity_kind": opp.opportunity_kind}
 
 
 def _create_experiment(ctx: ToolContext, args: Dict[str, Any]) -> Any:
@@ -333,18 +353,23 @@ def _compute_experiment_metrics(ctx: ToolContext, args: Dict[str, Any]) -> Any:
 
 
 def _record_learning(ctx: ToolContext, args: Dict[str, Any]) -> Any:
-    rec = LearningRecord.model_validate({
+    payload = {
         **args,
         "product_id": ctx.product_id,
         "learning_id": args.get("learning_id") or f"l_{uuid.uuid4().hex[:8]}",
         "created_at": utc_now_iso(),
-    })
+    }
+    if ctx.mock:
+        payload["data_nature"] = "mock"  # mock 会话产出永远标 mock
+    rec = LearningRecord.model_validate(payload)
     store.upsert_learning(rec)
     return {"learning_id": rec.learning_id}
 
 
 def _recall_learnings(ctx: ToolContext, args: Dict[str, Any]) -> Any:
     recs = [r.model_dump() for r in store.list_learnings(ctx.product_id)]
+    if not args.get("include_mock"):
+        recs = [r for r in recs if r.get("data_nature", "real") != "mock"]
     keyword = (args.get("keyword") or "").strip()
     if keyword:
         recs = [r for r in recs if keyword in (r.get("what_tested", "") + r.get("outcome", ""))]
@@ -394,6 +419,9 @@ def _create_content_brief(ctx: ToolContext, args: Dict[str, Any]) -> Any:
     unlicensed = [aid for aid in asset_ids if assets[aid].license_status not in {"owned", "licensed"}]
     if unlicensed:
         raise ToolDenied(f"素材未确认授权，禁止用于对外内容: {unlicensed}")
+    if not asset_ids:
+        # 任务书是 asset_first 产物；demand_first 请用 create_opportunity(production_need=...)
+        raise ValueError("任务书必须引用至少一份已授权素材；无素材的需求请创建 demand_first 机会")
     brief = ContentBrief.model_validate({
         **args,
         "product_id": ctx.product_id,
@@ -584,6 +612,7 @@ def build_registry() -> Dict[str, tuple[ToolSpec, Callable]]:
                    {"target_segment": {"type": "string"}, "problem": {"type": "string"},
                     "evidence_refs": {"type": "array", "items": {"type": "string"}},
                     "linked_value": {"type": "string"}, "growth_mechanism": {"type": "string"},
+                    "production_need": {"type": "string"},
                     "usable_assets": {"type": "array", "items": {"type": "string"}},
                     "recommended_action": {"type": "string"}, "risks": {"type": "array", "items": {"type": "string"}},
                     "verdict": {"type": "string", "enum": ["recommend", "hold", "reject", "needs_data"]},
@@ -608,8 +637,9 @@ def build_registry() -> Dict[str, tuple[ToolSpec, Callable]]:
                     "next_adjustments": {"type": "array", "items": {"type": "string"}},
                     "human_feedback": {"type": "object"}},
                    ("what_tested",), max_calls=5), _record_learning)
-    reg_tool(_spec("recall_learnings", "检索历史经验与人工反馈，避免重复失败方案",
-                   {"keyword": {"type": "string"}, "limit": {"type": "integer"}}), _recall_learnings)
+    reg_tool(_spec("recall_learnings", "检索历史经验与人工反馈（默认排除 mock 演示记录）",
+                   {"keyword": {"type": "string"}, "limit": {"type": "integer"},
+                    "include_mock": {"type": "boolean"}}), _recall_learnings)
     reg_tool(_spec("import_assets", "批量导入内容素材（JSON 列表）。授权缺失自动标 unknown",
                    {"assets": {"type": "array", "items": {"type": "object"}},
                     "source_label": {"type": "string"},

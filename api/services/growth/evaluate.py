@@ -97,13 +97,21 @@ def run_evaluation(
     max_tasks: int = 10,
 ) -> Dict[str, Any]:
     """运行评估任务并返回结构化结果（含自动校验 + 人工评分表行）。"""
+    import time as _time
+
     task_rows: List[Dict[str, Any]] = []
     for task in EVAL_TASKS[:max_tasks]:
         config = SessionConfig(product_id=product_id, goal=task["goal"], use_mock=use_mock,
                                base_url=base_url or "https://api.deepseek.com",
                                model_name=model_name or "deepseek-v4-flash")
+        t0 = _time.monotonic()
         session = Orchestrator(config, api_key=api_key).run()
+        duration = round(_time.monotonic() - t0, 2)
         task_rows.append({
+            "duration_seconds": duration,
+            "prompt_tokens": session.prompt_tokens,
+            "completion_tokens": session.completion_tokens,
+            "human_minutes": "",  # 人工耗时（人填）
             "task_id": task["id"],
             "kind": task["kind"],
             "goal": task["goal"],
@@ -138,8 +146,9 @@ def export_scoresheet_csv(report: Dict[str, Any]) -> str:
     """导出人工评分表 CSV（含自动校验结果，人工评分为空列）。"""
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=[
-        "task_id", "kind", "goal", "session_id", "status", "iterations", "cost_cny", "mock",
-        "answer_excerpt",
+        "task_id", "kind", "goal", "session_id", "status", "iterations",
+        "duration_seconds", "cost_cny", "prompt_tokens", "completion_tokens", "mock",
+        "answer_excerpt", "human_minutes",
         "human_evidence_score", "human_relevance_score", "human_actionability_score",
         "human_creativity_score", "human_edit_cost_score", "human_verdict", "human_notes",
     ])

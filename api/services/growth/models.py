@@ -127,6 +127,10 @@ class GrowthOpportunity(BaseModel):
     evidence_refs: List[str] = Field(default_factory=list)  # signal/asset/observation ids
     linked_value: str = ""  # 关联的产品价值
     growth_mechanism: str = ""  # 预期增长机制（搜索获客/教程导流/...）
+    # 两种模式：asset_ready=已有授权素材可承接；demand_first=素材库没有，
+    # 属「待制作机会」，只能指导内部制作方向，不得声称可直接发布。
+    opportunity_kind: Literal["asset_ready", "demand_first"] = "asset_ready"
+    production_need: str = ""  # demand_first：应制作什么（题材/形式/要点）
     usable_assets: List[str] = Field(default_factory=list)  # asset ids
     recommended_action: str = ""
     cost_estimate: str = ""  # 自由文本（人力/制作成本量级）
@@ -253,6 +257,8 @@ class LearningRecord(BaseModel):
     learning_id: str
     product_id: str
     experiment_id: str = ""
+    # 数据性质：mock 演示记录不进入正式策略检索（recall_learnings 默认排除）
+    data_nature: Literal["real", "demo", "mock"] = "real"
     what_tested: str = ""
     outcome: str = ""
     evidence_strength: Literal["strong", "moderate", "weak", "insufficient"] = "insufficient"
