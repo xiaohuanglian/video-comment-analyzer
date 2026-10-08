@@ -251,13 +251,31 @@ def _import_signals_from_run(ctx: ToolContext, args: Dict[str, Any]) -> Any:
     return {"imported": len(created), "skipped_duplicates": skipped, "signal_ids": created[:20]}
 
 
+def _signal_dataset_summary(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    """代码级清单：库里有哪些数据集、各多少条——先看全景再定向深入，避免盲翻。"""
+    counter: Counter = Counter()
+    kinds: Counter = Counter()
+    for s in store.list_signals(ctx.product_id):
+        counter[s.dataset_ref or "(unknown)"] += 1
+        kinds[s.signal_type or "(untyped)"] += 1
+    return {
+        "total": sum(counter.values()),
+        "datasets": [{"dataset_ref": k, "count": v} for k, v in counter.most_common()],
+        "signal_types": dict(kinds),
+        "note": "用 query_signals(keyword=...) 或按 dataset_ref 定向深入某个数据集",
+    }
+
+
 def _query_signals(ctx: ToolContext, args: Dict[str, Any]) -> Any:
     signals = store.list_signals(ctx.product_id)
     source_type = (args.get("source_type") or "").strip()
     keyword = (args.get("keyword") or "").strip()
     out = []
+    dataset_ref = (args.get("dataset_ref") or "").strip()
     for s in signals:
         if source_type and s.source_type != source_type:
+            continue
+        if dataset_ref and s.dataset_ref != dataset_ref:
             continue
         if keyword and keyword not in (s.need_or_problem + s.signal_type):
             continue
@@ -694,8 +712,11 @@ def build_registry() -> Dict[str, tuple[ToolSpec, Callable]]:
     reg_tool(_spec("import_signals_from_run", "把某 run 的分析结果转换为统一用户信号（限内部使用）",
                    {"run_id": {"type": "string"}, "limit": {"type": "integer"}}, ("run_id",),
                    max_calls=2, timeout=120), _import_signals_from_run)
-    reg_tool(_spec("query_signals", "检索本产品的统一用户信号",
-                   {"source_type": {"type": "string"}, "keyword": {"type": "string"}, "limit": {"type": "integer"}}), _query_signals)
+    reg_tool(_spec("signal_dataset_summary", "数据全景：库里有哪些数据集/各多少条信号（零成本，建议调研第一步）",
+                   {}, (), max_calls=2), _signal_dataset_summary)
+    reg_tool(_spec("query_signals", "检索本产品的统一用户信号（支持 keyword 和 dataset_ref 过滤）",
+                   {"source_type": {"type": "string"}, "keyword": {"type": "string"},
+                    "dataset_ref": {"type": "string"}, "limit": {"type": "integer"}}, max_calls=5), _query_signals)
     reg_tool(_spec("query_assets", "检索内容资产库（含授权状态）",
                    {"topic": {"type": "string"}, "limit": {"type": "integer"}}), _query_assets)
     reg_tool(_spec("upsert_asset", "登记/更新一条内容资产（含授权状态 license_status）",
