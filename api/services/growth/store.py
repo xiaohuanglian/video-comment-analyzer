@@ -32,6 +32,7 @@ from ..insight.paths import DATA_DIR
 from .models import (
     AuditRecord,
     ContentAsset,
+    ContentBrief,
     GrowthExperiment,
     GrowthOpportunity,
     LearningRecord,
@@ -234,6 +235,21 @@ def upsert_asset(asset: ContentAsset) -> ContentAsset:
     return asset
 
 
+def list_briefs(product_id: str) -> List[ContentBrief]:
+    return _load_collection(product_id, "briefs", ContentBrief)
+
+
+def upsert_brief(brief: ContentBrief) -> ContentBrief:
+    get_product_or_raise(brief.product_id)
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).isoformat()
+    brief = brief.model_copy(update={"updated_at": now, "created_at": brief.created_at or now})
+    items = _upsert(list_briefs(brief.product_id), brief, lambda b: b.brief_id)
+    _save_collection(brief.product_id, "briefs", items)
+    return brief
+
+
 def list_opportunities(product_id: str) -> List[GrowthOpportunity]:
     return _load_collection(product_id, "opportunities", GrowthOpportunity)
 
@@ -337,6 +353,7 @@ def export_product(product_id: str) -> Dict[str, Any]:
         "signals": [s.model_dump() for s in list_signals(product_id)],
         "assets": [a.model_dump() for a in list_assets(product_id)],
         "opportunities": [o.model_dump() for o in list_opportunities(product_id)],
+        "briefs": [b.model_dump() for b in list_briefs(product_id)],
         "experiments": [e.model_dump() for e in list_experiments(product_id)],
         "observations": [o.model_dump() for o in list_observations(product_id)],
         "learnings": [r.model_dump() for r in list_learnings(product_id)],
@@ -350,7 +367,7 @@ def import_product(payload: Dict[str, Any], *, overwrite: bool = False) -> Dict[
         upsert_product(profile)
     elif overwrite:
         upsert_product(profile)
-    counts = {"signals": 0, "assets": 0, "experiments": 0, "observations": 0, "learnings": 0}
+    counts = {"signals": 0, "assets": 0, "experiments": 0, "observations": 0, "learnings": 0, "briefs": 0}
     counts["signals"] = add_signals([Signal.model_validate(s) for s in payload.get("signals", [])])
     for raw in payload.get("assets", []):
         asset = ContentAsset.model_validate(raw)
@@ -366,4 +383,7 @@ def import_product(payload: Dict[str, Any], *, overwrite: bool = False) -> Dict[
     for raw in payload.get("learnings", []):
         upsert_learning(LearningRecord.model_validate(raw))
         counts["learnings"] += 1
+    for raw in payload.get("briefs", []):
+        upsert_brief(ContentBrief.model_validate(raw))
+        counts["briefs"] += 1
     return counts

@@ -158,10 +158,14 @@ class MetricsObservation(BaseModel):
     asset_id: str = ""
     metric_kind: MetricKind
     name: str  # views / likes / tracked_clicks / valid_visits / signups ...
-    value: float = 0.0
+    value: Optional[float] = None  # None = Unknown（未获取），禁止用 0 冒充
     unit: str = ""
     channel: str = ""
     source: str = "manual_import"  # manual_import / platform_export / event_api
+    period_start: str = ""  # 统计区间开始
+    period_end: str = ""    # 统计区间结束
+    stats_method: str = ""  # 统计口径说明
+    attribution_note: str = ""  # 归因限制
     verified: bool = False  # 是否来自可核验数据源（而非人工估算）
     collected_at: str = ""
 
@@ -186,6 +190,7 @@ class GrowthExperiment(BaseModel):
     experiment_id: str
     product_id: str
     opportunity_id: str = ""
+    brief_id: str = ""  # 由已批准任务书创建时记录
     goal: str = ""
     audience: str = ""
     hypothesis: str = ""
@@ -199,6 +204,42 @@ class GrowthExperiment(BaseModel):
     status: ExperimentStatus = ExperimentStatus.PLANNED
     conclusion: str = ""
     next_actions: List[str] = Field(default_factory=list)
+    created_at: str = ""
+    updated_at: str = ""
+
+
+# --- content brief（内容任务书） --------------------------------------------
+
+
+class BriefStatus(str, Enum):
+    DRAFT = "draft"
+    APPROVED = "approved"  # 人工批准后才可以建实验/分发
+    REJECTED = "rejected"
+    ARCHIVED = "archived"
+
+
+class ContentBrief(BaseModel):
+    """可直接交给内部内容人员执行的任务书。每个字段都要可解释，禁止拼凑。"""
+
+    brief_id: str
+    product_id: str
+    opportunity_id: str = ""
+    title: str = ""
+    audience: str = ""          # 面向什么用户
+    problem: str = ""           # 解决什么问题
+    asset_ids: List[str] = Field(default_factory=list)  # 使用哪份真实素材
+    rationale: str = ""         # 为什么推荐它（含证据引用）
+    evidence_refs: List[str] = Field(default_factory=list)
+    channels: List[str] = Field(default_factory=list)  # 适合什么渠道
+    hook: str = ""              # 推荐怎样开头（前几秒/首句）
+    value_props: List[str] = Field(default_factory=list)  # 应突出什么产品价值
+    visit_reason: str = ""      # 用户为什么要访问产品站
+    review_requirements: str = ""  # 需要怎样的审核与素材准备
+    validation_metrics: List[str] = Field(default_factory=list)  # 什么指标验证有效性
+    priority: int = 0           # 1 最高
+    status: BriefStatus = BriefStatus.DRAFT
+    review_note: str = ""       # 人工审批备注/拒绝原因
+    created_by: str = "agent"
     created_at: str = ""
     updated_at: str = ""
 

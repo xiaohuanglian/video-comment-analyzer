@@ -25,9 +25,13 @@ from . import store
 from .models import (
     AuditRecord,
     ContentAsset,
+    ContentBrief,
     GrowthExperiment,
     GrowthOpportunity,
     LearningRecord,
+    MetricKind,
+    MetricsObservation,
+    PublishRecord,
     Signal,
     utc_now_iso,
 )
@@ -287,6 +291,14 @@ def _create_opportunity(ctx: ToolContext, args: Dict[str, Any]) -> Any:
 
 
 def _create_experiment(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    brief_id = str(args.get("brief_id") or "")
+    if brief_id:
+        briefs = {b.brief_id: b for b in store.list_briefs(ctx.product_id)}
+        brief = briefs.get(brief_id)
+        if brief is None:
+            raise ValueError(f"任务书不存在: {brief_id}")
+        if brief.status != "approved":
+            raise ToolDenied(f"任务书 {brief_id} 未获人工批准，不能建立实验")
     exp = GrowthExperiment.model_validate({
         **args,
         "product_id": ctx.product_id,
@@ -329,6 +341,173 @@ def _recall_learnings(ctx: ToolContext, args: Dict[str, Any]) -> Any:
     if keyword:
         recs = [r for r in recs if keyword in (r.get("what_tested", "") + r.get("outcome", ""))]
     return {"total": len(recs), "learnings": recs[-int(args.get("limit", 20)):]}
+
+
+# --- Phase 3 handlers --------------------------------------------------------
+
+
+def _import_assets(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    """批量导入素材（CSV/JSON 已在 API 层转为 dict 列表）。授权缺失一律 unknown，禁止对外使用。"""
+    items = args.get("assets") or []
+    if not isinstance(items, list) or not items:
+        raise ValueError("assets 必须是非空列表")
+    created, updated = [], []
+    existing = {a.asset_id for a in store.list_assets(ctx.product_id)}
+    for raw in items[:500]:
+        if not isinstance(raw, dict) or not raw.get("asset_id") or not raw.get("title"):
+            raise ValueError("每条素材必须包含 asset_id 与 title")
+        payload = {**raw, "product_id": ctx.product_id}
+        payload.setdefault("license_status", "unknown")
+        asset = ContentAsset.model_validate(payload)
+        if asset.asset_id in existing:
+            updated.append(asset.asset_id)
+        else:
+            created.append(asset.asset_id)
+        store.upsert_asset(asset)
+    return {"created": len(created), "updated": len(updated),
+            "note": "license_status=unknown 的素材禁止对外使用，需人工确认授权"}
+
+
+def _create_content_brief(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    """生成内容任务书（草稿）。强制校验素材存在且已授权。"""
+    asset_ids = list(args.get("asset_ids") or [])
+    assets = {a.asset_id: a for a in store.list_assets(ctx.product_id)}
+    missing = [aid for aid in asset_ids if aid not in assets]
+    if missing:
+        raise ValueError(f"素材不存在: {missing}（禁止虚构素材）")
+    unlicensed = [aid for aid in asset_ids if assets[aid].license_status not in {"owned", "licensed"}]
+    if unlicensed:
+        raise ToolDenied(f"素材未确认授权，禁止用于对外内容: {unlicensed}")
+    brief = ContentBrief.model_validate({
+        **args,
+        "product_id": ctx.product_id,
+        "brief_id": args.get("brief_id") or f"br_{uuid.uuid4().hex[:8]}",
+        "status": "draft",
+        "created_by": "agent",
+    })
+    store.upsert_brief(brief)
+    return {"brief_id": brief.brief_id, "status": "draft",
+            "note": "任务书为草稿，需人工批准后才能建实验/分发"}
+
+
+_REACH_NAMES = {"views", "impressions", "completion", "likes", "favorites", "comments",
+                "曝光", "播放", "完播", "点赞", "收藏", "评论"}
+_TRAFFIC_NAMES = {"tracked_clicks", "valid_visits", "点击", "到站", "有效访问"}
+_PRODUCT_NAMES = {"signups", "first_action", "retention", "注册", "首次核心行为", "留存"}
+_EFFICIENCY_NAMES = {"production_cost", "cac", "制作成本", "获客成本"}
+
+
+def _classify_metric(name: str) -> MetricKind:
+    n = name.strip().lower()
+    if n in {x.lower() for x in _TRAFFIC_NAMES}:
+        return MetricKind.TRAFFIC
+    if n in {x.lower() for x in _PRODUCT_NAMES}:
+        return MetricKind.PRODUCT
+    if n in {x.lower() for x in _EFFICIENCY_NAMES}:
+        return MetricKind.EFFICIENCY
+    return MetricKind.REACH
+
+
+def _record_publish_results(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    """登记一条发布记录及其指标。未获取的指标必须 value=None（Unknown），不得填 0。"""
+    experiment_id = str(args["experiment_id"])
+    experiments = {e.experiment_id: e for e in store.list_experiments(ctx.product_id)}
+    if experiment_id not in experiments:
+        raise ValueError(f"实验不存在: {experiment_id}")
+    exp = experiments[experiment_id]
+    pub = PublishRecord(
+        channel=str(args.get("channel") or ""),
+        account=str(args.get("account") or ""),
+        url=str(args.get("url") or ""),
+        published_at=str(args.get("published_at") or ""),
+        variant_id=str(args.get("variant_id") or ""),
+    )
+    exp.publish_records.append(pub)
+    if exp.status.value == "planned":
+        from .models import ExperimentStatus
+
+        exp.status = ExperimentStatus.RUNNING
+    store.upsert_experiment(exp)
+
+    metrics = args.get("metrics") or {}
+    if not isinstance(metrics, dict):
+        raise ValueError("metrics 必须是 {指标名: 数值或 null} 的对象")
+    period_start = str(args.get("period_start") or "")
+    period_end = str(args.get("period_end") or "")
+    stats_method = str(args.get("stats_method") or "")
+    attribution_note = str(args.get("attribution_note") or "")
+    obs_list = []
+    for name, value in metrics.items():
+        obs_list.append(MetricsObservation(
+            observation_id=f"ob_{uuid.uuid4().hex[:10]}",
+            product_id=ctx.product_id,
+            experiment_id=experiment_id,
+            metric_kind=_classify_metric(str(name)),
+            name=str(name),
+            value=None if value is None else float(value),  # None = Unknown
+            channel=pub.channel,
+            source=str(args.get("source") or "manual_import"),
+            period_start=period_start,
+            period_end=period_end,
+            stats_method=stats_method,
+            attribution_note=attribution_note,
+            verified=bool(args.get("verified", False)),
+            collected_at=utc_now_iso(),
+        ))
+    store.add_observations(obs_list)
+    return {"experiment_id": experiment_id, "metrics_recorded": len(obs_list),
+            "unknown_metrics": [o.name for o in obs_list if o.value is None]}
+
+
+def _review_experiments(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    """代码级事实汇总（不按播放量排名，排序与判断交给 AI）。
+
+    只产出可核算事实：每个实验的传播/导流/产品指标、Unknown 列表、
+    归因能力、样本标记；是否停止/继续由模型结合档案判断。
+    """
+    product = store.get_product_or_raise(ctx.product_id)
+    experiments = store.list_experiments(ctx.product_id)
+    if args.get("experiment_id"):
+        experiments = [e for e in experiments if e.experiment_id == args["experiment_id"]]
+    learnings_n = len(store.list_learnings(ctx.product_id))
+    out = []
+    for exp in experiments:
+        obs = store.list_observations(ctx.product_id, experiment_id=exp.experiment_id)
+        known: Dict[str, Dict[str, float]] = {}
+        unknown: List[str] = []
+        for o in obs:
+            if o.value is None:
+                unknown.append(o.name)
+                continue
+            kind = known.setdefault(o.metric_kind.value, {})
+            kind[o.name] = round(kind.get(o.name, 0.0) + float(o.value), 4)
+        views = known.get("reach", {}).get("views")
+        visits = known.get("traffic", {}).get("valid_visits")
+        ratio = round(visits / views, 6) if (views and visits is not None) else None
+        sample_flag = "small_sample" if (views is not None and views < 1000) else "ok"
+        structured = {
+            "experiment_id": exp.experiment_id,
+            "status": exp.status.value,
+            "hypothesis": exp.hypothesis,
+            "channels": exp.channels,
+            "published": len(exp.publish_records),
+            "metrics_known": known,
+            "metrics_unknown": sorted(set(unknown)),
+            "visit_per_view": ratio,  # 导流效率（仅两者都有数时）
+            "sample_flag": sample_flag,
+            "comparison_notes": exp.comparison_notes,
+        }
+        out.append(structured)
+    return {
+        "experiments": out,
+        "attribution_capability": product.attribution_capability.value,
+        "attribution_warning": (
+            "当前产品站内转化不可验证：禁止声称验证了拉新/注册/CAC"
+            if product.attribution_capability.value == "none" else ""
+        ),
+        "historical_learnings": learnings_n,
+        "note": "仅输出可核算事实；是否停止/继续/调整由你结合假设与证据质量判断，并记录为 learning",
+    }
 
 
 def _crawl_external(ctx: ToolContext, args: Dict[str, Any]) -> Any:
@@ -397,7 +576,8 @@ def build_registry() -> Dict[str, tuple[ToolSpec, Callable]]:
                     "metrics_to_verify": {"type": "array", "items": {"type": "string"}}},
                    ("problem", "verdict", "verdict_rationale")), _create_opportunity)
     reg_tool(_spec("create_experiment", "登记一个增长实验（假设/素材/渠道/目标指标）",
-                   {"opportunity_id": {"type": "string"}, "goal": {"type": "string"},
+                   {"opportunity_id": {"type": "string"}, "brief_id": {"type": "string"},
+                    "goal": {"type": "string"},
                     "audience": {"type": "string"}, "hypothesis": {"type": "string"},
                     "asset_ids": {"type": "array", "items": {"type": "string"}},
                     "channels": {"type": "array", "items": {"type": "string"}},
@@ -414,6 +594,37 @@ def build_registry() -> Dict[str, tuple[ToolSpec, Callable]]:
                    ("what_tested",), max_calls=5), _record_learning)
     reg_tool(_spec("recall_learnings", "检索历史经验与人工反馈，避免重复失败方案",
                    {"keyword": {"type": "string"}, "limit": {"type": "integer"}}), _recall_learnings)
+    reg_tool(_spec("import_assets", "批量导入内容素材（JSON 列表）。授权缺失自动标 unknown",
+                   {"assets": {"type": "array", "items": {"type": "object"}}}, ("assets",),
+                   max_calls=3, timeout=60), _import_assets)
+    reg_tool(_spec("create_content_brief", "生成内容任务书草稿（须引用真实已授权素材；草稿需人工批准）",
+                   {"title": {"type": "string"}, "audience": {"type": "string"},
+                    "problem": {"type": "string"},
+                    "asset_ids": {"type": "array", "items": {"type": "string"}},
+                    "rationale": {"type": "string"},
+                    "evidence_refs": {"type": "array", "items": {"type": "string"}},
+                    "channels": {"type": "array", "items": {"type": "string"}},
+                    "hook": {"type": "string"},
+                    "value_props": {"type": "array", "items": {"type": "string"}},
+                    "visit_reason": {"type": "string"},
+                    "review_requirements": {"type": "string"},
+                    "validation_metrics": {"type": "array", "items": {"type": "string"}},
+                    "opportunity_id": {"type": "string"}, "priority": {"type": "integer"}},
+                   ("title", "problem", "rationale", "hook", "visit_reason"), max_calls=5),
+             _create_content_brief)
+    reg_tool(_spec("record_publish_results", "登记一条发布记录与指标（未获取的指标填 null=Unknown，禁止填 0）",
+                   {"experiment_id": {"type": "string"}, "channel": {"type": "string"},
+                    "account": {"type": "string"}, "url": {"type": "string"},
+                    "published_at": {"type": "string"},
+                    "metrics": {"type": "object"},
+                    "period_start": {"type": "string"}, "period_end": {"type": "string"},
+                    "stats_method": {"type": "string"}, "attribution_note": {"type": "string"},
+                    "source": {"type": "string"}, "verified": {"type": "boolean"}},
+                   ("experiment_id", "channel", "metrics"), max_calls=10, timeout=60),
+             _record_publish_results)
+    reg_tool(_spec("review_experiments", "实验复盘：代码级事实汇总（传播/导流/产品分层 + Unknown 标记 + 归因警告）",
+                   {"experiment_id": {"type": "string"}}, (), max_calls=3, timeout=60),
+             _review_experiments)
     reg_tool(_spec("crawl_external", "【需任务授权】登记新增外部数据采集任务",
                    {"platform": {"type": "string"}, "target": {"type": "string"}, "reason": {"type": "string"}},
                    ("platform", "target"), permission=L2), _crawl_external)

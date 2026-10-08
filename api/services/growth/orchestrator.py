@@ -275,7 +275,47 @@ class Orchestrator:
         def call(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
             return {"id": f"mock_{name}", "name": name, "arguments": args}
 
-        # Step 1: recall experience & see available data
+        def last_tool_data(name: str) -> Optional[Dict[str, Any]]:
+            for m in reversed(messages):
+                if m.get("role") == "tool" and m.get("name") == name:
+                    try:
+                        payload = json.loads(m.get("content") or "{}")
+                        return payload.get("data") if payload.get("status") == "ok" else None
+                    except json.JSONDecodeError:
+                        return None
+            return None
+
+        goal = self.session.config.goal
+        review_intent = any(k in goal for k in ("复盘", "调整", "效果", "回顾"))
+
+        if review_intent:
+            # 复盘路径：回忆经验 → 事实汇总 → 写经验 → 总结
+            if "recall_learnings" not in tool_names:
+                return {"tool_calls": [call("recall_learnings", {})]}
+            if "review_experiments" not in tool_names:
+                return {"tool_calls": [call("review_experiments", {})]}
+            facts = last_tool_data("review_experiments")
+            if facts and "record_learning" not in tool_names:
+                exps = facts.get("experiments") or []
+                desc = json.dumps(facts.get("metrics_known") or {}, ensure_ascii=False)
+                unknown = sorted({n for e in exps for n in e.get("metrics_unknown", [])})
+                return {"tool_calls": [call("record_learning", {
+                    "what_tested": f"{len(exps)} 个实验的分发表现（mock 复盘）",
+                    "outcome": f"已知指标:{desc[:300]}；Unknown:{unknown}",
+                    "evidence_strength": "weak" if facts.get("attribution_warning") else "moderate",
+                    "remaining_uncertainties": unknown,
+                    "next_adjustments": ["以导流效率（visit_per_view）而非播放量决定加投"],
+                })]}
+            answer = (
+                "【MOCK 演示复盘，非真实模型推理】\n"
+                f"实验事实汇总：{json.dumps((facts or {}).get('experiments', []), ensure_ascii=False)[:1200]}\n"
+                f"归因警告：{(facts or {}).get('attribution_warning') or '无'}\n"
+                "已写入一条经验记录（weak 证据）。下轮建议：按 visit_per_view 排序决定加投，"
+                "对 sample_flag=small_sample 的实验只做小规模复测。"
+            )
+            return {"message": {"role": "assistant", "content": answer}}
+
+        # 策划路径
         if "recall_learnings" not in tool_names:
             return {"tool_calls": [call("recall_learnings", {})]}
         if "list_analysis_runs" not in tool_names:
@@ -287,15 +327,63 @@ class Orchestrator:
             return {"tool_calls": [call("query_assets", {})]}
         if "match_assets_to_needs" not in tool_names:
             return {"tool_calls": [call("match_assets_to_needs", {})]}
+
+        matches = ((last_tool_data("match_assets_to_needs") or {}).get("matches")) or []
+        top = next((m for m in matches if m.get("usable_assets")), None)
+        if top is not None and "create_opportunity" not in tool_names:
+            return {"tool_calls": [call("create_opportunity", {
+                "target_segment": "有该类需求的用户",
+                "problem": top.get("need", ""),
+                "evidence_refs": [],
+                "growth_mechanism": "教程/解答型内容承接真实提问，附可追踪链接导流",
+                "usable_assets": top.get("usable_assets", []),
+                "recommended_action": "生成内容任务书并人工审批后建实验",
+                "verdict": "recommend",
+                "verdict_rationale": f"该需求出现 {top.get('signal_count')} 次且有已授权素材可承接",
+                "confidence": 0.6,
+                "uncertainty_level": "inference",
+                "metrics_to_verify": ["valid_visits", "visit_per_view"],
+            })]}
+        if top is not None and "create_content_brief" not in tool_names:
+            try:
+                product = store.get_product(self.session.config.product_id)
+                value_props = (product.value_props or [])[:2] if product else []
+            except Exception:
+                value_props = []
+            return {"tool_calls": [call("create_content_brief", {
+                "title": f"解答「{top.get('need', '')[:18]}」实操内容",
+                "audience": "提出该需求的目标用户",
+                "problem": top.get("need", ""),
+                "asset_ids": top.get("usable_assets", [])[:2],
+                "rationale": f"需求出现 {top.get('signal_count')} 次；素材已授权可用。证据见信号库。",
+                "channels": ["bilibili", "xiaohongshu"],
+                "hook": f"前 3 秒直接展示成品并提问：想知道这是怎么做的吗？",
+                "value_props": value_props,
+                "visit_reason": "视频只讲方法，实际生成需要到站使用产品完成",
+                "review_requirements": "核对素材授权与文案不夸大；添加可追踪链接",
+                "validation_metrics": ["views", "valid_visits", "visit_per_view"],
+                "priority": 1,
+            })]}
         # Step 3: wrap up with a human-readable, evidence-first summary
         last_outputs = [m for m in messages if m.get("role") == "tool"][-3:]
         digest = "\n".join(str(m.get("content", ""))[:800] for m in last_outputs)
+        if top is None:
+            verdict_line = ("未找到「有已授权素材可承接」的需求：数据不足时不硬凑推荐。"
+                            "建议先导入评论分析结果（import_signals_from_run）或补充素材。")
+        else:
+            opp = last_tool_data("create_opportunity") or {}
+            brief = last_tool_data("create_content_brief") or {}
+            verdict_line = (
+                f"最强机会：「{top.get('need', '')}」（证据 {top.get('signal_count')} 条，"
+                f"可用素材 {top.get('usable_assets')}）。\n"
+                f"已生成增长机会 {opp.get('opportunity_id', '-')} 与任务书草稿 {brief.get('brief_id', '-')}"
+                "（草稿需人工批准后才能建实验）。"
+            )
         answer = (
-            "【MOCK 演示结果，非真实模型推理】\n"
+            "【MOCK 演示结果，非真实模型推理；所有写入均来自真实工具输出】\n"
             f"目标：{self.session.config.goal}\n"
-            "已按顺序调用：recall_learnings → list_analysis_runs → query_signals → query_assets → match_assets_to_needs。\n"
-            f"工具产出摘要（截断）：\n{digest}\n"
-            "下一步建议：如需真实推理，请配置模型 API Key 并关闭 use_mock；"
-            "如需新增外部采集或大模型批量分析，请授予对应 L2 任务授权。"
+            f"{verdict_line}\n"
+            f"工具产出摘要（截断）：\n{digest[:1500]}\n"
+            "下一步：人工审批任务书 → 为批准的实验建实验 → 分发后导入表现 → 用「复盘…」目标让我调整。"
         )
         return {"message": {"role": "assistant", "content": answer}}

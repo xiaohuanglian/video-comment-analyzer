@@ -3,15 +3,19 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import threading
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from ..services.growth import seeds, store
+from ..services.growth import demo_data, seeds, store
 from ..services.growth.models import (
+    BriefStatus,
     ContentAsset,
+    ContentBrief,
     GrowthExperiment,
     GrowthOpportunity,
     LearningRecord,
@@ -154,6 +158,107 @@ def post_learning(product_id: str, rec: LearningRecord) -> Dict[str, Any]:
 def get_audit(product_id: str, limit: int = 100) -> Dict[str, Any]:
     _require_product(product_id)
     return {"audit": [a.model_dump() for a in store.list_audit(product_id, limit=limit)]}
+
+
+# --- content briefs（内容任务书：Agent 起草，人工审批） -----------------------
+
+
+@router.get("/products/{product_id}/briefs")
+def get_briefs(product_id: str) -> Dict[str, Any]:
+    _require_product(product_id)
+    return {"briefs": [b.model_dump() for b in store.list_briefs(product_id)]}
+
+
+class BriefReviewRequest(BaseModel):
+    action: str = Field(pattern="^(approve|reject)$")
+    note: str = ""
+
+
+@router.post("/products/{product_id}/briefs/{brief_id}/review")
+def post_brief_review(product_id: str, brief_id: str, body: BriefReviewRequest) -> Dict[str, Any]:
+    """人工审批入口：只有批准后任务书才能建立增长实验。"""
+    _require_product(product_id)
+    briefs = {b.brief_id: b for b in store.list_briefs(product_id)}
+    brief = briefs.get(brief_id)
+    if brief is None:
+        raise HTTPException(status_code=404, detail="任务书不存在")
+    brief.status = BriefStatus.APPROVED if body.action == "approve" else BriefStatus.REJECTED
+    brief.review_note = body.note
+    return store.upsert_brief(brief).model_dump()
+
+
+# --- assets csv/json 导入 -------------------------------------------------------
+
+
+class AssetImportRequest(BaseModel):
+    assets: Optional[List[Dict[str, Any]]] = None  # JSON 列表
+    csv_text: Optional[str] = None  # 或直接粘贴 CSV
+
+
+@router.post("/products/{product_id}/assets/import")
+def post_assets_import(product_id: str, body: AssetImportRequest) -> Dict[str, Any]:
+    _require_product(product_id)
+    from ..services.growth.tools import ToolContext, execute_tool
+
+    rows = body.assets or []
+    if body.csv_text:
+        reader = csv.DictReader(io.StringIO(body.csv_text))
+        for row in reader:
+            cleaned = {k.strip(): (v or "").strip() for k, v in row.items() if k}
+            if cleaned.get("topics"):
+                cleaned["topics"] = [t for t in cleaned["topics"].replace(";", ",").split(",") if t]
+            if cleaned.get("published_channels"):
+                cleaned["published_channels"] = [
+                    t for t in cleaned["published_channels"].replace(";", ",").split(",") if t
+                ]
+            rows.append(cleaned)
+    if not rows:
+        raise HTTPException(status_code=400, detail="请提供 assets JSON 或 csv_text")
+    result = execute_tool("import_assets", {"assets": rows},
+                          ToolContext(product_id=product_id, session_id="api_import"), {})
+    if result.status != "ok":
+        raise HTTPException(status_code=400, detail=result.error)
+    return result.data
+
+
+class PublishResultRequest(BaseModel):
+    experiment_id: str
+    channel: str
+    account: str = ""
+    url: str = ""
+    published_at: str = ""
+    metrics: Dict[str, Any] = Field(default_factory=dict)  # 未获取的指标不要传，或传 null
+    period_start: str = ""
+    period_end: str = ""
+    stats_method: str = ""
+    attribution_note: str = ""
+    source: str = "manual_import"
+    verified: bool = False
+
+
+@router.post("/products/{product_id}/tools/record_publish")
+def post_record_publish(product_id: str, body: PublishResultRequest) -> Dict[str, Any]:
+    """人工登记发布结果（与 Agent 工具同一条安全通道，审计 actor=agent 由工具层区分不了，
+    这里 session_id=api_manual 以示人工录入）。"""
+    _require_product(product_id)
+    from ..services.growth.tools import ToolContext, execute_tool
+
+    result = execute_tool(
+        "record_publish_results", body.model_dump(),
+        ToolContext(product_id=product_id, session_id="api_manual"), {},
+    )
+    if result.status != "ok":
+        raise HTTPException(status_code=400, detail=result.error)
+    return result.data
+
+
+# --- 演示数据 -------------------------------------------------------------------
+
+
+@router.post("/demo/seed")
+def post_demo_seed() -> Dict[str, Any]:
+    """写入明确标记的 DEMO 数据集（youvibe_demo），幂等。"""
+    return demo_data.seed_demo_dataset()
 
 
 @router.get("/products/{product_id}/export")
