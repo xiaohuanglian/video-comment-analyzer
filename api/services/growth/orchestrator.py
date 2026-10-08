@@ -123,13 +123,14 @@ def _tool_schemas_openai() -> List[Dict[str, Any]]:
 class Orchestrator:
     """One session = one agent run. Thread-cancelable, budget-limited."""
 
-    def __init__(self, config: SessionConfig, api_key: str = "") -> None:
+    def __init__(self, config: SessionConfig, api_key: str = "", client=None) -> None:
         self.session = AgentSession(
             session_id=f"s_{uuid.uuid4().hex[:10]}",
             config=config,
             created_at=utc_now_iso(),
         )
         self.api_key = api_key
+        self._client = client  # 测试注入用；生产由 base_url+api_key 构建
         self._cancel = threading.Event()
 
     # -- control --------------------------------------------------------------
@@ -154,8 +155,9 @@ class Orchestrator:
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": self._goal_message()},
         ]
-        model_fn = self._mock_model if s.config.use_mock or not self.api_key else self._llm_model
-        if s.config.use_mock or not self.api_key:
+        use_real = bool(self.api_key or self._client) and not s.config.use_mock
+        model_fn = self._llm_model if use_real else self._mock_model
+        if not use_real:
             s.stop_reason = "mock_mode"  # overwritten on success; flags simulated LLM
         try:
             while s.iterations < s.config.max_iterations:
@@ -235,7 +237,7 @@ class Orchestrator:
 
     def _llm_model(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
         cfg = self.session.config
-        client = build_openai_client(cfg.base_url, self.api_key)
+        client = self._client or build_openai_client(cfg.base_url, self.api_key)
         completion = client.chat.completions.create(
             model=cfg.model_name,
             messages=messages,

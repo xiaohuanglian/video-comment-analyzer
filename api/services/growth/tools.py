@@ -132,8 +132,20 @@ def _get_run_top_needs(ctx: ToolContext, args: Dict[str, Any]) -> Any:
                 text = str(item).strip()
                 if text:
                     counter[text] += 1
-            for quote in analysis.get("evidence_quotes") or []:
-                quotes.setdefault(field, []).append(str(quote)[:120])
+        # evidence_items_v1：新信号也常包含需求/问题文本
+        for sig in analysis.get("new_signals") or []:
+            if not isinstance(sig, dict):
+                continue
+            text = str(sig.get("text") or "").strip()
+            stype = str(sig.get("type") or "")
+            if not text:
+                continue
+            if stype in {"new_problem", "new_barrier"}:
+                problems[text] += 1
+            else:
+                needs[text] += 1
+        for quote in analysis.get("evidence_quotes") or []:
+            quotes.setdefault("evidence_quotes", []).append(str(quote)[:120])
     return {
         "run_id": run_id,
         "top_needs": needs.most_common(limit),
@@ -152,30 +164,50 @@ def _import_signals_from_run(ctx: ToolContext, args: Dict[str, Any]) -> Any:
         run_storage.load_config(run_id)
     except FileNotFoundError:
         raise ValueError(f"run 不存在: {run_id}")
+    _existing = {"v": None}
+
+    def existing_ids():
+        if _existing["v"] is None:
+            _existing["v"] = {s.signal_id for s in store.list_signals(ctx.product_id)}
+        return _existing["v"]
+
     created: List[str] = []
+    skipped = 0
     for row in run_storage.iter_results(run_id, limit=limit):
         src = (row or {}).get("source") or {}
         analysis = (row or {}).get("analysis") or {}
         needs = analysis.get("potential_needs") or []
         problems = analysis.get("specific_problems") or []
-        if not needs and not problems:
+        # evidence_items_v1 回退：结构化字段为空时取 new_signals 文本
+        new_signals = [s for s in (analysis.get("new_signals") or []) if isinstance(s, dict)]
+        new_texts = [str(s.get("text") or "").strip() for s in new_signals]
+        new_texts = [t for t in new_texts if t]
+        if not needs and not problems and not new_texts:
             continue
         rid = str(src.get("internal_record_id") or analysis.get("record_id") or uuid.uuid4())
+        signal_id = f"{run_id}:{rid}"
+        if signal_id in existing_ids():
+            skipped += 1
+            continue  # 幂等：重复导入不产生重复信号
+        existing_ids().add(signal_id)
+        need_text = (needs or problems or new_texts)[0][:200]
         sig = Signal(
-            signal_id=f"{run_id}:{rid}",
+            signal_id=signal_id,
             product_id=ctx.product_id,
             source_type="external_comment",
             source_platform=str(src.get("platform") or "unknown"),
             dataset_ref=run_id,
-            evidence_refs=[rid],
+            evidence_refs=[rid],  # 原始记录可追溯
             collected_at=utc_now_iso(),
             signal_type=str(analysis.get("primary_intent") or ""),
-            need_or_problem=(needs or problems)[0][:200],
+            need_or_problem=need_text,
             ai_classification={
                 "signals": analysis.get("signals") or [],
                 "confidence": analysis.get("confidence") or 0.0,
                 "needs": needs[:5],
                 "problems": problems[:5],
+                "new_signals": new_signals[:5],
+                "evidence_quotes": [str(q)[:200] for q in (analysis.get("evidence_quotes") or [])][:5],
             },
             confidence=float(analysis.get("confidence") or 0.0),
             evidence_quality="high",
@@ -183,7 +215,7 @@ def _import_signals_from_run(ctx: ToolContext, args: Dict[str, Any]) -> Any:
         )
         created.append(sig.signal_id)
         store.add_signals([sig])
-    return {"imported": len(created), "signal_ids": created[:20]}
+    return {"imported": len(created), "skipped_duplicates": skipped, "signal_ids": created[:20]}
 
 
 def _query_signals(ctx: ToolContext, args: Dict[str, Any]) -> Any:
