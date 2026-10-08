@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Growth Engine · 工作台原型</title>
+<link rel="stylesheet" href="/proto/app.css">
+</head>
+<body>
+<div id="app">
+  <aside class="side">
+    <div class="brand">AI Growth Engine <span class="proto-badge">原型</span></div>
+    <div class="side-block">
+      <label class="lbl">产品</label>
+      <select id="productSel"></select>
+    </div>
+    <nav id="nav">
+      <button data-view="home" class="active">工作台</button>
+      <button data-view="projects">增长项目</button>
+      <button data-view="library">素材与知识</button>
+      <button data-view="review">增长复盘</button>
+      <button data-view="settings">设置与调试</button>
+    </nav>
+    <div class="side-foot">
+      <div id="modeBadge" class="mode-badge">模式检查中…</div>
+      <div id="modelBadge" class="model-badge"></div>
+    </div>
+  </aside>
+
+  <main>
+    <div id="demoBanner" class="demo-banner" hidden>⚠ DEMO 演示模式：全部数据为演示，结果由 Mock 生成，不代表真实 AI 判断</div>
+
+    <!-- 工作台 -->
+    <section id="view-home" class="view">
+      <div class="today" id="todayPanel">
+        <h2>今天最值得处理的 3 件事</h2>
+        <div id="todayList" class="today-list"></div>
+      </div>
+
+      <div class="task-box">
+        <textarea id="goalInput" rows="2" placeholder="用一句话描述你的增长目标，例如：帮我找到 YouVibe 的潜在用户"></textarea>
+        <div class="task-actions">
+          <div class="quick">
+            <span class="lbl">快捷任务：</span>
+            <button class="chip" data-goal="帮我找到潜在用户">寻找潜在用户</button>
+            <button class="chip" data-goal="帮我规划下周最值得做的内容">规划下周内容</button>
+            <button class="chip" data-goal="分析用户需求">分析用户需求</button>
+            <button class="chip" data-goal="复盘上一轮增长效果，告诉我接下来调整什么">复盘增长效果</button>
+          </div>
+          <button id="runBtn" class="primary">开始工作</button>
+          <button id="stopBtn" class="danger" disabled>停止</button>
+        </div>
+      </div>
+
+      <div id="workPanel" class="work-panel" hidden>
+        <div class="work-head">
+          <span id="workStatus" class="status-dot"></span>
+          <span id="workMeta"></span>
+        </div>
+        <ol id="workSteps" class="work-steps"></ol>
+        <details class="debug"><summary>工具执行详情（调试）</summary><pre id="workDebug"></pre></details>
+      </div>
+
+      <div id="resultPanel" class="result-panel" hidden>
+        <h2>AI 的交付</h2>
+        <div id="resultSummary" class="answer"></div>
+        <div id="resultCards"></div>
+      </div>
+    </section>
+
+    <!-- 增长项目 -->
+    <section id="view-projects" class="view" hidden>
+      <h2>增长项目</h2>
+      <div id="projectList"></div>
+    </section>
+
+    <!-- 素材与知识 -->
+    <section id="view-library" class="view" hidden>
+      <h2>素材与知识 <span class="sub">辅助库，不是主操作入口</span></h2>
+      <div class="cols2">
+        <div class="card">
+          <h3>内容素材 <span id="assetCount" class="count"></span></h3>
+          <div id="assetList"></div>
+          <details class="debug"><summary>导入素材（JSON / CSV）</summary>
+            <textarea id="assetImport" rows="4" placeholder='[{"asset_id":"yv_a1","title":"…","license_status":"owned"}]'></textarea>
+            <button id="importAssetBtn" class="secondary">导入</button>
+          </details>
+        </div>
+        <div class="card">
+          <h3>需求信号与经验</h3>
+          <div id="signalStats"></div>
+          <div id="learningList"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 增长复盘 -->
+    <section id="view-review" class="view" hidden>
+      <h2>增长复盘</h2>
+      <div id="attrWarning" class="warn-banner" hidden></div>
+      <div id="expList"></div>
+    </section>
+
+    <!-- 设置与调试 -->
+    <section id="view-settings" class="view" hidden>
+      <h2>设置与调试</h2>
+      <div class="cols2">
+        <div class="card">
+          <h3>模型连接</h3>
+          <div id="modelState"></div>
+          <input id="keyInput" type="password" placeholder="API Key（仅存浏览器 sessionStorage）" autocomplete="off">
+          <input id="baseInput" placeholder="Base URL（默认 https://api.deepseek.com）">
+          <input id="modelInput" placeholder="Model（默认 deepseek-v4-flash）">
+          <div class="row">
+            <button id="saveKeyBtn" class="secondary">保存</button>
+            <button id="testKeyBtn" class="secondary">连接测试</button>
+          </div>
+          <div id="keyTestResult" class="muted"></div>
+        </div>
+        <div class="card">
+          <h3>数据与审计</h3>
+          <div id="dataStats"></div>
+          <details class="debug"><summary>审计日志</summary><pre id="auditLog"></pre></details>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="/proto/app.js?v=1"></script>
+</body>
+</html>
