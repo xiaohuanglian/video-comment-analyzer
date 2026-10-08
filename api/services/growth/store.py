@@ -34,6 +34,7 @@ from .models import (
     ContentAsset,
     ContentBrief,
     GrowthExperiment,
+    UserSegmentReport,
     GrowthOpportunity,
     LearningRecord,
     MetricsObservation,
@@ -233,6 +234,17 @@ def upsert_asset(asset: ContentAsset) -> ContentAsset:
     items = _upsert(list_assets(asset.product_id), asset, lambda a: a.asset_id)
     _save_collection(asset.product_id, "assets", items)
     return asset
+
+
+def list_segment_reports(product_id: str) -> List[UserSegmentReport]:
+    return _load_collection(product_id, "segment_reports", UserSegmentReport)
+
+
+def upsert_segment_report(report: UserSegmentReport) -> UserSegmentReport:
+    get_product_or_raise(report.product_id)
+    items = _upsert(list_segment_reports(report.product_id), report, lambda r: r.report_id)
+    _save_collection(report.product_id, "segment_reports", items)
+    return report
 
 
 def list_briefs(product_id: str) -> List[ContentBrief]:

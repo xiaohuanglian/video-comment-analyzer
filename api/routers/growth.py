@@ -314,6 +314,56 @@ def post_agent_run_async(body: RunAgentRequest) -> Dict[str, Any]:
     return {"session_id": orch.session.session_id, "status": "running", "mock": config.use_mock}
 
 
+class FollowupRequest(BaseModel):
+    message: str = Field(min_length=2)
+    api_key: str = ""
+    use_mock: bool = True
+    base_url: str = ""
+    model_name: str = ""
+
+
+def _build_followup_context(product_id: str, parent) -> str:
+    """压缩上下文：目标、结论、当前相关对象与人工决策——不重复发全量聊天。"""
+    opps = store.list_opportunities(product_id)
+    briefs = store.list_briefs(product_id)
+    my_opps = [o for o in opps if o.created_by_session == parent.session_id][-5:]
+    my_briefs = [b for b in briefs if b.created_by_session == parent.session_id][-5:]
+    parts = [
+        f"原目标: {parent.config.goal}",
+        f"上轮结论(截断): {(parent.final_answer or parent.stop_reason or '')[:300]}",
+    ]
+    if my_opps:
+        parts.append("本任务的机会: " + "; ".join(
+            f"{o.opportunity_id}「{o.problem[:20]}」状态={o.status}" for o in my_opps))
+    if my_briefs:
+        parts.append("本任务的任务书: " + "; ".join(
+            f"{b.brief_id}「{b.title[:16]}」状态={b.status.value}" for b in my_briefs))
+    return "\n".join(parts)
+
+
+@router.post("/agent/sessions/{session_id}/followup")
+def post_agent_followup(product_id: str, session_id: str, body: FollowupRequest) -> Dict[str, Any]:
+    """连续对话：围绕同一任务继续工作（复用证据，不重头再来）。"""
+    _require_product(product_id)
+    parent = load_session(product_id, session_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail="父会话不存在")
+    config = SessionConfig(
+        product_id=product_id,
+        goal=body.message,
+        use_mock=body.use_mock or not body.api_key,
+        base_url=body.base_url or parent.config.base_url,
+        model_name=body.model_name or parent.config.model_name,
+        parent_session_id=session_id,
+        extra_context=_build_followup_context(product_id, parent),
+    )
+    orch = Orchestrator(config, api_key=body.api_key)
+    thread = threading.Thread(target=orch.run, name=f"growth-followup-{orch.session.session_id}", daemon=True)
+    thread.start()
+    return {"session_id": orch.session.session_id, "parent_session_id": session_id,
+            "status": "running", "mock": config.use_mock}
+
+
 @router.get("/agent/sessions")
 def get_agent_sessions(product_id: str) -> Dict[str, Any]:
     _require_product(product_id)

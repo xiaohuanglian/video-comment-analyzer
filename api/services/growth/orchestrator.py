@@ -42,6 +42,16 @@ SYSTEM_PROMPT = """你是一名增长策略 Agent。你通过调用工具完成�
 - 可以给出"不建议行动"的结论；建议必须带理由、成本与风险，不得只有分数。
 - L3 操作（对外发布、发送、支付、删除）你永远无权执行，改向用户请求人工处理。
 - 输出使用产品运营人员能理解的语言。
+- 限制：仅凭少量视频评论区样本，不得声称已确认产品的全部目标用户；代理数据必须说明偏差。
+
+第一步永远是理解目标（自己判断，不要反问用户才能开始）：
+- 「找潜在用户/研究人群」类目标：走用户研究路径（读档案→查信号→分段），
+  产出用 create_segment_report 登记；除非用户同时要求规划内容，否则不要创建任务书或内容选题。
+- 「规划内容/选题」类目标：走内容策划路径（需求→素材匹配→机会/任务书）。
+- 「复盘/效果」类目标：走复盘路径（review_experiments→结论→record_learning）。
+- 跨场景目标（如“先找用户再规划内容”）：拆成关联步骤，先把研究结论作为后续证据，
+  不跳过研究直接出选题。
+- 证据不足时允许停止并说明缺什么，不必硬凑成果。
 """
 
 
@@ -56,6 +66,8 @@ class SessionConfig(BaseModel):
     budget_limit_cny: float = 2.0
     max_iterations: int = Field(default=8, ge=1, le=30)
     l2_grants: List[str] = Field(default_factory=list)  # task-scoped L2 authorization
+    parent_session_id: str = ""  # 连续对话：父任务
+    extra_context: str = ""     # 连续对话：压缩后的前文摘要（≤600 字，不重复发全量聊天）
 
 
 class AgentSession(BaseModel):
@@ -284,6 +296,16 @@ class Orchestrator:
         return s
 
     def _goal_message(self) -> str:
+        cfg = self.session.config
+        continuation = ""
+        if cfg.parent_session_id:
+            continuation = (
+                f"\n【任务延续】这是对会话 {cfg.parent_session_id} 的继续。"
+                "用户在同一任务上追问/修改。请更新既有对象状态而不是重复创建；"
+                "可复用的证据直接使用，不必重做全量分析。"
+            )
+        if cfg.extra_context:
+            continuation += f"\n【前文摘要】\n{cfg.extra_context[:600]}\n"
         learnings_hint = ""
         try:
             n = len(store.list_learnings(self.session.config.product_id))
@@ -291,7 +313,11 @@ class Orchestrator:
                 learnings_hint = f"\n（本产品已有 {n} 条历史经验，建议先用 recall_learnings 检索，避免重复失败方案。）"
         except Exception:
             pass
-        return f"产品: {self.session.config.product_id}\n增长目标: {self.session.config.goal}{learnings_hint}\n请自主规划并调用工具完成；完成后给出有证据支撑的结论与下一步。"
+        return (
+            f"产品: {self.session.config.product_id}\n"
+            f"增长目标: {self.session.config.goal}{continuation}{learnings_hint}\n"
+            "请自主规划并调用工具完成；完成后给出有证据支撑的结论与下一步。"
+        )
 
     # -- models ----------------------------------------------------------------
 
@@ -347,6 +373,56 @@ class Orchestrator:
 
         goal = self.session.config.goal
         review_intent = any(k in goal for k in ("复盘", "调整", "效果", "回顾"))
+        research_intent = any(k in goal for k in ("潜在用户", "目标用户", "用户研究", "人群", "用户是谁"))
+        plan_intent = any(k in goal for k in ("内容", "规划", "选题", "策划"))
+
+        if research_intent and "query_signals" not in tool_names:
+            return {"tool_calls": [call("query_signals", {"limit": 100})]}
+        if research_intent and "create_segment_report" not in tool_names:
+            data = last_tool_data("query_signals") or {}
+            signals = data.get("signals") or []
+            if not signals:
+                answer = (
+                    "【MOCK 演示结果，非真实模型推理】\n"
+                    "当前没有用户需求信号，无法研究潜在用户。\n"
+                    "请先导入评论分析结果（import_signals_from_run）或录入真实反馈，\n"
+                    "我不会在没有证据时编造用户画像。"
+                )
+                return {"message": {"role": "assistant", "content": answer}}
+            from collections import Counter as _C
+            counter = _C(s.get("need_or_problem", "") for s in signals if s.get("need_or_problem"))
+            top = [t for t, _ in counter.most_common(3)]
+            platforms = sorted({s.get("source_platform", "") for s in signals if s.get("source_platform")})
+            segments = []
+            for need in top:
+                refs = [s["signal_id"] for s in signals if s.get("need_or_problem") == need][:5]
+                segments.append({
+                    "name": f"提出「{need[:14]}」的用户",
+                    "core_needs": [need[:80]],
+                    "evidence_refs": refs,
+                    "platforms": platforms,
+                    "product_fit": "weak",
+                    "product_fit_reason": "代理评论数据与产品价值点仅部分重合，需目标场景数据验证",
+                    "reach_methods": ["在需求聚集的内容场景发布承抗性内容，附可追踪链接"],
+                    "hypothesized_channels": ["推测：同类 AI 工具教程视频的评论区"],
+                    "certainty": "evidenced" if counter[need] >= 2 else "inferred",
+                })
+            return {"tool_calls": [call("create_segment_report", {
+                "goal": goal,
+                "segments": segments,
+                "data_limitations": "样本来自有限公开视频评论区，属代理受众，不能代表产品的全部目标用户；画像为初步假设。",
+                "recommended_next": ["补充产品目标场景下的用户数据后再确认画像"],
+                "not_recommended": [],
+            })]}
+        if research_intent and not plan_intent:
+            rep = last_tool_data("create_segment_report") or {}
+            answer = (
+                "【MOCK 演示结果，非真实模型推理；分段由确定性规则生成，真实分段质量需真实模型验收】\n"
+                f"已形成潜在用户研究报告 {rep.get('report_id', '-')}，包含 {rep.get('segments', 0)} 个群体。\n"
+                "注意：样本是代理评论数据，画像为初步假设（见 data_limitations），不能把这批用户直接当作已确认目标用户。\n"
+                "下一步：可基于报告提出内容规划目标，或先补充目标场景数据。"
+            )
+            return {"message": {"role": "assistant", "content": answer}}
 
         if review_intent:
             # 复盘路径：回忆经验 → 事实汇总 → 写经验 → 总结
@@ -375,10 +451,10 @@ class Orchestrator:
             )
             return {"message": {"role": "assistant", "content": answer}}
 
-        # 策划路径
+        # 策划路径（跨场景目标时复用研究阶段已取数据，不再重复调用）
         if "recall_learnings" not in tool_names:
             return {"tool_calls": [call("recall_learnings", {})]}
-        if "list_analysis_runs" not in tool_names:
+        if "list_analysis_runs" not in tool_names and "query_signals" not in tool_names:
             return {"tool_calls": [call("list_analysis_runs", {})]}
         # Step 2: inspect signals / assets
         if "query_signals" not in tool_names:

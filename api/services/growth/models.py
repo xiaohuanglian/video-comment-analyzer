@@ -253,6 +253,49 @@ class ContentBrief(BaseModel):
     updated_at: str = ""
 
 
+# --- user segment research（潜在用户研究） -------------------------------------
+
+
+class SegmentCertainty(str, Enum):
+    EVIDENCED = "evidenced"        # 有证据支持的用户需求
+    INFERRED = "inferred"          # 推断出的潜在群体
+    UNVERIFIED = "unverified"      # 缺少验证的画像
+
+
+class ProductFitLevel(str, Enum):
+    MATCHED = "matched"
+    WEAK = "weak"
+    MISMATCH = "mismatch"
+
+
+class UserSegment(BaseModel):
+    name: str = ""
+    core_needs: List[str] = Field(default_factory=list)
+    evidence_refs: List[str] = Field(default_factory=list)  # 必须可解析（signal/record id）
+    platforms: List[str] = Field(default_factory=list)  # 真实可确认的出现平台（来自数据）
+    product_fit: ProductFitLevel = ProductFitLevel.WEAK
+    product_fit_reason: str = ""
+    reach_methods: List[str] = Field(default_factory=list)  # 合规触达方式
+    hypothesized_channels: List[str] = Field(default_factory=list)  # 推测渠道（单列，不得混为已确认）
+    certainty: SegmentCertainty = SegmentCertainty.UNVERIFIED
+
+
+class UserSegmentReport(BaseModel):
+    """潜在用户研究报告：区别于内容机会，禁止声称已确认全部目标用户。"""
+
+    report_id: str
+    product_id: str
+    goal: str = ""
+    segments: List[UserSegment] = Field(default_factory=list)
+    data_limitations: str = ""  # 数据边界（如：仅两个视频的评论区，代理受众，不能代表全部目标用户）
+    recommended_next: List[str] = Field(default_factory=list)
+    not_recommended: List[str] = Field(default_factory=list)  # 明确不建议当作目标的群体（允许否定结论）
+    created_by: str = "agent"
+    created_by_session: str = ""
+    data_nature: Literal["real", "demo", "mock"] = "real"
+    created_at: str = ""
+
+
 # --- learning & decision memory ---------------------------------------------
 
 

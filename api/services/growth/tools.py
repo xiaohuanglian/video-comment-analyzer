@@ -33,6 +33,7 @@ from .models import (
     MetricsObservation,
     PublishRecord,
     Signal,
+    UserSegmentReport,
     utc_now_iso,
 )
 
@@ -587,6 +588,42 @@ def _review_experiments(ctx: ToolContext, args: Dict[str, Any]) -> Any:
     }
 
 
+def _create_segment_report(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    """潜在用户研究报告（L1）。确定性校验：
+    - certainty=evidenced 的分段必须有可解析的 evidence_refs；
+    - 推测渠道必须填 hypothesized_channels，不得塞进 platforms；
+    - 必须写 data_limitations（数据边界）。
+    """
+    if not str(args.get("data_limitations") or "").strip():
+        raise ValueError("必须填写 data_limitations：当前数据能证明什么、不能证明什么")
+    signal_ids = {s.signal_id for s in store.list_signals(ctx.product_id)}
+    for seg in args.get("segments") or []:
+        if not isinstance(seg, dict):
+            raise ValueError("segments 必须为对象列表")
+        refs = seg.get("evidence_refs") or []
+        unresolved = [r for r in refs if r not in signal_ids]
+        if unresolved:
+            raise ValueError(f"分段「{seg.get('name', '?')}」证据引用无法解析: {unresolved[:3]}")
+        if seg.get("certainty") == "evidenced" and not refs:
+            raise ValueError("certainty=evidenced 的分段必须携带 evidence_refs")
+    report = UserSegmentReport.model_validate({
+        **args,
+        "product_id": ctx.product_id,
+        "report_id": args.get("report_id") or f"sr_{uuid.uuid4().hex[:8]}",
+        "created_by": "agent",
+        "created_by_session": ctx.session_id,
+        "data_nature": _ctx_data_nature(ctx),
+    })
+    store.upsert_segment_report(report)
+    return {"report_id": report.report_id, "segments": len(report.segments),
+            "note": "报告不代表已确认的目标用户画像；certainty 低的群体需先补数据"}
+
+
+def _query_segments(ctx: ToolContext, args: Dict[str, Any]) -> Any:
+    reports = [r.model_dump() for r in store.list_segment_reports(ctx.product_id)]
+    return {"total": len(reports), "reports": reports[-int(args.get("limit", 5)):]}
+
+
 def _crawl_external(ctx: ToolContext, args: Dict[str, Any]) -> Any:
     # L2：新增外部数据采集。本次仅登记任务，不自动执行爬虫。
     return {
@@ -670,6 +707,15 @@ def build_registry() -> Dict[str, tuple[ToolSpec, Callable]]:
                     "next_adjustments": {"type": "array", "items": {"type": "string"}},
                     "human_feedback": {"type": "object"}},
                    ("what_tested",), max_calls=5), _record_learning)
+    reg_tool(_spec("create_segment_report", "登记潜在用户研究报告（找用户类目标的产出物，区别于内容机会）",
+                   {"goal": {"type": "string"},
+                    "segments": {"type": "array", "items": {"type": "object"}},
+                    "data_limitations": {"type": "string"},
+                    "recommended_next": {"type": "array", "items": {"type": "string"}},
+                    "not_recommended": {"type": "array", "items": {"type": "string"}}},
+                   ("goal", "segments", "data_limitations"), max_calls=3), _create_segment_report)
+    reg_tool(_spec("query_segments", "查看已有潜在用户研究报告",
+                   {"limit": {"type": "integer"}}), _query_segments)
     reg_tool(_spec("recall_learnings", "检索历史经验与人工反馈（默认排除 mock 演示记录）",
                    {"keyword": {"type": "string"}, "limit": {"type": "integer"},
                     "include_mock": {"type": "boolean"}}), _recall_learnings)
