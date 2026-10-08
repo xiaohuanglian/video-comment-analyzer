@@ -50,6 +50,7 @@ def build_demo_product() -> ProductProfile:
         insight_profile_id="default",
         data_rights="全部素材与数据均为演示虚构。",
         is_builtin=True,
+        is_demo=True,
     )
     return base
 

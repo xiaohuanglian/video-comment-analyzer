@@ -52,6 +52,24 @@ class ToolDenied(Exception):
     pass
 
 
+def _normalize_dedupe_key(text: str) -> str:
+    """归一化查重键：去空白/标点/大小写。只做候选去重；语义归并要求更高置信，由人工确认。"""
+    import re
+
+    return re.sub(r"[\s，。？！、,.?!:：;；「」“”\"']+", "", (text or "")).lower()[:80]
+
+
+def _ctx_data_nature(ctx: ToolContext) -> str:
+    """本会话写入的数据性质：演示产品 → demo；mock 会话 → mock；否则 real。"""
+    try:
+        product = store.get_product(ctx.product_id)
+        if product and product.is_demo:
+            return "demo"
+    except Exception:
+        pass
+    return "mock" if ctx.mock else "real"
+
+
 class ToolResult(BaseModel):
     status: str = "ok"  # ok / denied / error
     data: Any = None
@@ -312,10 +330,18 @@ def _create_opportunity(ctx: ToolContext, args: Dict[str, Any]) -> Any:
             raise ValueError("无可用素材的机会必须填写 production_need（应制作什么）")
         if payload.get("verdict") == "recommend":
             payload["verdict"] = "hold"  # 待制作机会不直接 recommend 发布
+    payload["created_by_session"] = ctx.session_id
+    payload["data_nature"] = _ctx_data_nature(ctx)
+    key = _normalize_dedupe_key(str(payload.get("problem") or ""))
+    for existing in store.list_opportunities(ctx.product_id):
+        if _normalize_dedupe_key(existing.problem) == key and key:
+            return {"opportunity_id": existing.opportunity_id, "verdict": existing.verdict,
+                    "opportunity_kind": existing.opportunity_kind, "deduped": True,
+                    "note": "相同问题的机会已存在，复用而非重复创建；如需不同内容版本请在任务书层区分"}
     opp = GrowthOpportunity.model_validate(payload)
     store.upsert_opportunity(opp)
     return {"opportunity_id": opp.opportunity_id, "verdict": opp.verdict,
-            "opportunity_kind": opp.opportunity_kind}
+            "opportunity_kind": opp.opportunity_kind, "deduped": False}
 
 
 def _create_experiment(ctx: ToolContext, args: Dict[str, Any]) -> Any:
@@ -422,15 +448,22 @@ def _create_content_brief(ctx: ToolContext, args: Dict[str, Any]) -> Any:
     if not asset_ids:
         # 任务书是 asset_first 产物；demand_first 请用 create_opportunity(production_need=...)
         raise ValueError("任务书必须引用至少一份已授权素材；无素材的需求请创建 demand_first 机会")
+    brief_key = _normalize_dedupe_key(str(args.get("title") or "") + str(args.get("problem") or ""))
+    for existing in store.list_briefs(ctx.product_id):
+        if _normalize_dedupe_key(existing.title + existing.problem) == brief_key and brief_key:
+            return {"brief_id": existing.brief_id, "status": existing.status, "deduped": True,
+                    "note": "相同主题的任务书已存在，复用而非重复创建"}
     brief = ContentBrief.model_validate({
         **args,
         "product_id": ctx.product_id,
         "brief_id": args.get("brief_id") or f"br_{uuid.uuid4().hex[:8]}",
         "status": "draft",
         "created_by": "agent",
+        "created_by_session": ctx.session_id,
+        "data_nature": _ctx_data_nature(ctx),
     })
     store.upsert_brief(brief)
-    return {"brief_id": brief.brief_id, "status": "draft",
+    return {"brief_id": brief.brief_id, "status": "draft", "deduped": False,
             "note": "任务书为草稿，需人工批准后才能建实验/分发"}
 
 
@@ -737,7 +770,7 @@ def execute_tool(name: str, args: Dict[str, Any], ctx: ToolContext, call_counts:
 def _extract_refs(data: Any) -> List[str]:
     refs: List[str] = []
     if isinstance(data, dict):
-        for key in ("opportunity_id", "experiment_id", "learning_id", "asset_id"):
+        for key in ("opportunity_id", "experiment_id", "learning_id", "asset_id", "brief_id"):
             if key in data and isinstance(data[key], str):
                 refs.append(data[key])
         for key in ("signal_ids",):

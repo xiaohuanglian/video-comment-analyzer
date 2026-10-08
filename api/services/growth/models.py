@@ -43,6 +43,7 @@ class ProductProfile(BaseModel):
     insight_profile_id: str = "default"
     data_rights: str = ""  # 素材/数据使用边界说明
     is_builtin: bool = False
+    is_demo: bool = False  # 演示产品：写入自动标 demo，与正式决策隔离
     created_at: str = ""
     updated_at: str = ""
 
@@ -142,6 +143,8 @@ class GrowthOpportunity(BaseModel):
     metrics_to_verify: List[str] = Field(default_factory=list)  # 待验证指标
     status: Literal["open", "accepted", "rejected", "converted"] = "open"
     created_by: str = "agent"  # agent / human
+    created_by_session: str = ""  # 任务归属（创建它的会话）
+    data_nature: Literal["real", "demo", "mock"] = "real"  # mock 不进正式决策
     created_at: str = ""
 
 
@@ -244,6 +247,8 @@ class ContentBrief(BaseModel):
     status: BriefStatus = BriefStatus.DRAFT
     review_note: str = ""       # 人工审批备注/拒绝原因
     created_by: str = "agent"
+    created_by_session: str = ""  # 任务归属
+    data_nature: Literal["real", "demo", "mock"] = "real"
     created_at: str = ""
     updated_at: str = ""
 
