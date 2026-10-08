@@ -12,7 +12,9 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
 
 
 def utc_now_iso() -> str:
@@ -268,6 +270,20 @@ class ProductFitLevel(str, Enum):
     MISMATCH = "mismatch"
 
 
+_FIT_SYNONYMS = {
+    "high": "matched", "strong": "matched", "match": "matched", "good": "matched", "高": "matched",
+    "medium": "weak", "mid": "weak", "partial": "weak", "moderate": "weak", "中": "weak", "一般": "weak",
+    "low": "mismatch", "none": "mismatch", "poor": "mismatch", "no": "mismatch", "低": "mismatch", "不匹配": "mismatch",
+    "unverified": "weak", "unknown": "weak", "clear": "weak", "unclear": "weak",
+}
+
+_CERTAINTY_SYNONYMS = {
+    "fact": "evidenced", "proven": "evidenced", "confirmed": "evidenced", "high": "evidenced",
+    "hypothesis": "inferred", "inference": "inferred", "likely": "inferred", "medium": "inferred",
+    "guess": "unverified", "unknown": "unverified", "low": "unverified", "assumed": "unverified",
+}
+
+
 class UserSegment(BaseModel):
     name: str = ""
     core_needs: List[str] = Field(default_factory=list)
@@ -278,6 +294,20 @@ class UserSegment(BaseModel):
     reach_methods: List[str] = Field(default_factory=list)  # 合规触达方式
     hypothesized_channels: List[str] = Field(default_factory=list)  # 推测渠道（单列，不得混为已确认）
     certainty: SegmentCertainty = SegmentCertainty.UNVERIFIED
+
+    @field_validator("product_fit", mode="before")
+    @classmethod
+    def _coerce_fit(cls, v):
+        if isinstance(v, str):
+            return _FIT_SYNONYMS.get(v.strip().lower(), v)
+        return v
+
+    @field_validator("certainty", mode="before")
+    @classmethod
+    def _coerce_certainty(cls, v):
+        if isinstance(v, str):
+            return _CERTAINTY_SYNONYMS.get(v.strip().lower(), v)
+        return v
 
 
 class UserSegmentReport(BaseModel):
@@ -307,6 +337,7 @@ class LearningRecord(BaseModel):
     experiment_id: str = ""
     # 数据性质：mock 演示记录不进入正式策略检索（recall_learnings 默认排除）
     data_nature: Literal["real", "demo", "mock"] = "real"
+    created_by_session: str = ""
     what_tested: str = ""
     outcome: str = ""
     evidence_strength: Literal["strong", "moderate", "weak", "insufficient"] = "insufficient"

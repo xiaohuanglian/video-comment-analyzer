@@ -385,9 +385,12 @@ def _record_learning(ctx: ToolContext, args: Dict[str, Any]) -> Any:
         "product_id": ctx.product_id,
         "learning_id": args.get("learning_id") or f"l_{uuid.uuid4().hex[:8]}",
         "created_at": utc_now_iso(),
+        "created_by_session": ctx.session_id,
     }
     if ctx.mock:
-        payload["data_nature"] = "mock"  # mock 会话产出永远标 mock
+        payload["data_nature"] = "mock"
+    else:
+        payload["data_nature"] = _ctx_data_nature(ctx)
     rec = LearningRecord.model_validate(payload)
     store.upsert_learning(rec)
     return {"learning_id": rec.learning_id}
@@ -597,15 +600,21 @@ def _create_segment_report(ctx: ToolContext, args: Dict[str, Any]) -> Any:
     if not str(args.get("data_limitations") or "").strip():
         raise ValueError("必须填写 data_limitations：当前数据能证明什么、不能证明什么")
     signal_ids = {s.signal_id for s in store.list_signals(ctx.product_id)}
+    warned: List[str] = []
     for seg in args.get("segments") or []:
         if not isinstance(seg, dict):
             raise ValueError("segments 必须为对象列表")
         refs = seg.get("evidence_refs") or []
         unresolved = [r for r in refs if r not in signal_ids]
         if unresolved:
-            raise ValueError(f"分段「{seg.get('name', '?')}」证据引用无法解析: {unresolved[:3]}")
-        if seg.get("certainty") == "evidenced" and not refs:
-            raise ValueError("certainty=evidenced 的分段必须携带 evidence_refs")
+            # 软处理而非硬拒绝：丢弃不可解析的引用，该分段强制降为 unverified。
+            # 证据完整性规则不变：evidenced 必须全部可解析；不可解析 ≠ 伪造证据通过。
+            seg["evidence_refs"] = [r for r in refs if r in signal_ids]
+            seg["certainty"] = "unverified"
+            warned.append(f"分段「{seg.get('name', '?')}」有 {len(unresolved)} 条引用无法解析，已降级为 unverified")
+        if seg.get("certainty") == "evidenced" and not seg.get("evidence_refs"):
+            seg["certainty"] = "unverified"
+            warned.append(f"分段「{seg.get('name', '?')}」无有效证据引用，已降级为 unverified")
     report = UserSegmentReport.model_validate({
         **args,
         "product_id": ctx.product_id,
@@ -616,6 +625,7 @@ def _create_segment_report(ctx: ToolContext, args: Dict[str, Any]) -> Any:
     })
     store.upsert_segment_report(report)
     return {"report_id": report.report_id, "segments": len(report.segments),
+            "warnings": warned,
             "note": "报告不代表已确认的目标用户画像；certainty 低的群体需先补数据"}
 
 
@@ -707,7 +717,10 @@ def build_registry() -> Dict[str, tuple[ToolSpec, Callable]]:
                     "next_adjustments": {"type": "array", "items": {"type": "string"}},
                     "human_feedback": {"type": "object"}},
                    ("what_tested",), max_calls=5), _record_learning)
-    reg_tool(_spec("create_segment_report", "登记潜在用户研究报告（找用户类目标的产出物，区别于内容机会）",
+    reg_tool(_spec("create_segment_report", "登记潜在用户研究报告（找用户类目标的产出物，区别于内容机会）。"
+                   "segments 每项需含: name, core_needs[], evidence_refs[](必须是已存在的 signal_id), "
+                   "platforms[](仅数据证实的平台), product_fit(matched/weak/mismatch), product_fit_reason, "
+                   "reach_methods[], hypothesized_channels[](仅为推测渠道), certainty(evidenced/inferred/unverified)",
                    {"goal": {"type": "string"},
                     "segments": {"type": "array", "items": {"type": "object"}},
                     "data_limitations": {"type": "string"},

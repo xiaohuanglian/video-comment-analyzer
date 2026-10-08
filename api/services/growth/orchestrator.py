@@ -65,6 +65,7 @@ class SessionConfig(BaseModel):
     output_price: float = 0.002
     budget_limit_cny: float = 2.0
     max_iterations: int = Field(default=8, ge=1, le=30)
+    disable_thinking: bool = True  # 快模型（如 deepseek-flash）需关闭 reasoning 才能正常 function calling
     l2_grants: List[str] = Field(default_factory=list)  # task-scoped L2 authorization
     parent_session_id: str = ""  # 连续对话：父任务
     extra_context: str = ""     # 连续对话：压缩后的前文摘要（≤600 字，不重复发全量聊天）
@@ -230,7 +231,16 @@ class Orchestrator:
                     s.status, s.stop_reason = "budget_exceeded", "达到预算上限，安全退出（中间成果已保存）"
                     break
                 s.iterations += 1
-                reply = model_fn(s.messages)
+                # 倒数第二轮起强制收尾：不再暴露工具，要求基于已有信息直接给出结论
+                # （防止真实模型在多个工具间反复试探烧光轮次）
+                force_final = (s.iterations >= s.config.max_iterations - 1) and not s.config.use_mock
+                if force_final:
+                    s.messages.append({
+                        "role": "user",
+                        "content": "停止调用任何工具。基于已经拿到的信息直接给出最终结论；"
+                                   "证据不足的部分如实说明，提出需要补充的数据。",
+                    })
+                reply = model_fn(s.messages, force_final=force_final) if use_real else model_fn(s.messages)
                 s.messages.append(reply.get("message") or {"role": "assistant", "content": ""})
                 cost = float(reply.get("cost_cny") or 0.0)
                 s.cost_cny = round(s.cost_cny + cost, 6)
@@ -321,15 +331,20 @@ class Orchestrator:
 
     # -- models ----------------------------------------------------------------
 
-    def _llm_model(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _llm_model(self, messages: List[Dict[str, Any]], force_final: bool = False) -> Dict[str, Any]:
         cfg = self.session.config
         client = self._client or build_openai_client(cfg.base_url, self.api_key)
+        kwargs = {}
+        if cfg.disable_thinking:
+            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+        if not force_final:
+            kwargs["tools"] = _tool_schemas_openai()
+            kwargs["tool_choice"] = "auto"
         completion = client.chat.completions.create(
             model=cfg.model_name,
             messages=messages,
-            tools=_tool_schemas_openai(),
-            tool_choice="auto",
             temperature=0.3,
+            **kwargs,
         )
         usage = parse_usage(getattr(completion, "usage", None))
         cost = estimate_cost(

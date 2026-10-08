@@ -33,14 +33,17 @@ def test_segment_report_validation(tmp_store):
     # 缺 data_limitations → 拒绝
     r = execute_tool("create_segment_report", {"goal": "g", "segments": []}, ctx, {})
     assert r.status == "error" and "data_limitations" in r.error
-    # evidence 引用不存在 → 拒绝
+    # evidence 引用不存在 → 软处理：引用丢弃 + 强制降级 unverified（不允许伪造证据通过）
     r = execute_tool("create_segment_report", {"goal": "g", "data_limitations": "样本少",
         "segments": [{"name": "x", "certainty": "evidenced", "evidence_refs": ["ghost"]}]}, ctx, {})
-    assert r.status == "error" and "无法解析" in r.error
-    # evidenced 但无引用 → 拒绝
+    assert r.status == "ok" and r.data["warnings"]
+    seg = store.list_segment_reports("youvibe")[-1].segments[0]
+    assert seg.certainty.value == "unverified" and seg.evidence_refs == []
+    # evidenced 但无引用 → 同样降级
     r = execute_tool("create_segment_report", {"goal": "g", "data_limitations": "x",
-        "segments": [{"name": "x", "certainty": "evidenced"}]}, ctx, {})
-    assert r.status == "error"
+        "segments": [{"name": "y", "certainty": "evidenced"}]}, ctx, {})
+    assert r.status == "ok"
+    assert store.list_segment_reports("youvibe")[-1].segments[0].certainty.value == "unverified"
     # 合法
     r = execute_tool("create_segment_report", {"goal": "找用户", "data_limitations": "仅代理样本",
         "segments": [{"name": "AI 动画学习者", "core_needs": ["怎么做动画"],
@@ -50,11 +53,13 @@ def test_segment_report_validation(tmp_store):
                       "certainty": "evidenced"}]}, ctx, {})
     assert r.status == "ok"
     reports = store.list_segment_reports("youvibe")
-    assert len(reports) == 1
-    seg = reports[0].segments[0]
+    valid = [r for r in reports if r.segments[0].name == "AI 动画学习者"]
+    assert len(valid) == 1
+    report = valid[0]
+    seg = report.segments[0]
     assert seg.certainty.value == "evidenced" and seg.platforms == ["bili"]
     assert seg.hypothesized_channels == ["知识区"]  # 推测渠道单列
-    assert reports[0].created_by_session == "s1"
+    assert report.created_by_session == "s1"; assert report.data_nature == "real"
 
 
 def test_mock_user_research_path(tmp_store):
