@@ -86,6 +86,11 @@ app.include_router(analysis_router, prefix="/api")
 app.include_router(growth_router, prefix="/api")
 
 
+@app.get("/growth", include_in_schema=False)
+def growth_page():
+    return FileResponse(WEB_TEMPLATES_DIR / "growth.html")
+
+
 @app.get("/")
 async def serve_frontend():
     """Return Chinese comment crawler UI"""
