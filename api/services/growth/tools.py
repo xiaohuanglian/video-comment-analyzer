@@ -219,6 +219,14 @@ def _import_signals_from_run(ctx: ToolContext, args: Dict[str, Any]) -> Any:
         )
         created.append(sig.signal_id)
         store.add_signals([sig])
+    if created:
+        store.record_import_batch(ctx.product_id, {
+            "kind": "signals_from_run",
+            "source": f"analysis_run:{run_id}",
+            "count": len(created),
+            "data_nature": "real",  # 来自真实采集评论
+            "note": "外部公开评论的需求信号；非本产品站内行为数据",
+        })
     return {"imported": len(created), "skipped_duplicates": skipped, "signal_ids": created[:20]}
 
 
@@ -364,6 +372,14 @@ def _import_assets(ctx: ToolContext, args: Dict[str, Any]) -> Any:
         else:
             created.append(asset.asset_id)
         store.upsert_asset(asset)
+    if created:
+        store.record_import_batch(ctx.product_id, {
+            "kind": "assets",
+            "source": str(args.get("source_label") or "manual_or_crawl"),
+            "count": len(created),
+            "data_nature": str(args.get("data_nature") or "unknown"),
+            "note": str(args.get("note") or ""),
+        })
     return {"created": len(created), "updated": len(updated),
             "note": "license_status=unknown 的素材禁止对外使用，需人工确认授权"}
 
@@ -595,7 +611,10 @@ def build_registry() -> Dict[str, tuple[ToolSpec, Callable]]:
     reg_tool(_spec("recall_learnings", "检索历史经验与人工反馈，避免重复失败方案",
                    {"keyword": {"type": "string"}, "limit": {"type": "integer"}}), _recall_learnings)
     reg_tool(_spec("import_assets", "批量导入内容素材（JSON 列表）。授权缺失自动标 unknown",
-                   {"assets": {"type": "array", "items": {"type": "object"}}}, ("assets",),
+                   {"assets": {"type": "array", "items": {"type": "object"}},
+                    "source_label": {"type": "string"},
+                    "data_nature": {"type": "string", "enum": ["real", "demo", "unknown"]},
+                    "note": {"type": "string"}}, ("assets",),
                    max_calls=3, timeout=60), _import_assets)
     reg_tool(_spec("create_content_brief", "生成内容任务书草稿（须引用真实已授权素材；草稿需人工批准）",
                    {"title": {"type": "string"}, "audience": {"type": "string"},

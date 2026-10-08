@@ -332,6 +332,67 @@ def get_agent_session(product_id: str, session_id: str) -> Dict[str, Any]:
     return s.model_dump()
 
 
+@router.get("/agent/sessions/{session_id}/summary")
+def get_agent_session_summary(product_id: str, session_id: str) -> Dict[str, Any]:
+    _require_product(product_id)
+    from ..services.growth.orchestrator import build_session_summary
+
+    return build_session_summary(product_id, session_id)
+
+
+# --- 质量评估 -------------------------------------------------------------------
+
+
+class EvalRunRequest(BaseModel):
+    use_mock: bool = True
+    api_key: str = ""
+    base_url: str = ""
+    model_name: str = ""
+    max_tasks: int = Field(default=10, ge=1, le=10)
+
+
+@router.post("/products/{product_id}/eval/run")
+def post_eval_run(product_id: str, body: EvalRunRequest) -> Dict[str, Any]:
+    _require_product(product_id)
+    from ..services.growth.evaluate import run_evaluation
+
+    return run_evaluation(
+        product_id, use_mock=body.use_mock or not body.api_key,
+        api_key=body.api_key, base_url=body.base_url,
+        model_name=body.model_name, max_tasks=body.max_tasks,
+    )
+
+
+@router.post("/products/{product_id}/eval/scoresheet")
+def post_eval_scoresheet(product_id: str, body: EvalRunRequest) -> Dict[str, Any]:
+    _require_product(product_id)
+    from ..services.growth.evaluate import export_scoresheet_csv, run_evaluation
+
+    report = run_evaluation(
+        product_id, use_mock=body.use_mock or not body.api_key,
+        api_key=body.api_key, base_url=body.base_url,
+        model_name=body.model_name, max_tasks=body.max_tasks,
+    )
+    return {"csv": export_scoresheet_csv(report), "mode": report["mode"],
+            "auto_check_passed": report["auto_check_passed"]}
+
+
+@router.get("/products/{product_id}/eval/integrity")
+def get_eval_integrity(product_id: str) -> Dict[str, Any]:
+    """只跑自动证据校验，不调用模型。"""
+    _require_product(product_id)
+    from ..services.growth.evaluate import verify_record_integrity
+
+    violations = verify_record_integrity(product_id)
+    return {"violations": violations, "passed": len(violations) == 0}
+
+
+@router.get("/products/{product_id}/import_batches")
+def get_import_batches(product_id: str) -> Dict[str, Any]:
+    _require_product(product_id)
+    return {"batches": store.list_import_batches(product_id)}
+
+
 @router.post("/agent/sessions/{session_id}/stop")
 def post_agent_stop(product_id: str, session_id: str) -> Dict[str, Any]:
     _require_product(product_id)

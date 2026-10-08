@@ -135,6 +135,19 @@
     });
   }
 
+  async function loadSummary() {
+    if (!state.sessionId) return;
+    try {
+      const sum = await api(`/agent/sessions/${encodeURIComponent(state.sessionId)}/summary?product_id=${encodeURIComponent(state.product)}`);
+      const inv = Object.entries(sum.data_inventory).map(([k, v]) => `${k}:${v}`).join(" · ");
+      const gaps = sum.data_gaps.length ? sum.data_gaps.map((g) => `⚠ ${g}`).join("\n") : "无";
+      const pending = sum.pending_human.draft_briefs.length
+        ? `待批准任务书: ${sum.pending_human.draft_briefs.join(", ")}` : "无待人工项";
+      $("gSummary").textContent =
+        `【AI 掌握的数据】${inv}\n【数据缺口】\n${gaps}\n【待人工】${pending}`;
+    } catch (e) { /* ignore */ }
+  }
+
   function renderLog(list) {
     $("gLog").innerHTML = list.slice().reverse().map((a) =>
       `<div>[${esc((a.created_at || "").slice(11, 19))}] ${esc(a.action)} → ${a.status === "ok" ? "✓" : (a.status === "denied" ? "✗拒绝" : "✗错误")} ${esc(a.detail || "")}</div>`
@@ -153,6 +166,7 @@
         if (s.status !== "done" && !s.final_answer) {
           $("gAnswer").textContent = `已安全退出：${s.stop_reason}（中间成果已保存）`;
         }
+        await loadSummary();
         await refreshAll();
       }
     } catch (e) { console.warn(e); }
@@ -229,5 +243,6 @@
   (async function init() {
     await loadProducts();
     await refreshAll();
+    $("gSummary").textContent = "";
   })();
 })();

@@ -108,6 +108,52 @@ def list_sessions(product_id: str) -> List[AgentSession]:
     return out
 
 
+def build_session_summary(product_id: str, session_id: str) -> Dict[str, Any]:
+    """结构化呈现：AI 掌握了什么、做了什么、缺什么、哪些待人工作。
+
+    只汇总已保存的事实（不重新推理）。
+    """
+    product = store.get_product_or_raise(product_id)
+    session = load_session(product_id, session_id)
+    audits = [a for a in store.list_audit(product_id) if a.session_id == session_id]
+    briefs = store.list_briefs(product_id)
+    inventory = {
+        "signals": len(store.list_signals(product_id)),
+        "assets": len(store.list_assets(product_id)),
+        "opportunities": len(store.list_opportunities(product_id)),
+        "briefs_draft": sum(1 for b in briefs if b.status.value == "draft"),
+        "experiments": len(store.list_experiments(product_id)),
+        "observations": len(store.list_observations(product_id)),
+        "learnings": len(store.list_learnings(product_id)),
+    }
+    gaps: List[str] = []
+    if inventory["signals"] == 0:
+        gaps.append("无用户信号：建议先 import_signals_from_run 或录入反馈")
+    if inventory["assets"] == 0:
+        gaps.append("无内容素材：任务书无法引用真实素材，需先导入")
+    licensed = [a for a in store.list_assets(product_id) if a.license_status.value in {"owned", "licensed"}]
+    if inventory["assets"] and not licensed:
+        gaps.append("素材均未确认授权：禁止对外使用，需人工确认授权状态")
+    if product.attribution_capability.value == "none":
+        gaps.append("站内转化不可验证（attribution=none）：禁止声称拉新/注册，建议补充可追踪链接或埋点")
+    if inventory["experiments"] and inventory["observations"] == 0:
+        gaps.append("实验无任何指标观察：需导入发布结果后才能复盘")
+    created_refs = sorted({ref for a in audits for ref in a.output_refs})
+    return {
+        "session_id": session_id,
+        "status": session.status if session else "unknown",
+        "data_inventory": inventory,
+        "import_batches": store.list_import_batches(product_id)[-5:],
+        "tools_called": [{"tool": a.action, "status": a.status, "at": a.created_at} for a in audits],
+        "created_records": created_refs,
+        "data_gaps": gaps,
+        "pending_human": {
+            "draft_briefs": [b.brief_id for b in briefs if b.status.value == "draft"],
+            "note": "L3 对外动作永远不自动执行；草稿任务书批准后才能建实验",
+        },
+    }
+
+
 def _tool_schemas_openai() -> List[Dict[str, Any]]:
     tools = []
     for name, (spec, _) in REGISTRY.items():
@@ -155,6 +201,7 @@ class Orchestrator:
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": self._goal_message()},
         ]
+        seen_calls: set = set()  # 同参数重复调用拦截
         use_real = bool(self.api_key or self._client) and not s.config.use_mock
         model_fn = self._llm_model if use_real else self._mock_model
         if not use_real:
@@ -191,12 +238,21 @@ class Orchestrator:
                     model_name=s.config.model_name,
                 )
                 for call in calls[:5]:  # 单轮最多 5 个工具调用
-                    result = execute_tool(call["name"], call.get("arguments") or {}, ctx, s.tool_call_counts)
+                    call_args = call.get("arguments") or {}
+                    dedupe_key = f"{call['name']}:{json.dumps(call_args, sort_keys=True, ensure_ascii=False)}"
+                    if dedupe_key in seen_calls:
+                        # 相同工具+相同参数的重复调用：直接返回缓存说明，浪费 0 次执行
+                        result_payload = {"status": "denied",
+                                          "error": "与之前完全相同的调用已被拦截（数据未变化，请基于已有结果推进或换参数）"}
+                    else:
+                        seen_calls.add(dedupe_key)
+                        result = execute_tool(call["name"], call_args, ctx, s.tool_call_counts)
+                        result_payload = result.model_dump()
                     s.messages.append({
                         "role": "tool",
                         "tool_call_id": call.get("id", ""),
                         "name": call["name"],
-                        "content": json.dumps(result.model_dump(), ensure_ascii=False)[:4000],
+                        "content": json.dumps(result_payload, ensure_ascii=False)[:4000],
                     })
                 if s.iterations >= s.config.max_iterations:
                     s.status, s.stop_reason = "error", "达到循环次数上限（可能陷入循环），保留中间成果"

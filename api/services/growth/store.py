@@ -334,6 +334,28 @@ def list_audit(product_id: str, limit: Optional[int] = None) -> List[AuditRecord
     return out
 
 
+# import batches（数据导入批次溯源） ----------------------------------------------
+
+
+def record_import_batch(product_id: str, batch: Dict[str, Any]) -> None:
+    """登记一次数据导入：来源、条数、数据性质（real/demo/unknown）、备注。
+
+    用途：区分真实/模拟/未知数据，防止污染正式经验库时无法追溯。
+    """
+    get_product_or_raise(product_id)
+    from datetime import datetime, timezone
+
+    entry = {
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        **batch,
+    }
+    _append_jsonl(_collection_path(product_id, "import_batches", jsonl=True), entry)
+
+
+def list_import_batches(product_id: str) -> List[Dict[str, Any]]:
+    return list(_iter_jsonl(_collection_path(product_id, "import_batches", jsonl=True)))
+
+
 # misc ------------------------------------------------------------------------
 
 
