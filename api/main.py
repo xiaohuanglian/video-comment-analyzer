@@ -91,6 +91,10 @@ def growth_page():
     return FileResponse(WEB_TEMPLATES_DIR / "growth.html")
 
 
+# 产品重设计原型（Stage A，独立入口，不影响生产页面）
+app.mount("/proto", StaticFiles(directory=APP_DIR / "prototype", html=True), name="proto")
+
+
 @app.get("/")
 async def serve_frontend():
     """Return Chinese comment crawler UI"""
