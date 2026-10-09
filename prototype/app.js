@@ -12,9 +12,10 @@ const state = {
 };
 const DEMO_PID = "youvibe_demo";
 const isDemo = () => state.product === DEMO_PID;
-const hasKey = () => !!sessionStorage.getItem("llm_api_key");
-const baseURL = () => sessionStorage.getItem("llm_base_url") || "https://api.deepseek.com";
-const modelName = () => sessionStorage.getItem("llm_model") || "deepseek-v4-flash";
+// 模型配置由服务端持久化（保存一次永久生效）；sessionStorage 仅作旧版兼容迁移
+const hasKey = () => !!state.modelConfigured;
+const baseURL = () => state.serverBaseUrl || "https://api.deepseek.com";
+const modelName = () => state.serverModelName || "deepseek-v4-flash";
 
 async function api(path, opts) {
   const res = await fetch("/api/growth" + path, opts && Object.assign({ headers: { "Content-Type": "application/json" } }, opts));
@@ -126,8 +127,7 @@ $("runBtn").addEventListener("click", async () => {
   try {
     const r = await api("/agent/run_async", { method: "POST", body: JSON.stringify({
       product_id: state.product, goal,
-      use_mock: isDemo() || !hasKey(), api_key: sessionStorage.getItem("llm_api_key") || "",
-      base_url: hasKey() ? baseURL() : "", model_name: hasKey() ? modelName() : "",
+      use_mock: isDemo() || !hasKey(), api_key: "",  // 凭据由服务端持久化，请求无需携带
     })});
     state.sessionId = r.session_id;
     state.polling = setInterval(poll, 1300);
@@ -245,9 +245,7 @@ $("followupBtn").addEventListener("click", async () => {
   try {
     const r = await api(`/agent/sessions/${state.sessionId}/followup?product_id=${state.product}`, {
       method: "POST", body: JSON.stringify({
-        message: msg, use_mock: isDemo() || !hasKey(),
-        api_key: sessionStorage.getItem("llm_api_key") || "",
-        base_url: hasKey() ? baseURL() : "", model_name: hasKey() ? modelName() : "",
+        message: msg, use_mock: isDemo() || !hasKey(), api_key: "",
       }),
     });
     $("followupInput").value = "";
@@ -426,13 +424,21 @@ async function loadReview() {
 
 /* ---------- 设置与调试 ---------- */
 async function loadSettings() {
-  const connected = hasKey();
+  let st = { configured: false };
+  try {
+    st = await api("/settings/model");
+    state.modelConfigured = st.configured;
+    state.serverBaseUrl = st.base_url || "";
+    state.serverModelName = st.model_name || "";
+  } catch (e) {}
+  const connected = !!st.configured;
   $("modelState").innerHTML = connected
-    ? `<div class="model-badge ok" style="margin-bottom:8px">已连接：${esc(modelName())} @ ${esc(baseURL())}</div>`
-    : `<div class="model-badge warn" style="margin-bottom:8px">未连接真实模型。正式模式下 AI 功能不可用（不会用 Mock 冒充）。</div>`;
-  $("keyInput").value = sessionStorage.getItem("llm_api_key") || "";
-  $("baseInput").value = sessionStorage.getItem("llm_base_url") || "";
-  $("modelInput").value = sessionStorage.getItem("llm_model") || "";
+    ? `<div class="model-badge ok" style="margin-bottom:8px">已保存并生效：${esc(st.model_name)} @ ${esc(st.base_url)}（Key: ${esc(st.api_key_masked)}，仅存服务端本地，不会提交 Git）</div>`
+    : `<div class="model-badge warn" style="margin-bottom:8px">未配置真实模型。正式模式下 AI 功能不可用（不会用 Mock 冒充）。</div>`;
+  $("keyInput").value = "";
+  $("keyInput").placeholder = connected ? "已保存（输入新 Key 可替换，留空则保留）" : "API Key（保存到服务端本地文件）";
+  $("baseInput").value = st.base_url || "";
+  $("modelInput").value = st.model_name || "";
   try {
     const exp = await api(`/products/${state.product}/export`);
     $("dataStats").innerHTML = ["signals", "assets", "opportunities", "briefs", "experiments", "observations", "learnings"]
@@ -442,39 +448,58 @@ async function loadSettings() {
   } catch (e) { $("dataStats").innerHTML = esc(e.message); }
 }
 
-$("saveKeyBtn").addEventListener("click", () => {
-  if ($("keyInput").value.trim()) sessionStorage.setItem("llm_api_key", $("keyInput").value.trim());
-  else sessionStorage.removeItem("llm_api_key");
-  sessionStorage.setItem("llm_base_url", $("baseInput").value.trim());
-  sessionStorage.setItem("llm_model", $("modelInput").value.trim());
-  refreshModeBadge(); loadSettings();
+$("saveKeyBtn").addEventListener("click", async () => {
+  try {
+    const st = await api("/settings/model", { method: "POST", body: JSON.stringify({
+      base_url: $("baseInput").value.trim(),
+      model_name: $("modelInput").value.trim(),
+      api_key: $("keyInput").value.trim(),  // 留空保留已存 Key
+    })});
+    state.modelConfigured = st.configured;
+    state.serverBaseUrl = st.base_url;
+    state.serverModelName = st.model_name;
+    $("keyTestResult").textContent = st.configured ? "已保存（永久生效，无需再输入）" : "已保存（提示：还未填 API Key）";
+    refreshModeBadge(); loadSettings();
+  } catch (e) { $("keyTestResult").textContent = "保存失败：" + e.message; }
 });
 
 $("testKeyBtn").addEventListener("click", async () => {
-  const key = $("keyInput").value.trim();
-  if (!key) { $("keyTestResult").textContent = "请先填写 API Key"; return; }
-  $("keyTestResult").textContent = "正在以最小请求测试连接（约几角钱以内成本）…";
+  $("keyTestResult").textContent = "正在通过服务端测试连接（最小请求）…";
   try {
-    const res = await fetch(($("baseInput").value.trim() || "https://api.deepseek.com") + "/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
-      body: JSON.stringify({
-        model: $("modelInput").value.trim() || "deepseek-v4-flash",
-        messages: [{ role: "user", content: "回复 ok 两个字母即可" }],
-        max_tokens: 5,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error?.message || res.statusText);
-    const content = data.choices?.[0]?.message?.content || "";
-    $("keyTestResult").textContent = "连接成功。模型返回：" + content.slice(0, 30) + "（function calling 兼容性需真实任务首跑确认）";
-  } catch (e) {
-    $("keyTestResult").textContent = "连接失败：" + e.message;
-  }
+    const r = await api("/settings/model/test", { method: "POST", body: JSON.stringify({
+      base_url: $("baseInput").value.trim(),
+      model_name: $("modelInput").value.trim(),
+      api_key: $("keyInput").value.trim(),
+    })});
+    $("keyTestResult").textContent = r.ok
+      ? `连接成功（${r.latency_s}s）：模型回「${r.model_reply}」@ ${r.base_url}`
+      : "连接失败：" + (r.error || "未知错误");
+  } catch (e) { $("keyTestResult").textContent = "连接失败：" + e.message; }
 });
 
 /* ---------- 初始化 ---------- */
 async function init() {
+  // 旧版 sessionStorage 迁移到服务端持久化（一次性）
+  try {
+    const legacyKey = sessionStorage.getItem("llm_api_key");
+    if (legacyKey) {
+      const st0 = await api("/settings/model");
+      if (!st0.configured) {
+        await api("/settings/model", { method: "POST", body: JSON.stringify({
+          base_url: sessionStorage.getItem("llm_base_url") || "",
+          model_name: sessionStorage.getItem("llm_model") || "",
+          api_key: legacyKey,
+        })});
+      }
+      sessionStorage.removeItem("llm_api_key");
+      sessionStorage.removeItem("llm_base_url");
+      sessionStorage.removeItem("llm_model");
+    }
+    const st = await api("/settings/model");
+    state.modelConfigured = st.configured;
+    state.serverBaseUrl = st.base_url || "";
+    state.serverModelName = st.model_name || "";
+  } catch (e) {}
   const d = await api("/products");
   const sel = $("productSel");
   sel.innerHTML = d.products.map((p) =>

@@ -281,6 +281,77 @@ def post_import(payload: Dict[str, Any], overwrite: bool = False) -> Dict[str, A
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+# --- 模型连接设置（服务端持久化） -------------------------------------------------
+
+
+class ModelSettingsRequest(BaseModel):
+    base_url: str = ""
+    model_name: str = ""
+    api_key: str = ""  # 空 = 保留原有 key
+
+
+@router.get("/settings/model")
+def get_model_settings() -> Dict[str, Any]:
+    from ..services.growth import model_settings
+
+    return model_settings.masked_view()
+
+
+@router.post("/settings/model")
+def post_model_settings(body: ModelSettingsRequest) -> Dict[str, Any]:
+    from ..services.growth import model_settings
+
+    stored = model_settings.load_model_settings()
+    api_key = body.api_key.strip() or stored.get("api_key", "")
+    payload = model_settings.save_model_settings(
+        body.base_url or stored.get("base_url", ""),
+        body.model_name or stored.get("model_name", ""),
+        api_key,
+    )
+    return model_settings.masked_view(payload)
+
+
+@router.delete("/settings/model")
+def delete_model_settings() -> Dict[str, Any]:
+    from ..services.growth import model_settings
+
+    model_settings.clear_model_settings()
+    return {"ok": True}
+
+
+@router.post("/settings/model/test")
+def post_model_settings_test(body: Optional[ModelSettingsRequest] = None) -> Dict[str, Any]:
+    """服务端连接测试：避免浏览器跨域；也顺带验证 function calling 兼容。"""
+    from ..services.growth import model_settings
+    from ..services.insight.llm_analyzer import build_openai_client
+
+    creds = model_settings.resolve_credentials(
+        (body.api_key if body else "") or "",
+        (body.base_url if body else "") or "",
+        (body.model_name if body else "") or "",
+    )
+    if not creds["api_key"]:
+        return {"ok": False, "error": "未配置 API Key"}
+    client = build_openai_client(creds["base_url"] or "https://api.deepseek.com", creds["api_key"])
+    import time as _t
+
+    t0 = _t.monotonic()
+    try:
+        completion = client.chat.completions.create(
+            model=creds["model_name"] or "deepseek-v4-flash",
+            messages=[{"role": "user", "content": "回复 ok"}],
+            max_tokens=8,
+            extra_body={"thinking": {"type": "disabled"}},
+            timeout=30,
+        )
+        content = completion.choices[0].message.content or ""
+        return {"ok": True, "latency_s": round(_t.monotonic() - t0, 1),
+                "model_reply": content[:30], "base_url": creds["base_url"],
+                "note": "function calling 兼容性会在首次真实任务时最终确认"}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+
+
 # --- agent sessions ----------------------------------------------------------
 
 
@@ -298,13 +369,24 @@ class RunAgentRequest(BaseModel):
     l2_grants: List[str] = Field(default_factory=list)
 
 
+def _resolve_run_credentials(body: RunAgentRequest) -> Dict[str, str]:
+    from ..services.growth import model_settings
+
+    return model_settings.resolve_credentials(body.api_key, body.base_url, body.model_name)
+
+
 @router.post("/agent/run")
 def post_agent_run(body: RunAgentRequest) -> Dict[str, Any]:
     _require_product(body.product_id)
+    creds = _resolve_run_credentials(body)
     config_kwargs = body.model_dump(exclude={"api_key"})
-    config_kwargs["use_mock"] = body.use_mock or not body.api_key
-    config = SessionConfig(**{k: v for k, v in config_kwargs.items() if v not in ("",) or k != "base_url"})
-    orch = Orchestrator(config, api_key=body.api_key)
+    config_kwargs["use_mock"] = body.use_mock or not creds["api_key"]
+    if creds["base_url"]:
+        config_kwargs["base_url"] = creds["base_url"]
+    if creds["model_name"]:
+        config_kwargs["model_name"] = creds["model_name"]
+    config = SessionConfig(**config_kwargs)
+    orch = Orchestrator(config, api_key=creds["api_key"])
     session = orch.run()  # 同步执行：受 max_iterations / 预算约束的小任务
     return session.model_dump()
 
@@ -312,9 +394,14 @@ def post_agent_run(body: RunAgentRequest) -> Dict[str, Any]:
 @router.post("/agent/run_async")
 def post_agent_run_async(body: RunAgentRequest) -> Dict[str, Any]:
     _require_product(body.product_id)
+    creds = _resolve_run_credentials(body)
     config = SessionConfig(**{k: v for k, v in body.model_dump(exclude={"api_key"}).items()})
-    config.use_mock = body.use_mock or not body.api_key
-    orch = Orchestrator(config, api_key=body.api_key)
+    config.use_mock = body.use_mock or not creds["api_key"]
+    if creds["base_url"]:
+        config.base_url = creds["base_url"]
+    if creds["model_name"]:
+        config.model_name = creds["model_name"]
+    orch = Orchestrator(config, api_key=creds["api_key"])
     thread = threading.Thread(target=orch.run, name=f"growth-agent-{orch.session.session_id}", daemon=True)
     thread.start()
     return {"session_id": orch.session.session_id, "status": "running", "mock": config.use_mock}
@@ -354,16 +441,19 @@ def post_agent_followup(product_id: str, session_id: str, body: FollowupRequest)
     parent = load_session(product_id, session_id)
     if parent is None:
         raise HTTPException(status_code=404, detail="父会话不存在")
+    from ..services.growth import model_settings
+
+    creds = model_settings.resolve_credentials(body.api_key, body.base_url, body.model_name)
     config = SessionConfig(
         product_id=product_id,
         goal=body.message,
-        use_mock=body.use_mock or not body.api_key,
-        base_url=body.base_url or parent.config.base_url,
-        model_name=body.model_name or parent.config.model_name,
+        use_mock=body.use_mock or not creds["api_key"],
+        base_url=creds["base_url"] or parent.config.base_url,
+        model_name=creds["model_name"] or parent.config.model_name,
         parent_session_id=session_id,
         extra_context=_build_followup_context(product_id, parent),
     )
-    orch = Orchestrator(config, api_key=body.api_key)
+    orch = Orchestrator(config, api_key=creds["api_key"])
     thread = threading.Thread(target=orch.run, name=f"growth-followup-{orch.session.session_id}", daemon=True)
     thread.start()
     return {"session_id": orch.session.session_id, "parent_session_id": session_id,
