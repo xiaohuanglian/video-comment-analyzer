@@ -37,6 +37,10 @@ $("nav").addEventListener("click", (e) => {
   document.querySelectorAll("#nav button").forEach((b) => b.classList.toggle("active", b === btn));
   document.querySelectorAll(".view").forEach((v) => (v.hidden = true));
   $("view-" + btn.dataset.view).hidden = false;
+  if (btn.dataset.view === "crawl") {
+    const f = $("legacyFrame");
+    if (f && !f.src) f.src = "/legacy";  // 懒加载，首次点开才加载旧工作台
+  }
   if (btn.dataset.view === "projects") loadProjects();
   if (btn.dataset.view === "library") loadLibrary();
   if (btn.dataset.view === "review") loadReview();

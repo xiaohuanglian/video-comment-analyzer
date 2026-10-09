@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI Growth Engine · 工作台原型</title>
-<link rel="stylesheet" href="/proto/app.css?v=5">
+<link rel="stylesheet" href="/proto/app.css?v=6">
 </head>
 <body>
 <div id="app">
@@ -19,6 +19,7 @@
       <button data-view="projects">增长项目</button>
       <button data-view="library">素材与知识</button>
       <button data-view="review">增长复盘</button>
+      <button data-view="crawl">采集与分析</button>
       <button data-view="settings">设置与调试</button>
     </nav>
     <div class="side-foot">
@@ -126,6 +127,12 @@
       <div id="expList"></div>
     </section>
 
+    <!-- 采集与分析（旧版工作台内嵌） -->
+    <section id="view-crawl" class="view" hidden>
+      <h2>采集与分析 <span class="sub">旧版工作台内嵌：多平台采集 · 评论洞察 · 回复审核（数据与 AI 增长工作台互通）</span></h2>
+      <iframe id="legacyFrame" title="采集与分析工作台" style="width:100%;height:76vh;border:1px solid var(--line);border-radius:12px;background:#fff"></iframe>
+    </section>
+
     <!-- 设置与调试 -->
     <section id="view-settings" class="view" hidden>
       <h2>设置与调试</h2>
@@ -146,11 +153,12 @@
           <h3>数据与审计</h3>
           <div id="dataStats"></div>
           <details class="debug"><summary>审计日志</summary><pre id="auditLog"></pre></details>
+          <div class="muted" style="margin-top:10px">旧版入口（回退用）：<a href="/legacy" target="_blank">采集工作台</a> · <a href="/growth" target="_blank">旧增长页</a></div>
         </div>
       </div>
     </section>
   </main>
 </div>
-<script src="/proto/app.js?v=5"></script>
+<script src="/proto/app.js?v=6"></script>
 </body>
 </html>

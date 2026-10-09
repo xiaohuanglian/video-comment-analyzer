@@ -97,8 +97,16 @@ app.mount("/growth-v2", StaticFiles(directory=APP_DIR / "prototype", html=True),
 
 
 @app.get("/")
+async def root_redirect():
+    """唯一入口：新版增长工作台。旧采集工作台在 /legacy。"""
+    from fastapi.responses import RedirectResponse
+
+    return RedirectResponse(url="/growth-v2/", status_code=307)
+
+
+@app.get("/legacy")
 async def serve_frontend():
-    """Return Chinese comment crawler UI"""
+    """Return Chinese comment crawler UI（旧版采集/分析工作台，内嵌于新工作台）"""
     index_path = WEB_TEMPLATES_DIR / "index.html"
     if index_path.exists():
         content = index_path.read_text(encoding="utf-8")
