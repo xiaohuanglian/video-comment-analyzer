@@ -98,6 +98,12 @@ table.metrics th { background: #f1f4f9; font-weight: 600; }
 input[type="password"], input:not([type]) { display: block; width: 100%; margin-bottom: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
 .row { display: flex; gap: 8px; }
 
+.asset-form { margin-top: 12px; border-top: 1px dashed var(--line); padding-top: 12px; }
+.asset-form h4 { font-size: 13px; margin-bottom: 8px; color: var(--muted); font-weight: 600; }
+.asset-form input { display: block; width: 100%; margin-bottom: 6px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; font-size: 12.5px; }
+.af-row { display: flex; gap: 6px; margin-bottom: 6px; }
+.af-row select { flex: 1; padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; font: inherit; font-size: 12.5px; background: #fff; }
+
 .followup-box { margin-top: 14px; border-top: 1px dashed var(--line); padding-top: 12px; display: flex; gap: 10px; align-items: flex-start; }
 .followup-box textarea { flex: 1; border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; font: inherit; resize: vertical; }
 .seg-card .certainty { font-size: 11px; }

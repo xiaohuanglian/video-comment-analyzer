@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI Growth Engine · 工作台原型</title>
-<link rel="stylesheet" href="/proto/app.css?v=3">
+<link rel="stylesheet" href="/proto/app.css?v=4">
 </head>
 <body>
 <div id="app">
@@ -85,10 +85,31 @@
         <div class="card">
           <h3>内容素材 <span id="assetCount" class="count"></span></h3>
           <div id="assetList"></div>
-          <details class="debug"><summary>导入素材（JSON / CSV）</summary>
-            <textarea id="assetImport" rows="4" placeholder='[{"asset_id":"yv_a1","title":"…","license_status":"owned"}]'></textarea>
-            <button id="importAssetBtn" class="secondary">导入</button>
-          </details>
+          <div class="asset-form">
+            <h4>登记一份素材</h4>
+            <input id="afTitle" placeholder="素材标题（必填），如：AI 动画《星河》制作全记录">
+            <div class="af-row">
+              <select id="afLicense">
+                <option value="owned">内部原创（可用）</option>
+                <option value="licensed">已获授权（可用）</option>
+                <option value="unknown" selected>授权未确认（不可对外用）</option>
+              </select>
+              <select id="afType">
+                <option value="video">视频</option>
+                <option value="image">图片</option>
+                <option value="article">图文</option>
+                <option value="mixed">混合</option>
+              </select>
+            </div>
+            <input id="afTopics" placeholder="主题标签，逗号分隔，如：AI 动画, 教程">
+            <input id="afUri" placeholder="素材位置：本地路径或链接（可选）">
+            <input id="afLanding" placeholder="对应站内落地页（可选），如 https://youvibe.cn/...">
+            <button id="afAddBtn" class="primary" style="padding:7px 18px;font-size:13px">登记素材</button>
+            <details class="debug"><summary>高级：批量导入（JSON / CSV）</summary>
+              <textarea id="assetImport" rows="4" placeholder='多个素材一次导入，粘贴 JSON 数组或 CSV 文本'></textarea>
+              <button id="importAssetBtn" class="secondary">批量导入</button>
+            </details>
+          </div>
         </div>
         <div class="card">
           <h3>需求信号与经验</h3>
@@ -130,6 +151,6 @@
     </section>
   </main>
 </div>
-<script src="/proto/app.js?v=3"></script>
+<script src="/proto/app.js?v=4"></script>
 </body>
 </html>

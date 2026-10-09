@@ -171,8 +171,16 @@ function renderSteps(session) {
     try { payload = JSON.parse(m.content || "{}"); } catch (e) {}
     const phrase = TOOL_PHRASES[m.name] || m.name;
     const cls = payload.status === "denied" ? "denied" : (payload.status === "error" ? "err" : "");
-    const suffix = payload.status === "denied" ? "（已拒绝：" + (payload.error || "").slice(0, 40) + "）"
-      : payload.status === "error" ? "（失败：" + (payload.error || "").slice(0, 40) + "）" : " ✓";
+    let suffix = " ✓";
+    if (payload.status === "denied") {
+      suffix = (payload.error || "").includes("安全上限")
+        ? "（⚠ 触发安全上限：AI 停止重复查询，改用已拿到的信息继续——防浪费机制，不是故障）"
+        : "（被权限边界拒绝：" + (payload.error || "").slice(0, 50) + "）";
+    } else if (payload.status === "error") {
+      suffix = (payload.error || "").includes("ValidationError")
+        ? "（第一次写报告格式有误，AI 会自动纠正重试）"
+        : "（失败：" + (payload.error || "").slice(0, 50) + "）";
+    }
     $("workSteps").insertAdjacentHTML("beforeend",
       `<li class="${cls}" data-key="${key}"><span class="t">步骤${i + 1}</span><span>${esc(phrase)}${esc(suffix)}</span></li>`);
     $("workDebug").textContent += `\n[${m.name}] ${(m.content || "").slice(0, 300)}\n`;
@@ -376,6 +384,27 @@ async function loadLibrary() {
         : '<div class="muted">暂无真实经验。复盘后自动写入。</div>');
   } catch (e) { $("assetList").innerHTML = `<div class="muted">${esc(e.message)}</div>`; }
 }
+
+$("afAddBtn").addEventListener("click", async () => {
+  const title = $("afTitle").value.trim();
+  if (!title) { alert("请先填素材标题"); return; }
+  const asset = {
+    asset_id: "a_" + Date.now().toString(36),
+    title,
+    license_status: $("afLicense").value,
+    asset_type: $("afType").value,
+    topics: $("afTopics").value.split(/[,，]/).map((s) => s.trim()).filter(Boolean),
+    uri: $("afUri").value.trim(),
+    landing_page: $("afLanding").value.trim(),
+    source_label: "web_form",
+  };
+  try {
+    const r = await api(`/products/${state.product}/assets/import`, { method: "POST", body: JSON.stringify({ assets: [asset] }) });
+    alert(`已登记：${title}（${asset.license_status === "unknown" ? "授权未确认，对外使用前需核对" : "可用于内容策划"}）`);
+    ["afTitle", "afTopics", "afUri", "afLanding"].forEach((id) => ($(id).value = ""));
+    loadLibrary(); loadToday();
+  } catch (e) { alert("登记失败：" + e.message); }
+});
 
 $("importAssetBtn").addEventListener("click", async () => {
   const text = $("assetImport").value.trim();

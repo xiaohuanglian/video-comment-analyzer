@@ -716,7 +716,7 @@ def build_registry() -> Dict[str, tuple[ToolSpec, Callable]]:
                    {}, (), max_calls=2), _signal_dataset_summary)
     reg_tool(_spec("query_signals", "检索本产品的统一用户信号（支持 keyword 和 dataset_ref 过滤）",
                    {"source_type": {"type": "string"}, "keyword": {"type": "string"},
-                    "dataset_ref": {"type": "string"}, "limit": {"type": "integer"}}, max_calls=5), _query_signals)
+                    "dataset_ref": {"type": "string"}, "limit": {"type": "integer"}}, max_calls=10), _query_signals)
     reg_tool(_spec("query_assets", "检索内容资产库（含授权状态）",
                    {"topic": {"type": "string"}, "limit": {"type": "integer"}}), _query_assets)
     reg_tool(_spec("upsert_asset", "登记/更新一条内容资产（含授权状态 license_status）",
@@ -846,7 +846,8 @@ def execute_tool(name: str, args: Dict[str, Any], ctx: ToolContext, call_counts:
     elif spec.permission == L2 and name not in ctx.l2_grants:
         status, error = "denied", f"需要本次任务的 L2 授权（授权范围不含 {name}）"
     elif call_counts.get(name, 0) >= spec.max_calls_per_session:
-        status, error = "denied", f"超过本会话该工具调用次数上限（{spec.max_calls_per_session}）"
+        status, error = "denied", (f"安全上限：该工具本会话最多查 {spec.max_calls_per_session} 次（防重复烧钱）。"
+                                   "请基于已获得的信息给出结论，或换其他工具/参数。")
     else:
         err = validate_args(spec, args)
         if err:
