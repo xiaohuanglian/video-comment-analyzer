@@ -40,9 +40,9 @@ def test_per_session_call_cap(ctx):
     for _ in range(2):
         r = execute_tool("import_signals_from_run", {"run_id": "nope"}, ctx, counts)
         assert r.status == "error"  # run 不存在 → 安全报错，不计数
-    results = [execute_tool("query_signals", {}, ctx, counts) for _ in range(6)]
-    assert all(r.status == "ok" for r in results[:5])
-    assert results[5].status == "denied" and "上限" in results[5].error
+    results = [execute_tool("query_signals", {}, ctx, counts) for _ in range(11)]
+    assert all(r.status == "ok" for r in results[:10])
+    assert results[10].status == "denied" and "上限" in results[10].error
 
 
 def test_schema_validation(ctx):
