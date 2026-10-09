@@ -2,6 +2,9 @@
 (function () {
 "use strict";
 const $ = (id) => document.getElementById(id);
+// 防缓存混搭：某个元素缺失时不让整个脚本崩溃（导航永远可用）
+const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };
+window.onerror = (msg) => { console.warn("growth-v2 js:", msg); };
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 const state = {
@@ -113,7 +116,7 @@ $("goalInput").addEventListener("input", () => {});
 document.querySelectorAll(".chip").forEach((c) =>
   c.addEventListener("click", () => { $("goalInput").value = c.dataset.goal; $("goalInput").focus(); }));
 
-$("runBtn").addEventListener("click", async () => {
+on("runBtn", "click", async () => {
   const goal = $("goalInput").value.trim();
   if (!goal) { alert("请先输入增长目标"); return; }
   if (!isDemo() && !hasKey()) {
@@ -137,7 +140,7 @@ $("runBtn").addEventListener("click", async () => {
   }
 });
 
-$("stopBtn").addEventListener("click", () => {
+on("stopBtn", "click", () => {
   if (state.sessionId) api(`/agent/sessions/${state.sessionId}/stop?product_id=${state.product}`, { method: "POST" }).catch(() => {});
 });
 
@@ -245,7 +248,7 @@ function segmentCard(r) {
   </div>`;
 }
 
-$("followupBtn").addEventListener("click", async () => {
+on("followupBtn", "click", async () => {
   const msg = $("followupInput").value.trim();
   if (!msg || !state.sessionId) return;
   if (!isDemo() && !hasKey()) { alert("正式模式需先连接真实模型"); return; }
@@ -385,7 +388,7 @@ async function loadLibrary() {
   } catch (e) { $("assetList").innerHTML = `<div class="muted">${esc(e.message)}</div>`; }
 }
 
-$("afAddBtn").addEventListener("click", async () => {
+on("afAddBtn", "click", async () => {
   const title = $("afTitle").value.trim();
   if (!title) { alert("请先填素材标题"); return; }
   const asset = {
@@ -406,7 +409,7 @@ $("afAddBtn").addEventListener("click", async () => {
   } catch (e) { alert("登记失败：" + e.message); }
 });
 
-$("importAssetBtn").addEventListener("click", async () => {
+on("importAssetBtn", "click", async () => {
   const text = $("assetImport").value.trim();
   if (!text) return;
   const body = text.startsWith("[") ? { assets: JSON.parse(text) } : { csv_text: text };
@@ -477,7 +480,7 @@ async function loadSettings() {
   } catch (e) { $("dataStats").innerHTML = esc(e.message); }
 }
 
-$("saveKeyBtn").addEventListener("click", async () => {
+on("saveKeyBtn", "click", async () => {
   try {
     const st = await api("/settings/model", { method: "POST", body: JSON.stringify({
       base_url: $("baseInput").value.trim(),
@@ -492,7 +495,7 @@ $("saveKeyBtn").addEventListener("click", async () => {
   } catch (e) { $("keyTestResult").textContent = "保存失败：" + e.message; }
 });
 
-$("testKeyBtn").addEventListener("click", async () => {
+on("testKeyBtn", "click", async () => {
   $("keyTestResult").textContent = "正在通过服务端测试连接（最小请求）…";
   try {
     const r = await api("/settings/model/test", { method: "POST", body: JSON.stringify({
