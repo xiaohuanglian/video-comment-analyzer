@@ -653,7 +653,7 @@
           <button class="btn primary sm" type="button" id="btnOutreachStartReply">开始回复（仅发已审核内容）</button>
           <button class="btn danger sm" type="button" id="btnOutreachStopReply" disabled>停止回复</button>
         </div>
-        <p class="hint">B 站自动回复需在服务端配置登录 Cookie（环境变量 <code>VCA_OUTREACH_COOKIE</code>，或爬虫的 <code>COOKIES</code>）。其他平台暂不支持自动发送，会保留为手动复制。</p>
+        <p class="hint">受控发送：B 站走 API（需 <code>VCA_OUTREACH_COOKIE</code> 或爬虫 <code>COOKIES</code>）；小红书走本机浏览器仿人工操作（需启动带调试端口且已登录小红书的浏览器，默认端口 <code>9222</code>）。其余平台建设中。</p>
         <p class="inline-status" id="outreachReplyStatus"></p>
       </article>
     </section>

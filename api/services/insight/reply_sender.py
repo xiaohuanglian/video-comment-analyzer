@@ -142,6 +142,21 @@ _SENDERS: dict[str, Callable[..., str]] = {
 }
 
 
+def _send_xhs_reply_wrapper(*, content_id: str, comment_id: str, message: str, cookie: str = "") -> str:
+    """惰性导入，避免无浏览器环境（如 CI 跑测试）加载 playwright 失败。"""
+    from .xhs_reply_sender import send_xhs_reply
+
+    return send_xhs_reply(content_id=content_id, comment_id=comment_id, message=message, cookie=cookie)
+
+
+_SENDERS.update(
+    {
+        "xhs": _send_xhs_reply_wrapper,
+        "xiaohongshu": _send_xhs_reply_wrapper,
+    }
+)
+
+
 def platform_capability(platform: str) -> bool:
     return (platform or "").strip().lower() in _SENDERS
 

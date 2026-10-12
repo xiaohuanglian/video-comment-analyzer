@@ -12,7 +12,7 @@ import pandas as pd
 from api.services.dataset_normalizer import infer_platform, normalize_rows
 
 from .field_mapping import (
-    derive_bilibili_links,
+    derive_platform_links,
     detect_field_mapping,
     infer_creator_type_from_path,
     row_value,
@@ -195,7 +195,7 @@ def ingest_files(
             comment_id = str(row.get("comment_id") or row.get("id") or "")
             homepage = row_value(row, mapping.user_homepage_url)
             comment_url = row_value(row, mapping.comment_url)
-            derived_homepage, derived_comment = derive_bilibili_links(platform, user_id, video_id, comment_id)
+            derived_homepage, derived_comment = derive_platform_links(platform, user_id, video_id, comment_id)
             if not homepage:
                 homepage = derived_homepage
             if not comment_url:
