@@ -167,6 +167,11 @@ cython_debug/
 /data/
 /docs/
 
+# Agent persistent state (local working memory)
+/PROJECT_STATE.md
+/DECISIONS.md
+/MEMORY.md
+
 .DS_Store
 /log
 .vscode

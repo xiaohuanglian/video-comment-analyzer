@@ -16,4 +16,4 @@ fi
 echo "启动视频评论分析 Web 界面: http://127.0.0.1:${PORT}"
 export PYTHONUTF8=1
 export PYTHONIOENCODING=utf-8
-exec uv run uvicorn api.main:app --host 127.0.0.1 --port "$PORT" --workers 1
+exec uv run python -m uvicorn api.main:app --host 127.0.0.1 --port "$PORT" --workers 1

@@ -87,6 +87,7 @@ class ReplyRun:
         self.sender: Sender = sender or send_reply
         self.stop_event = threading.Event()
         self.thread: Optional[threading.Thread] = None
+        self._sent_in_session = 0
 
     # -- lifecycle ---------------------------------------------------------
     def start(self) -> None:
@@ -173,7 +174,10 @@ class ReplyRun:
 
                 wait = self._interval_wait(doc, now)
                 if wait > 0:
-                    doc.reply_message = f"遵守发送间隔，等待 {int(wait)} 秒…"
+                    doc.reply_message = (
+                        f"遵守{getattr(self, '_last_wait_label', '发送间隔')}，等待约"
+                        f"{int(wait) // 60} 分钟 {int(wait) % 60} 秒…"
+                    )
                     self._save(doc)
                     if not self._wait(wait):
                         self._finish(load_outreach(self.run_id), "stopped", "已手动停止")
@@ -207,6 +211,7 @@ class ReplyRun:
                     entry.sent_at = _iso()
                     doc.replies_sent_today = int(doc.replies_sent_today or 0) + 1
                     doc.last_reply_at = entry.sent_at
+                    self._sent_in_session = getattr(self, "_sent_in_session", 0) + 1
                     self._mark_candidate_contacted(user_key)
 
                 self._save(doc)
@@ -220,14 +225,23 @@ class ReplyRun:
                 pass
 
     def _interval_wait(self, doc: OutreachDocument, now: datetime) -> float:
+        # 仿人工集群节奏：集群内短间隔随机波动，连发 session_replies 条后长休息
+        sent_in_session = getattr(self, "_sent_in_session", 0)
+        if sent_in_session >= self.control.session_replies:
+            self._sent_in_session = 0
+            base = self.control.break_seconds + random.randint(0, max(0, self.control.break_jitter))
+            label = "集群间休息（仿人工）"
+        else:
+            base = self.control.interval_seconds + random.randint(0, max(0, self.control.jitter_seconds))
+            label = "发送间隔"
         if not doc.last_reply_at:
             return 0.0
         try:
             last = datetime.fromisoformat(doc.last_reply_at)
         except (TypeError, ValueError):
             return 0.0
-        base = self.control.interval_seconds + random.randint(0, max(0, self.control.jitter_seconds))
         elapsed = (now - last).total_seconds()
+        self._last_wait_label = label
         return max(0.0, base - elapsed)
 
     def _mark_candidate_contacted(self, user_key: str) -> None:

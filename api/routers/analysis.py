@@ -184,6 +184,10 @@ class OutreachReplyStartRequest(BaseModel):
     daily_limit: Optional[int] = Field(default=None, ge=1, le=500)
     time_window_start: str = "09:00"
     time_window_end: str = "22:00"
+    # 仿人工集群节奏（留空 → 按平台默认值自动取）
+    session_replies: Optional[int] = Field(default=None, ge=1, le=50)
+    break_seconds: Optional[int] = Field(default=None, ge=60, le=86400)
+    break_jitter: Optional[int] = Field(default=None, ge=0, le=86400)
 
 
 class UpdateRunConfigRequest(BaseModel):
@@ -1340,6 +1344,10 @@ async def start_outreach_reply(run_id: str, body: OutreachReplyStartRequest) -> 
         d = resolve_platform_defaults(entry.platform)
         defaults["interval_seconds"] = max(defaults.get("interval_seconds", 0), d["interval_seconds"])
         defaults["jitter_seconds"] = max(defaults.get("jitter_seconds", 0), d["jitter_seconds"])
+        defaults["session_replies"] = max(defaults.get("session_replies", 0), d.get("session_replies", 6))
+        # 集群间休息取最保守（最长），避免多平台混跑时节奏过密
+        defaults["break_seconds"] = max(defaults.get("break_seconds", 0), d.get("break_seconds", 1200))
+        defaults["break_jitter"] = max(defaults.get("break_jitter", 0), d.get("break_jitter", 1500))
         defaults["daily_limit"] = min(
             defaults.get("daily_limit", 10**9), d["daily_limit"]
         )
@@ -1349,6 +1357,9 @@ async def start_outreach_reply(run_id: str, body: OutreachReplyStartRequest) -> 
         daily_limit=body.daily_limit if body.daily_limit is not None else defaults.get("daily_limit", 30),
         time_window_start=body.time_window_start,
         time_window_end=body.time_window_end,
+        session_replies=body.session_replies if body.session_replies is not None else defaults.get("session_replies", 6),
+        break_seconds=body.break_seconds if body.break_seconds is not None else defaults.get("break_seconds", 1200),
+        break_jitter=body.break_jitter if body.break_jitter is not None else defaults.get("break_jitter", 1500),
     )
     doc.reply_control = control
     doc.reply_status = "running"
