@@ -105,7 +105,29 @@ def derive_bilibili_links(platform: str, user_id: str, video_id: str, comment_id
     return homepage, comment_url
 
 
+def derive_xhs_links(platform: str, user_id: str, video_id: str, comment_id: str) -> tuple[str, str]:
+    """小红书笔记页 + 评论锚点链接，供受控回复定位目标评论。"""
+    homepage = ""
+    comment_url = ""
+    if platform == "xhs" and video_id:
+        if user_id:
+            homepage = f"https://www.xiaohongshu.com/user/profile/{user_id}"
+        if comment_id:
+            comment_url = f"https://www.xiaohongshu.com/explore/{video_id}#comment-{comment_id}"
+    return homepage, comment_url
+
+
+def derive_platform_links(platform: str, user_id: str, video_id: str, comment_id: str) -> tuple[str, str]:
+    """按平台推导主页/评论链接；未知平台返回空。"""
+    homepage, comment_url = derive_xhs_links(platform, user_id, video_id, comment_id)
+    if homepage or comment_url:
+        return homepage, comment_url
+    return derive_bilibili_links(platform, user_id, video_id, comment_id)
+
+
 _REPLY_FRAGMENT_PATTERN = re.compile(r"#reply(\d+)")
+_XHS_NOTE_PATTERN = re.compile(r"/explore/([a-f0-9]+)", re.IGNORECASE)
+_XHS_COMMENT_FRAGMENT_PATTERN = re.compile(r"#comment-([a-f0-9]+)", re.IGNORECASE)
 
 
 def parse_bilibili_targets(comment_url: str) -> tuple[str, str]:
@@ -128,6 +150,20 @@ def parse_bilibili_targets(comment_url: str) -> tuple[str, str]:
     reply_match = _REPLY_FRAGMENT_PATTERN.search(url)
     comment = reply_match.group(1) if reply_match else ""
     return content, comment
+
+
+def parse_xhs_targets(comment_url: str) -> tuple[str, str]:
+    """从小红书评论链接提取 ``(note_id, comment_id)``。
+
+    接受 ``https://www.xiaohongshu.com/explore/<note_id>#comment-<comment_id>``；
+    无法解析时返回空字符串。
+    """
+    url = str(comment_url or "")
+    if not url:
+        return "", ""
+    note_match = _XHS_NOTE_PATTERN.search(url)
+    comment_match = _XHS_COMMENT_FRAGMENT_PATTERN.search(url)
+    return (note_match.group(1) if note_match else "", comment_match.group(1) if comment_match else "")
 
 
 def resolve_source_links(source: Mapping[str, Any]) -> tuple[str, str]:

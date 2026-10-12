@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from .candidate_schemas import CandidateRecord, OutreachDocument, OutreachEntry
-from .field_mapping import parse_bilibili_targets
+from .field_mapping import parse_bilibili_targets, parse_xhs_targets
 from .llm_analyzer import build_openai_client, estimate_cost, parse_usage
 from .outreach_prompts import DEFAULT_BASE_TEMPLATE, OUTREACH_SYSTEM_PROMPT, build_outreach_user_message
 from .reply_style import check_reply_style
@@ -104,7 +104,12 @@ def _apply_candidate_targets(entry: OutreachEntry, candidate: CandidateRecord) -
         if comment.comment_url:
             comment_url = comment.comment_url
             break
-    content_id, comment_id = parse_bilibili_targets(comment_url)
+    content_id, comment_id = "", ""
+    platform_key = (entry.platform or candidate.platform or "").strip().lower()
+    if platform_key in {"xhs", "xiaohongshu"}:
+        content_id, comment_id = parse_xhs_targets(comment_url)
+    else:
+        content_id, comment_id = parse_bilibili_targets(comment_url)
     entry.target_content_id = content_id
     entry.target_comment_id = comment_id
 
