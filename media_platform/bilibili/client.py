@@ -342,7 +342,9 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
                 stopped_reason = "missing_cursor"
                 break
 
-            comment_list: List[Dict] = comments_res.get("replies", [])
+            # 注意：视频无评论时接口返回 "replies": null，
+            # .get(key, default) 在值为 null 时仍返回 None，必须 or [] 兑底
+            comment_list: List[Dict] = comments_res.get("replies") or []
 
             if "is_end" not in cursor_info or "next" not in cursor_info:
                 utils.logger.warning(
@@ -458,7 +460,7 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
         pn = 1
         while True:
             result = await self.get_video_level_two_comments(video_id, level_one_comment_id, pn, ps, order_mode)
-            comment_list: List[Dict] = result.get("replies", [])
+            comment_list: List[Dict] = result.get("replies") or []
             if callback:
                 await callback(video_id, comment_list)
             await self._pacer.sleep("after level-2 comment page")
