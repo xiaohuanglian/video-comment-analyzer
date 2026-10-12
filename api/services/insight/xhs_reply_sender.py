@@ -82,8 +82,10 @@ async def _check_login(page: "Page") -> None:
         info = await page.evaluate(
             """() => {
               const s = window.__INITIAL_STATE__ || {};
-              const u = (s.user && s.user.userInfo) || {};
-              return {hasUser: !!(s.user && s.user.userInfo), userId: String(u.userId || '')};
+              // Vue 响应式 ref：真值在 _value 里
+              const unref = (x) => (x && typeof x === 'object' && '_value' in x) ? x._value : x;
+              const user = unref(s.user && s.user.userInfo);
+              return {hasUser: !!user, userId: String((user && user.userId) || '')};
             }"""
         )
     except Exception:
