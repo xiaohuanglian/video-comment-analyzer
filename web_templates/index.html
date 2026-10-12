@@ -624,21 +624,21 @@
           <div class="step-number">D</div>
           <div class="step-header-copy">
             <h3>开始回复（受控）</h3>
-            <p class="hint">只发送你审核通过的回复；受间隔、每日上限与时段控制，可随时停止。</p>
+            <p class="hint">只发送你审核通过的回复；受间隔、每日上限与时段控制，可随时停止。频率项留空则按各平台风控安全频率自动取值。</p>
           </div>
         </div>
         <div class="outreach-reply-controls">
           <label class="setting-field">
             <span class="field-label">最小间隔（秒）</span>
-            <input type="number" id="outreachIntervalSeconds" min="10" max="86400" value="90" />
+            <input type="number" id="outreachIntervalSeconds" min="10" max="86400" placeholder="按平台自动" />
           </label>
           <label class="setting-field">
             <span class="field-label">随机抖动（秒）</span>
-            <input type="number" id="outreachJitterSeconds" min="0" max="3600" value="20" />
+            <input type="number" id="outreachJitterSeconds" min="0" max="3600" placeholder="按平台自动" />
           </label>
           <label class="setting-field">
             <span class="field-label">每日上限（条）</span>
-            <input type="number" id="outreachDailyLimit" min="1" max="500" value="30" />
+            <input type="number" id="outreachDailyLimit" min="1" max="500" placeholder="按平台自动" />
           </label>
           <label class="setting-field">
             <span class="field-label">允许时段</span>
@@ -661,6 +661,6 @@
 
   <script src="/static/comment.js?v=28"></script>
   <script src="/static/insight.js?v=28"></script>
-  <script src="/static/outreach.js?v=2"></script>
+  <script src="/static/outreach.js?v=3"></script>
 </body>
 </html>

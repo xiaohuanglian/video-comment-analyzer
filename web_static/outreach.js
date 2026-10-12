@@ -652,10 +652,12 @@
   }
 
   function getReplyControlInput() {
+    // 频率项留空 → 不传 → 后端按各平台风控安全频率自动取值
+    const num = (el) => (el && el.value.trim() !== "" ? Number(el.value) : null);
     return {
-      interval_seconds: Number(outreachIntervalSeconds?.value || 90),
-      jitter_seconds: Number(outreachJitterSeconds?.value || 20),
-      daily_limit: Number(outreachDailyLimit?.value || 30),
+      interval_seconds: num(outreachIntervalSeconds),
+      jitter_seconds: num(outreachJitterSeconds),
+      daily_limit: num(outreachDailyLimit),
       time_window_start: outreachWindowStart?.value || "09:00",
       time_window_end: outreachWindowEnd?.value || "22:00",
     };
