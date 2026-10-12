@@ -112,7 +112,7 @@ async def update_xhs_note(note_item: Dict):
     await XhsStoreFactory.create_store().store_content(local_db_item)
 
 
-async def batch_update_xhs_note_comments(note_id: str, comments: List[Dict]):
+async def batch_update_xhs_note_comments(note_id: str, comments: List[Dict], xsec_token: str = ""):
     """
     Batch update Xiaohongshu note comments
     Args:
@@ -125,10 +125,10 @@ async def batch_update_xhs_note_comments(note_id: str, comments: List[Dict]):
     if not comments:
         return
     for comment_item in comments:
-        await update_xhs_note_comment(note_id, comment_item)
+        await update_xhs_note_comment(note_id, comment_item, xsec_token=xsec_token)
 
 
-async def update_xhs_note_comment(note_id: str, comment_item: Dict):
+async def update_xhs_note_comment(note_id: str, comment_item: Dict, xsec_token: str = ""):
     """
     Update Xiaohongshu note comment
     Args:
@@ -156,6 +156,12 @@ async def update_xhs_note_comment(note_id: str, comment_item: Dict):
         "parent_comment_id": target_comment.get("id", 0),  # Parent comment ID
         "last_modify_ts": utils.get_current_timestamp(),  # Last modification timestamp (Used to record the latest update time of a record in DB storage)
         "like_count": comment_item.get("like_count", 0),
+        "xsec_token": xsec_token,  # 笔记访问令牌（回链/受控回复用）
+        "comment_url": (
+            f"https://www.xiaohongshu.com/explore/{note_id}?xsec_token={xsec_token}&xsec_source=pc_search#comment-{comment_id}"
+            if xsec_token
+            else ""
+        ),  # 可直接打开的评论链接（含令牌与锚点）
     }
     utils.logger.info(f"[store.xhs.update_xhs_note_comment] xhs note comment:{local_db_item}")
     await XhsStoreFactory.create_store().store_comment(local_db_item)

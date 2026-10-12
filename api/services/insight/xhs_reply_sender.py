@@ -27,7 +27,6 @@ except Exception:  # pragma: no cover - tests run without browser
 from .reply_sender import ReplySendError
 
 _XHS_NOTE_URL = "https://www.xiaohongshu.com/explore/{note_id}"
-_LOGIN_COOKIE_NAMES = ("web_session", "a1")
 _PAGE_TIMEOUT_MS = 30000
 _MAX_SCROLL_ROUNDS = 12
 
@@ -67,14 +66,34 @@ async def _pick_context(browser: Browser) -> BrowserContext:
     return await browser.new_context()
 
 
-async def _check_login(context: BrowserContext) -> None:
-    cookies = await context.cookies()
-    names = {c.get("name") for c in cookies}
-    if not any(n in names for n in _LOGIN_COOKIE_NAMES):
-        raise ReplySendError(
-            "浏览器里没有小红书登录态（缺少 web_session cookie）。"
-            "请在该浏览器中登录小红书后重试"
+async def _check_login(page: "Page") -> None:
+    """检查小红书登录态。
+
+    cookie 不可靠：访客也会拿到 38 位的 ``web_session``。可靠的判据是页面
+    全局状态 ``__INITIAL_STATE__.user.userInfo.userId``，仅登录用户非空。
+    在目标笔记页上检查（该页同样携带用户状态）。
+    """
+    try:
+        info = await page.evaluate(
+            """() => {
+              const s = window.__INITIAL_STATE__ || {};
+              const u = (s.user && s.user.userInfo) || {};
+              return {hasUser: !!(s.user && s.user.userInfo), userId: String(u.userId || '')};
+            }"""
         )
+    except Exception:
+        info = None
+    if info and info.get("hasUser"):
+        if not info.get("userId"):
+            raise ReplySendError(
+                "浏览器里未登录小红书（页面用户状态为访客）。"
+                "请在受控浏览器窗口中登录后重试"
+            )
+        return
+    # 页面状态拿不到时退回 cookie 检查（弱判据，仅作兑底）
+    raise ReplySendError(
+        "无法确认小红书登录态（页面未提供用户状态），请确认已在浏览器中登录后重试"
+    )
 
 
 async def _human_pause(lo: float = 0.6, hi: float = 2.2) -> None:
@@ -83,11 +102,15 @@ async def _human_pause(lo: float = 0.6, hi: float = 2.2) -> None:
 
 
 async def _scroll_to_find_comment(page: Page, comment_id: str):
-    """在评论区滚动查找目标评论元素；找不到返回 None。"""
+    """在评论区滚动查找目标评论元素；找不到返回 None。
+
+    小红书笔记页的滚动容器是右侧面板的 ``.note-scroller``，评论懒加载
+    需滚动该容器（窗口滚动不生效）。
+    """
     selectors = [
         f"div[id='comment-{comment_id}']",
-        f"[id='{comment_id}']",
         f"[id='comment-{comment_id}']",
+        f"[id='{comment_id}']",
     ]
     for _round in range(_MAX_SCROLL_ROUNDS):
         for selector in selectors:
@@ -97,11 +120,15 @@ async def _scroll_to_find_comment(page: Page, comment_id: str):
                     return loc.first
             except Exception:
                 continue
-        # 评论区懒加载：滚动评论区容器或页面
+        # 评论区懒加载：滚动右侧面板的 note-scroller，退化用窗口滚动
         try:
-            await page.mouse.wheel(0, random.randint(600, 1200))
+            await page.evaluate(
+                "document.querySelector('.note-scroller')?.scrollBy(0, arguments_delta)".replace(
+                    "arguments_delta", str(random.randint(800, 1400))
+                )
+            )
         except Exception:
-            await page.evaluate("window.scrollBy(0, 900)")
+            await page.mouse.wheel(0, random.randint(600, 1200))
         await _human_pause(0.8, 1.8)
     return None
 
@@ -115,9 +142,10 @@ async def _type_like_human(locator, text: str) -> None:
 
 async def _submit_and_verify(page: Page, message: str) -> str:
     """点击发送并确认成功；成功返回空串（无平台回执 id），失败抛错。"""
-    send_btn = page.locator(".comments-container").locator(
-        "button:has-text('发送'), div[class*='submit']:has-text('发送')"
-    )
+    # 发送按钮在页面底部 engage-bar（button.submit），不在评论区容器内
+    send_btn = page.locator(".engage-bar button.submit")
+    if await send_btn.count() == 0:
+        send_btn = page.locator("button", has_text="发送")
     try:
         await send_btn.first.click(timeout=5000)
     except Exception:
@@ -146,13 +174,23 @@ async def _submit_and_verify(page: Page, message: str) -> str:
     return ""
 
 
-async def _reply_flow(page: Page, note_id: str, comment_id: str, message: str) -> str:
+async def _reply_flow(page: Page, note_id: str, comment_id: str, message: str, url: str = "") -> str:
     """在一个已登录的页面上完成整条回复；成功返回回复标识（可能为空）。"""
-    url = _XHS_NOTE_URL.format(note_id=note_id)
+    # 优先用带 xsec_token 的完整链接（2024 起直链无 token 会 404）
+    target = url.strip() or _XHS_NOTE_URL.format(note_id=note_id)
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=_PAGE_TIMEOUT_MS)
+        await page.goto(target, wait_until="domcontentloaded", timeout=_PAGE_TIMEOUT_MS)
     except Exception as exc:
         raise ReplySendError(f"打开笔记页失败：{exc}") from exc
+
+    if "/404" in (page.url or ""):
+        raise ReplySendError(
+            "笔记页无法浏览（404/风控校验失败）。"
+            "旧采集数据的评论链接缺少 xsec_token，请重新采集该笔记的评论"
+        )
+
+    # 登录态检查（页面用户状态，访客 userId 为空）
+    await _check_login(page)
 
     try:
         await page.wait_for_selector(".comments-container", timeout=_PAGE_TIMEOUT_MS)
@@ -163,8 +201,8 @@ async def _reply_flow(page: Page, note_id: str, comment_id: str, message: str) -
     if comment is None:
         raise ReplySendError(f"未能定位目标评论（comment_id={comment_id}），可能已被删除或不在前 {_MAX_SCROLL_ROUNDS} 屏")
 
-    # 点「回复」展开输入框（有时需先 hover 让按钮出现）
-    reply_btn = comment.locator("span:has-text('回复'), a:has-text('回复'), div:has-text('回复')")
+    # 点「回复」（.reply 在评论项 interactions 区），输入框在页面底部 engage-bar 切换为回复模式
+    reply_btn = comment.locator(".reply")
     try:
         await comment.hover()
         await _human_pause(0.3, 0.9)
@@ -172,10 +210,18 @@ async def _reply_flow(page: Page, note_id: str, comment_id: str, message: str) -
     except Exception as exc:
         raise ReplySendError(f"点击「回复」按钮失败：{exc}") from exc
 
-    # 回复输入框：评论项内的 contenteditable，或全局评论输入框（回复模式）
-    editor = comment.locator("[contenteditable='true']")
+    # 确认 engage-bar 已进入回复模式（出现「发送/取消」按钮）
+    try:
+        await page.wait_for_selector(".engage-bar button.submit, .engage-bar .cancel", timeout=5000)
+    except Exception as exc:
+        raise ReplySendError("点击回复后未进入回复模式（发送/取消按钮未出现）") from exc
+
+    # 回复输入框：页面级 contenteditable（.content-input），不是评论项内嵌的
+    editor = page.locator(".content-input[contenteditable='true']")
     if await editor.count() == 0:
-        editor = page.locator(".comments-container").locator("[contenteditable='true']")
+        editor = page.locator(".engage-bar [contenteditable='true']")
+    if await editor.count() == 0:
+        editor = page.locator("[contenteditable='true']")
     if await editor.count() == 0:
         raise ReplySendError("未找到回复输入框（contenteditable），页面结构可能已更新")
     await _type_like_human(editor.first, message)
@@ -189,6 +235,7 @@ async def send_xhs_reply_async(
     comment_id: str,
     message: str,
     browser: Optional["Browser"] = None,
+    url: str = "",
 ) -> str:
     """连接浏览器并发送；可注入已连接的 browser（测试用）。"""
     note_id = str(content_id or "").strip()
@@ -204,10 +251,9 @@ async def send_xhs_reply_async(
     browser = browser or await _connect_browser()
     try:
         context = await _pick_context(browser)
-        await _check_login(context)
         page = await context.new_page()
         try:
-            return await _reply_flow(page, note_id, comment_id, message)
+            return await _reply_flow(page, note_id, comment_id, message, url=url)
         finally:
             try:
                 await page.close()
@@ -221,8 +267,8 @@ async def send_xhs_reply_async(
                 pass
 
 
-def send_xhs_reply(*, content_id: str, comment_id: str, message: str, cookie: str = "") -> str:
+def send_xhs_reply(*, content_id: str, comment_id: str, message: str, cookie: str = "", url: str = "") -> str:
     """同步入口（reply_sender 调用；运行在 reply 线程中）。"""
     return asyncio.run(
-        send_xhs_reply_async(content_id=content_id, comment_id=comment_id, message=message)
+        send_xhs_reply_async(content_id=content_id, comment_id=comment_id, message=message, url=url)
     )

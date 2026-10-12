@@ -97,7 +97,7 @@ def _resolve_bilibili_aid(client: httpx.Client, content_id: str, headers: dict) 
     return int(aid)
 
 
-def send_bilibili_reply(*, content_id: str, comment_id: str, message: str, cookie: str = "") -> str:
+def send_bilibili_reply(*, content_id: str, comment_id: str, message: str, cookie: str = "", url: str = "") -> str:
     """Post a public reply and return the platform reply id (if any)."""
     cookie = cookie or _cookie_string()
     if not cookie:
@@ -142,11 +142,11 @@ _SENDERS: dict[str, Callable[..., str]] = {
 }
 
 
-def _send_xhs_reply_wrapper(*, content_id: str, comment_id: str, message: str, cookie: str = "") -> str:
+def _send_xhs_reply_wrapper(*, content_id: str, comment_id: str, message: str, cookie: str = "", url: str = "") -> str:
     """惰性导入，避免无浏览器环境（如 CI 跑测试）加载 playwright 失败。"""
     from .xhs_reply_sender import send_xhs_reply
 
-    return send_xhs_reply(content_id=content_id, comment_id=comment_id, message=message, cookie=cookie)
+    return send_xhs_reply(content_id=content_id, comment_id=comment_id, message=message, cookie=cookie, url=url)
 
 
 _SENDERS.update(
@@ -168,9 +168,10 @@ def send_reply(
     comment_id: str,
     message: str,
     cookie: Optional[str] = None,
+    url: str = "",
 ) -> str:
     key = (platform or "").strip().lower()
     sender = _SENDERS.get(key)
     if sender is None:
         raise ReplySendError(f"平台「{platform or '未知'}」暂不支持自动回复，请改为手动复制发送")
-    return sender(content_id=content_id, comment_id=comment_id, message=message, cookie=cookie or "")
+    return sender(content_id=content_id, comment_id=comment_id, message=message, cookie=cookie or "", url=url)

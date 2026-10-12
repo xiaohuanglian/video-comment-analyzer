@@ -102,6 +102,7 @@ class OutreachEntry(BaseModel):
     # sender can post the reply without guessing.
     target_content_id: str = ""  # e.g. bilibili video id / note id
     target_comment_id: str = ""  # the comment being replied to
+    target_url: str = ""  # full comment url (xhs 含 xsec_token，直接可打开)
     send_status: SendStatus = "pending"
     sent_at: str = ""
     send_error: str = ""

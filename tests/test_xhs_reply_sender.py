@@ -78,7 +78,9 @@ class FakeLocator:
         self.page = page
         self.path = path
 
-    def locator(self, selector: str) -> "FakeLocator":
+    def locator(self, selector: str, has_text: str = None) -> "FakeLocator":
+        if has_text is not None:
+            selector = f"{selector} >> text={has_text}"
         return FakeLocator(self.page, f"{self.path} >> {selector}")
 
     @property
@@ -114,11 +116,13 @@ class FakeLocator:
 
 
 class FakePage:
-    def __init__(self, *, body_text: str = "", verify_ok: bool = True):
+    def __init__(self, *, body_text: str = "", verify_ok: bool = True, logged_in: bool = True, url: str = "https://www.xiaohongshu.com/explore/NOTE1"):
         self.actions: list = []
         self.typed = ""
         self.body_text = body_text
         self.verify_ok = verify_ok
+        self.logged_in = logged_in
+        self.url = url
 
     def exists(self, path: str) -> bool:
         if "text=" in path and ">>" not in path:
@@ -131,7 +135,9 @@ class FakePage:
         ]
         return any(m in path for m in ok_markers)
 
-    def locator(self, selector: str) -> FakeLocator:
+    def locator(self, selector: str, has_text: str = None) -> FakeLocator:
+        if has_text is not None:
+            selector = f"{selector} >> text={has_text}"
         return FakeLocator(self, selector)
 
     async def goto(self, url: str, wait_until: str = "", timeout: int = 0) -> None:
@@ -143,8 +149,14 @@ class FakePage:
     async def inner_text(self, selector: str) -> str:
         return self.body_text
 
-    async def evaluate(self, expr: str) -> None:
+    async def evaluate(self, expr: str):
         self.actions.append(("evaluate", expr))
+        if "__INITIAL_STATE__" in expr:
+            return {
+                "hasUser": True,
+                "userId": "user123" if self.logged_in else "",
+            }
+        return None
 
     async def close(self) -> None:
         self.actions.append(("close",))
@@ -232,11 +244,8 @@ def test_xhs_reply_flow_missing_ids():
 
 
 def test_xhs_reply_flow_not_logged_in():
-    class NoLoginContext(FakeContext):
-        async def cookies(self):
-            return [{"name": "guest", "value": "1"}]
-
-    browser = FakeBrowser(NoLoginContext(FakePage()))
+    page = FakePage(logged_in=False)
+    browser = FakeBrowser(FakeContext(page))
     with pytest.raises(ReplySendError) as exc:
         _run(
             send_xhs_reply_async(
