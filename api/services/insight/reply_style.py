@@ -65,6 +65,15 @@ _JARGON_WORDS: list[str] = [
 _DASH_CHARS = "—–−—―"
 
 
+# 居高临下/施压式表述（伤害对方自尊，与专业热心形象相悳）
+_CONDESCENDING_PATTERNS: list[tuple[str, str]] = [
+    (r"再[多]?翻翻看|再找找看|仔细找找", "施压式表述（让对方觉得没找到是自己笨），改为直接给出方法或入口位置"),
+    (r"别急着[放弃换]", "施压式表述，删除"),
+    (r"其实很[简单容易]", "居高临下（暗示对方觉得难是能力问题），改为具体步骤或「入口藏得深」这类归因于产品"),
+    (r"不怪你|你细品|你品品", "居高临下表述，删除"),
+]
+
+
 def check_reply_style(text: str) -> List[str]:
     """返回硬禁令命中列表（空列表 = 干净）。"""
     warnings: List[str] = []
@@ -85,6 +94,10 @@ def check_reply_style(text: str) -> List[str]:
             break
 
     for pattern, label in _REVERSAL_PATTERNS:
+        if re.search(pattern, text):
+            warnings.append(label)
+
+    for pattern, label in _CONDESCENDING_PATTERNS:
         if re.search(pattern, text):
             warnings.append(label)
 

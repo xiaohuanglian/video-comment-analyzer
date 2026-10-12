@@ -50,6 +50,17 @@ class TestCheckReplyStyle:
     def test_nominalization_banned(self):
         assert any("名词化" in w for w in check_reply_style("我完成了对流程的优化"))
 
+    def test_condescending_tone_banned(self):
+        cases = [
+            "你再翻翻看，别急着放弃，其实很简单的",
+            "仔细找找就能发现",
+            "这个其实很容易的",
+        ]
+        for text in cases:
+            assert check_reply_style(text), text
+        # 方法直接给到 + 归因于产品的写法是干净的
+        assert check_reply_style("批量导出是支持的，只是入口藏得比较深，列表里多选后点导出就行") == []
+
     def test_empty_text(self):
         assert check_reply_style("") == []
 
