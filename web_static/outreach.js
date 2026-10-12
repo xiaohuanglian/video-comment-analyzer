@@ -450,6 +450,10 @@
                     send === "failed" && outreach?.send_error
                       ? `<span class="hint insight-send-error">发送失败：${escapeHtml(outreach.send_error)}</span>`
                       : "";
+                  const styleHint =
+                    (outreach?.style_warnings || []).length
+                      ? `<div class="hint insight-style-warnings">风格硬禁令命中：${outreach.style_warnings.map(escapeHtml).join("；")}</div>`
+                      : "";
                   return `<div class="insight-outreach-block">
               <label>回复内容（可编辑；<strong>审核通过</strong>后才会进入发送队列）
                 <textarea class="outreach-draft" data-user-key="${escapeHtml(candidate.user_key)}" rows="4">${escapeHtml(draft)}</textarea>
@@ -461,6 +465,7 @@
                 <span class="hint">审核：${escapeHtml(reviewLabel)} · 发送：${escapeHtml(sendLabel)}${outreach?.sent_at ? ` （${escapeHtml(outreach.sent_at)}）` : ""}${outreach?.cost ? ` · 费用 ${formatCost(outreach.cost, outreach.currency || "CNY")}` : ""}</span>
               </div>
               ${errorHint}
+              ${styleHint}
             </div>`;
                 })()
               : ""
@@ -490,7 +495,7 @@
     try {
       const doc = await apiFetch(`/api/analysis/runs/${encodeURIComponent(state.currentRunId)}/candidates/build`, {
         method: "POST",
-        body: JSON.stringify({}),
+        body: JSON.stringify({ research_targets: outreachResearchTargets?.value ?? "" }),
       });
       state.candidatesDoc = doc;
       state.exportPaths = { ...(state.exportPaths || {}), ...(doc.export_paths || {}) };

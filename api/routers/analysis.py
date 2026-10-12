@@ -178,15 +178,21 @@ class OutreachReplyStartRequest(BaseModel):
     """Start a controlled reply run. Frequency/time guardrails live here."""
 
     user_keys: Optional[List[str]] = None  # default: all approved entries
-    interval_seconds: int = Field(default=90, ge=10, le=86400)
-    jitter_seconds: int = Field(default=20, ge=0, le=3600)
-    daily_limit: int = Field(default=30, ge=1, le=500)
+    # 默认值留空 → 按各平台风控安全频率自动取值（reply_style.PLATFORM_REPLY_DEFAULTS）
+    interval_seconds: Optional[int] = Field(default=None, ge=10, le=86400)
+    jitter_seconds: Optional[int] = Field(default=None, ge=0, le=3600)
+    daily_limit: Optional[int] = Field(default=None, ge=1, le=500)
     time_window_start: str = "09:00"
     time_window_end: str = "22:00"
 
 
 class UpdateRunConfigRequest(BaseModel):
     research_targets: str = ""
+
+
+class CandidatesBuildRequest(BaseModel):
+    # Optional: when provided, overrides and persists research targets before rebuild.
+    research_targets: Optional[str] = None
 
 
 class TrialSampleRequest(BaseModel):
@@ -1178,7 +1184,7 @@ async def get_candidate_items(
 
 
 @router.post("/runs/{run_id}/candidates/build")
-async def post_build_candidates(run_id: str) -> Dict[str, Any]:
+async def post_build_candidates(run_id: str, body: Optional[CandidatesBuildRequest] = None) -> Dict[str, Any]:
     try:
         load_config(run_id)
     except FileNotFoundError as exc:
@@ -1187,6 +1193,11 @@ async def post_build_candidates(run_id: str) -> Dict[str, Any]:
     if not results:
         raise HTTPException(status_code=400, detail="尚无分析结果")
     config = load_config(run_id)
+    # If the request carries research targets, persist them first so the
+    # rebuild always reflects what the user currently sees in the UI.
+    if body is not None and body.research_targets is not None:
+        config.research_targets = parse_research_targets(body.research_targets)
+        save_config(run_id, config)
     doc = build_candidates(results, research_targets=config.research_targets)
     save_candidates(run_id, doc)
     summary = build_summary(run_id)
@@ -1319,10 +1330,23 @@ async def start_outreach_reply(run_id: str, body: OutreachReplyStartRequest) -> 
     score_by_key = {c.user_key: c.candidate_score for c in load_candidates(run_id).candidates}
     ordered_keys = sorted(wanted, key=lambda k: score_by_key.get(k, 0), reverse=True)
 
+    # 频率默认值：未显式指定时按平台取风控安全值，多平台取最保守（间隔最大、日限最小）
+    from api.services.insight.reply_style import resolve_platform_defaults
+
+    defaults: dict[str, int] = {}
+    for entry in doc.entries:
+        if entry.user_key not in wanted:
+            continue
+        d = resolve_platform_defaults(entry.platform)
+        defaults["interval_seconds"] = max(defaults.get("interval_seconds", 0), d["interval_seconds"])
+        defaults["jitter_seconds"] = max(defaults.get("jitter_seconds", 0), d["jitter_seconds"])
+        defaults["daily_limit"] = min(
+            defaults.get("daily_limit", 10**9), d["daily_limit"]
+        )
     control = ReplyControl(
-        interval_seconds=body.interval_seconds,
-        jitter_seconds=body.jitter_seconds,
-        daily_limit=body.daily_limit,
+        interval_seconds=body.interval_seconds if body.interval_seconds is not None else defaults.get("interval_seconds", 90),
+        jitter_seconds=body.jitter_seconds if body.jitter_seconds is not None else defaults.get("jitter_seconds", 20),
+        daily_limit=body.daily_limit if body.daily_limit is not None else defaults.get("daily_limit", 30),
         time_window_start=body.time_window_start,
         time_window_end=body.time_window_end,
     )

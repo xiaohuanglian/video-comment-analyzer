@@ -10,6 +10,7 @@ from .candidate_schemas import CandidateRecord, OutreachDocument, OutreachEntry
 from .field_mapping import parse_bilibili_targets
 from .llm_analyzer import build_openai_client, estimate_cost, parse_usage
 from .outreach_prompts import DEFAULT_BASE_TEMPLATE, OUTREACH_SYSTEM_PROMPT, build_outreach_user_message
+from .reply_style import check_reply_style
 from .pricing import resolve_pricing
 from .schemas import RunConfig
 
@@ -20,12 +21,17 @@ def _mock_draft(candidate: CandidateRecord, base_template: str) -> str:
     if quote:
         body = (
             f"{name}，看到你提到「{quote[:36]}」。"
-            f"我的经验是：先确认你具体想解决的问题，再针对性给做法。"
+            f"我之前也碰到过类似的情况，我的做法是先确认你具体想解决什么问题，再给针对性的做法。"
             f"如果你方便，可以说下具体场景，我看看还能怎么帮到你。"
         )
     else:
         body = base_template.replace("你好", f"{name}，你好", 1)
     return body[:220]
+
+
+def _attach_style_warnings(entry: OutreachEntry) -> None:
+    """对最终发送文本跑硬禁令 lint，命中写入 style_warnings 供人工闸门参考。"""
+    entry.style_warnings = check_reply_style(entry.final_content)
 
 
 def _generate_one(
@@ -39,7 +45,7 @@ def _generate_one(
 ) -> OutreachEntry:
     if use_mock:
         draft = _mock_draft(candidate, base_template)
-        return OutreachEntry(
+        entry = OutreachEntry(
             user_key=candidate.user_key,
             username=candidate.username,
             base_template=base_template,
@@ -49,6 +55,8 @@ def _generate_one(
             generated_at=datetime.now(timezone.utc).isoformat(),
             contact_status="preparing",
         )
+        _attach_style_warnings(entry)
+        return entry
 
     llm_client = client or build_openai_client(config.base_url, api_key)
     completion = llm_client.chat.completions.create(
@@ -70,7 +78,7 @@ def _generate_one(
         prompt_cache_hit_tokens=usage.prompt_cache_hit_tokens,
         input_price_cache_hit=float(pricing["input_price_cache_hit"]),
     )
-    return OutreachEntry(
+    entry = OutreachEntry(
         user_key=candidate.user_key,
         username=candidate.username,
         base_template=base_template,
@@ -84,6 +92,8 @@ def _generate_one(
         generated_at=datetime.now(timezone.utc).isoformat(),
         contact_status="preparing",
     )
+    _attach_style_warnings(entry)
+    return entry
 
 
 def _apply_candidate_targets(entry: OutreachEntry, candidate: CandidateRecord) -> None:
@@ -157,6 +167,7 @@ def merge_outreach_update(
             continue
         if edited_content is not None:
             entry.edited_content = edited_content
+            _attach_style_warnings(entry)
         if contact_status is not None:
             entry.contact_status = contact_status  # type: ignore[assignment]
         if product_manager_note is not None:

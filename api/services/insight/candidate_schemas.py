@@ -106,6 +106,8 @@ class OutreachEntry(BaseModel):
     sent_at: str = ""
     send_error: str = ""
     attempts: int = 0
+    # 硬禁令 lint 结果（活人感风格检查），命中不阻断，供人工闸门参考
+    style_warnings: List[str] = Field(default_factory=list)
 
     @property
     def final_content(self) -> str:

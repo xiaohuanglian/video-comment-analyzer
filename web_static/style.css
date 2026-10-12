@@ -2330,6 +2330,12 @@ body {
   margin-top: 4px;
 }
 
+.insight-style-warnings {
+  color: #b45309;
+  display: block;
+  margin-top: 2px;
+}
+
 .outreach-reply-control-card .outreach-reply-controls {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
