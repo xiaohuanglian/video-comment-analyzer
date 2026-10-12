@@ -25,6 +25,11 @@ except Exception:  # pragma: no cover - tests run without browser
     async_playwright = None  # type: ignore[assignment]
 
 from .reply_sender import ReplySendError
+from tools.human_behavior import (
+    human_click,
+    human_pause,
+    scroll_container_smooth,
+)
 
 _XHS_NOTE_URL = "https://www.xiaohongshu.com/explore/{note_id}"
 _PAGE_TIMEOUT_MS = 30000
@@ -98,7 +103,7 @@ async def _check_login(page: "Page") -> None:
 
 async def _human_pause(lo: float = 0.6, hi: float = 2.2) -> None:
     """随机短暂停顿，模拟人的操作节奏。"""
-    await asyncio.sleep(random.uniform(lo, hi))
+    await human_pause(lo, hi)
 
 
 async def _scroll_to_find_comment(page: Page, comment_id: str):
@@ -120,22 +125,21 @@ async def _scroll_to_find_comment(page: Page, comment_id: str):
                     return loc.first
             except Exception:
                 continue
-        # 评论区懒加载：滚动右侧面板的 note-scroller，退化用窗口滚动
+        # 评论区懒加载：拟人滚动右侧面板 note-scroller（小步滚轮，非瞬移），退化用窗口滚动
         try:
-            await page.evaluate(
-                "document.querySelector('.note-scroller')?.scrollBy(0, arguments_delta)".replace(
-                    "arguments_delta", str(random.randint(800, 1400))
-                )
-            )
+            await scroll_container_smooth(page, ".note-scroller", random.randint(800, 1400))
         except Exception:
-            await page.mouse.wheel(0, random.randint(600, 1200))
+            try:
+                await page.mouse.wheel(0, random.randint(600, 1200))
+            except Exception:
+                await page.evaluate("window.scrollBy(0, 900)")
         await _human_pause(0.8, 1.8)
     return None
 
 
-async def _type_like_human(locator, text: str) -> None:
-    """逐字输入，每个字符间隔随机几十到一百多毫秒。"""
-    await locator.click()
+async def _type_like_human(locator, page: "Page", text: str) -> None:
+    """带轨迹点击输入框，逐字输入（每字 60-130ms 随机延迟）。"""
+    await human_click(page, locator)
     await _human_pause(0.3, 0.8)
     await locator.press_sequentially(text, delay=random.randint(60, 130))
 
@@ -147,7 +151,7 @@ async def _submit_and_verify(page: Page, message: str) -> str:
     if await send_btn.count() == 0:
         send_btn = page.locator("button", has_text="发送")
     try:
-        await send_btn.first.click(timeout=5000)
+        await human_click(page, send_btn.first, timeout=5000)
     except Exception:
         # 有的版本是输入框内回车提交
         await page.keyboard.press("Enter")
@@ -206,7 +210,7 @@ async def _reply_flow(page: Page, note_id: str, comment_id: str, message: str, u
     try:
         await comment.hover()
         await _human_pause(0.3, 0.9)
-        await reply_btn.first.click(timeout=5000)
+        await human_click(page, reply_btn.first, timeout=5000)
     except Exception as exc:
         raise ReplySendError(f"点击「回复」按钮失败：{exc}") from exc
 
@@ -224,7 +228,7 @@ async def _reply_flow(page: Page, note_id: str, comment_id: str, message: str, u
         editor = page.locator("[contenteditable='true']")
     if await editor.count() == 0:
         raise ReplySendError("未找到回复输入框（contenteditable），页面结构可能已更新")
-    await _type_like_human(editor.first, message)
+    await _type_like_human(editor.first, page, message)
     await _human_pause(0.4, 1.1)
     return await _submit_and_verify(page, message)
 

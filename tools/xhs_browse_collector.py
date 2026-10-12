@@ -29,6 +29,12 @@ except Exception:  # pragma: no cover
     Browser = None  # type: ignore[assignment]
 
 from api.services.insight.xhs_reply_sender import ReplySendError, _connect_browser, _pick_context
+from tools.human_behavior import (
+    dwell_seconds,
+    human_pause,
+    smooth_scroll,
+    scroll_container_smooth,
+)
 
 _SEARCH_URL = "https://www.xiaohongshu.com/search_result?keyword={keyword}&source=web_explore_feed"
 
@@ -73,7 +79,7 @@ class BrowseNoteResult:
 
 
 async def _human_pause(lo: float, hi: float) -> None:
-    await asyncio.sleep(random.uniform(lo, hi))
+    await human_pause(lo, hi)
 
 
 def _parse_note_url(url: str) -> tuple[str, str]:
@@ -96,11 +102,11 @@ async def search_note_links(page: "Page", keyword: str, max_notes: int) -> List[
     """搜索关键词并收集笔记链接（含 xsec_token）。"""
     url = _SEARCH_URL.format(keyword=keyword)
     await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-    await _human_pause(2.0, 4.0)
-    # 滚两轮 feed 让链接加载出来
+    await asyncio.sleep(await dwell_seconds())  # 重尾停留：大多快划，偶尔细看
+    # 拟人滚动两轮 feed 让链接加载出来（小步滚轮，非瞬移）
     for _ in range(2):
-        await page.mouse.wheel(0, random.randint(800, 1600))
-        await _human_pause(1.0, 2.5)
+        await smooth_scroll(page, random.randint(800, 1600))
+        await _human_pause(0.8, 2.2)
     hrefs = await page.evaluate(
         """(maxNotes) => {
           // 搜索结果的笔记链接是 /search_result/<id>?xsec_token=...（带令牌），
@@ -132,13 +138,13 @@ async def harvest_note(page: "Page", url: str, *, max_scroll_rounds: int = 10) -
     note_id, token = _parse_note_url(url)
     result = BrowseNoteResult(note_id=note_id, xsec_token=token, url=url)
     await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-    await _human_pause(2.0, 4.0)
+    await asyncio.sleep(await dwell_seconds())
     try:
         await page.wait_for_selector(".comments-container", timeout=15000)
     except Exception as exc:
         raise ReplySendError(f"笔记 {note_id} 评论区未加载（可能需登录或已删除）：{exc}") from exc
 
-    # 滚动 .note-scroller 逐步加载评论，直到数量不再增长
+    # 拟人滚动 .note-scroller 逐步加载评论，直到数量不再增长
     prev = -1
     for _ in range(max_scroll_rounds):
         data = await page.evaluate(_EXTRACT_JS)
@@ -146,8 +152,8 @@ async def harvest_note(page: "Page", url: str, *, max_scroll_rounds: int = 10) -
         if count <= prev and _ > 0:
             break
         prev = count
-        await page.evaluate("document.querySelector('.note-scroller')?.scrollBy(0, 1200)")
-        await _human_pause(0.8, 2.0)
+        await scroll_container_smooth(page, ".note-scroller", random.randint(900, 1300))
+        await asyncio.sleep(await dwell_seconds(quick_p=0.7, lo=0.6, mid=2.0, hi=6.0))
     data = await page.evaluate(_EXTRACT_JS)
     result.title = (data.get("noteTitle") or "").strip()
     result.creator_name = (data.get("creatorName") or "").strip()

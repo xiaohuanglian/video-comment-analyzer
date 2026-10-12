@@ -98,6 +98,11 @@ class FakeLocator:
         if not self._exists():
             raise RuntimeError(f"not found: {self.path}")
 
+    async def bounding_box(self, timeout: int = 5000) -> dict:
+        if not self._exists():
+            raise RuntimeError(f"not found: {self.path}")
+        return {"x": 100.0, "y": 200.0, "width": 80.0, "height": 30.0}
+
     async def hover(self) -> None:
         self.page.actions.append(("hover", self.path))
         if not self._exists():
@@ -123,6 +128,7 @@ class FakePage:
         self.verify_ok = verify_ok
         self.logged_in = logged_in
         self.url = url
+        self.mouse = FakePage._Mouse(self)
 
     def exists(self, path: str) -> bool:
         if "text=" in path and ">>" not in path:
@@ -149,8 +155,8 @@ class FakePage:
     async def inner_text(self, selector: str) -> str:
         return self.body_text
 
-    async def evaluate(self, expr: str):
-        self.actions.append(("evaluate", expr))
+    async def evaluate(self, expr: str, arg=None):
+        self.actions.append(("evaluate", expr, arg))
         if "__INITIAL_STATE__" in expr:
             return {
                 "hasUser": True,
@@ -162,14 +168,25 @@ class FakePage:
         self.actions.append(("close",))
 
     class _Mouse:
+        def __init__(self, page: "FakePage"):
+            self._page = page
+
         async def wheel(self, x: int, y: int) -> None:
             pass
+
+        async def move(self, x: float, y: float) -> None:
+            self._page.actions.append(("mouse_move", x, y))
+
+        async def down(self) -> None:
+            self._page.actions.append(("mouse_down",))
+
+        async def up(self) -> None:
+            self._page.actions.append(("mouse_up",))
 
     class _Keyboard:
         async def press(self, key: str) -> None:
             pass
 
-    mouse = _Mouse()
     keyboard = _Keyboard()
 
 
@@ -215,8 +232,9 @@ def test_xhs_reply_flow_success():
     # 输入是逐字 press_sequentially（仿人工），不是一次性填入
     typed = [a for a in page.actions if a[0] == "type"]
     assert len(typed) == 1
-    # 点击了「发送」
-    assert any(a[0] == "click" and "发送" in a[1] for a in page.actions)
+    # 拟人点击链：鼠标轨迹移动 + 按下/抬起（human_click 不再走 locator.click）
+    assert any(a[0] == "mouse_down" for a in page.actions)
+    assert any(a[0] == "mouse_move" for a in page.actions)
     # 页面用完关闭
     assert ("close",) in page.actions
 
