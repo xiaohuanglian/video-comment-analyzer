@@ -85,6 +85,26 @@ def test_interval_wait_respects_minimum_gap():
     assert 6 <= wait <= 8
 
 
+def test_interval_wait_takes_long_break_after_session():
+    """集群内连发 session_replies 条后，下一次等待切换为长休息（仿人工）。"""
+    control = ReplyControl(interval_seconds=10, jitter_seconds=0, session_replies=3, break_seconds=600, break_jitter=0)
+    run = ReplyRun("r", control, ["u1"], sender=lambda **_: "ok")
+    doc = OutreachDocument(last_reply_at=(datetime.now() - timedelta(seconds=3)).isoformat(timespec="seconds"))
+
+    # 集群内：短间隔（连发 3 条后达到上限）
+    for _ in range(3):
+        assert 6 <= run._interval_wait(doc, datetime.now()) <= 8
+        run._sent_in_session += 1
+
+    # 达到集群上限：切换为长休息
+    wait = run._interval_wait(doc, datetime.now())
+    assert 590 <= wait <= 600
+    assert run._sent_in_session == 0  # 休息后重置集群计数
+
+    # 休息后回到短间隔
+    assert 6 <= run._interval_wait(doc, datetime.now()) <= 8
+
+
 def test_reply_run_sends_only_approved(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     run_id = "reply_run"

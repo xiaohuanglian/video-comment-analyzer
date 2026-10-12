@@ -108,19 +108,21 @@ def check_reply_style(text: str) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# 平台风控安全频率默认值（受控发送用；用户可覆盖）
-# 原则：外站评论引流比自家评论更敏感，宁慢勿快
+# 平台风控安全频率默认值（仿人工节奏，非机器人匀速）
+# 原则：短间隔随机波动 + 集群内连发 + 集群间长休息，模拟真人刷评论区行为
 # ---------------------------------------------------------------------------
 
 PLATFORM_REPLY_DEFAULTS: dict[str, dict] = {
-    # 平台键（小写）: {interval_seconds, jitter_seconds, daily_limit}
-    "bilibili": {"interval_seconds": 120, "jitter_seconds": 60, "daily_limit": 20},
-    "douyin": {"interval_seconds": 300, "jitter_seconds": 180, "daily_limit": 10},
-    "xhs": {"interval_seconds": 360, "jitter_seconds": 240, "daily_limit": 8},
-    "kuaishou": {"interval_seconds": 300, "jitter_seconds": 180, "daily_limit": 12},
-    "weibo": {"interval_seconds": 240, "jitter_seconds": 120, "daily_limit": 15},
-    "zhihu": {"interval_seconds": 300, "jitter_seconds": 180, "daily_limit": 10},
-    "tieba": {"interval_seconds": 240, "jitter_seconds": 120, "daily_limit": 15},
+    # 仿人工节奏：短间隔随机波动 + 集群内连发 + 集群间长休息 + 高日限
+    # interval/jitter：单条间隔区间（秒）；session_replies：集群内连发条数上限；
+    # break_seconds/break_jitter：集群间休息区间（秒）；daily_limit：日限
+    "bilibili": {"interval_seconds": 60, "jitter_seconds": 120, "session_replies": 8, "break_seconds": 900, "break_jitter": 1200, "daily_limit": 60},
+    "douyin": {"interval_seconds": 90, "jitter_seconds": 150, "session_replies": 6, "break_seconds": 1200, "break_jitter": 1500, "daily_limit": 40},
+    "xhs": {"interval_seconds": 120, "jitter_seconds": 180, "session_replies": 5, "break_seconds": 1500, "break_jitter": 1800, "daily_limit": 30},
+    "kuaishou": {"interval_seconds": 90, "jitter_seconds": 150, "session_replies": 6, "break_seconds": 1200, "break_jitter": 1500, "daily_limit": 40},
+    "weibo": {"interval_seconds": 75, "jitter_seconds": 135, "session_replies": 7, "break_seconds": 1050, "break_jitter": 1350, "daily_limit": 50},
+    "zhihu": {"interval_seconds": 100, "jitter_seconds": 160, "session_replies": 6, "break_seconds": 1200, "break_jitter": 1500, "daily_limit": 40},
+    "tieba": {"interval_seconds": 75, "jitter_seconds": 135, "session_replies": 7, "break_seconds": 1050, "break_jitter": 1350, "daily_limit": 50},
 }
 
 _PLATFORM_ALIASES = {
@@ -140,8 +142,8 @@ _PLATFORM_ALIASES = {
 
 
 def resolve_platform_defaults(platform: str) -> dict:
-    """按平台返回风控安全频率默认值；未知平台返回通用保守值。"""
+    """按平台返回仿人工节奏默认值；未知平台返回保守值。"""
     key = _PLATFORM_ALIASES.get((platform or "").strip().lower())
     if key and key in PLATFORM_REPLY_DEFAULTS:
         return dict(PLATFORM_REPLY_DEFAULTS[key])
-    return {"interval_seconds": 300, "jitter_seconds": 180, "daily_limit": 10}
+    return {"interval_seconds": 90, "jitter_seconds": 150, "session_replies": 6, "break_seconds": 1200, "break_jitter": 1500, "daily_limit": 40}

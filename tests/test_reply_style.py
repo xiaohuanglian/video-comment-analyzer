@@ -66,12 +66,21 @@ class TestPlatformDefaults:
 
     def test_unknown_platform_gets_conservative_defaults(self):
         got = resolve_platform_defaults("unknown_platform")
-        assert got["interval_seconds"] >= 300
-        assert got["daily_limit"] <= 10
+        assert got["interval_seconds"] >= 60
+        assert got["daily_limit"] >= 20
+        assert got["session_replies"] >= 1
 
     def test_all_intervals_reasonable(self):
-        # 外站引流场景：最小间隔不低于 2 分钟，日限不高于 30
+        # 仿人工节奏：短间隔随机波动 + 集群间长休息；日限足够自动化有意义
         for key, d in PLATFORM_REPLY_DEFAULTS.items():
-            assert d["interval_seconds"] >= 120, key
-            assert d["daily_limit"] <= 30, key
-            assert d["jitter_seconds"] > 0, key
+            assert d["interval_seconds"] >= 30, key
+            assert d["jitter_seconds"] >= d["interval_seconds"], key  # 抖动够大，避免匀速机器节奏
+            assert d["daily_limit"] >= 30, key
+            assert d["session_replies"] >= 3, key
+            assert d["break_seconds"] >= 600, key
+
+    def test_human_like_session_pattern(self):
+        # 集群模式：连发若干条后长休息，而不是全天匀速
+        for key, d in PLATFORM_REPLY_DEFAULTS.items():
+            short = d["interval_seconds"] + d["jitter_seconds"]
+            assert d["break_seconds"] >= short * 3, key  # 休息明显长于集群内间隔

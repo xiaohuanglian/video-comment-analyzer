@@ -41,6 +41,18 @@ def _analysis_text_pool(source: Dict[str, Any], analysis: Dict[str, Any]) -> str
     return "\n".join(parts).lower()
 
 
+def _fuzzy_hit(target: str, text: str) -> bool:
+    """Partial match: hit if any 2-char sliding window of target appears in text.
+
+    Catches paraphrases like 预算不太够 matching 预算有限 (shares 预算),
+    while staying cheap and deterministic (no LLM involved).
+    """
+    t = target.strip()
+    if len(t) < 2:
+        return t in text if t else False
+    return any(t[i : i + 2] in text for i in range(len(t) - 1))
+
+
 def match_research_targets(
     source: Dict[str, Any],
     analysis: Dict[str, Any],
@@ -54,8 +66,13 @@ def match_research_targets(
     for target in targets:
         keywords = SEGMENT_HINTS.get(target, []) + [target]
         # Prefer hit in raw comment; fall back to analysis pool for custom targets.
-        hit_comment = any(kw.lower() in comment for kw in keywords if kw and len(kw) >= 2)
-        hit_pool = any(kw.lower() in pool for kw in keywords if kw and len(kw) >= 2)
+        # Exact keyword substring first, then partial (2-gram) fuzzy match.
+        hit_comment = any(kw.lower() in comment for kw in keywords if kw and len(kw) >= 2) or any(
+            _fuzzy_hit(kw.lower(), comment) for kw in keywords if kw and len(kw) >= 2
+        )
+        hit_pool = any(kw.lower() in pool for kw in keywords if kw and len(kw) >= 2) or any(
+            _fuzzy_hit(kw.lower(), pool) for kw in keywords if kw and len(kw) >= 2
+        )
         if hit_comment or hit_pool:
             matched.append(target)
     return matched

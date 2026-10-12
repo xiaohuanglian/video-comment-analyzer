@@ -123,6 +123,10 @@ class ReplyControl(BaseModel):
     daily_limit: int = Field(default=30, ge=1, le=500, description="单个自然日内最多发送条数")
     time_window_start: str = Field(default="09:00", description="允许发送的起始时间 HH:MM")
     time_window_end: str = Field(default="22:00", description="允许发送的结束时间 HH:MM")
+    # 仿人工节奏：集群内连发 N 条后长休息（真人刷评论区的模式）
+    session_replies: int = Field(default=6, ge=1, le=50, description="集群内连发条数上限，达到后长休息")
+    break_seconds: int = Field(default=1200, ge=60, le=86400, description="集群间休息基准秒数")
+    break_jitter: int = Field(default=1500, ge=0, le=86400, description="集群间休息随机抖动秒数")
 
     @property
     def window_minutes(self) -> tuple[int, int]:
