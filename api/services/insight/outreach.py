@@ -112,6 +112,7 @@ def _apply_candidate_targets(entry: OutreachEntry, candidate: CandidateRecord) -
         content_id, comment_id = parse_bilibili_targets(comment_url)
     entry.target_content_id = content_id
     entry.target_comment_id = comment_id
+    entry.target_url = comment_url
 
 
 def generate_outreach_drafts(

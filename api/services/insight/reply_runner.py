@@ -116,6 +116,7 @@ class ReplyRun:
             content_id=entry.target_content_id,
             comment_id=entry.target_comment_id,
             message=entry.final_content,
+            url=getattr(entry, "target_url", "") or "",
         )
 
     def _wait(self, seconds: float) -> bool:

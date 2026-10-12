@@ -195,6 +195,13 @@ def ingest_files(
             comment_id = str(row.get("comment_id") or row.get("id") or "")
             homepage = row_value(row, mapping.user_homepage_url)
             comment_url = row_value(row, mapping.comment_url)
+            if not comment_url and platform == "xhs" and video_id and comment_id:
+                token = str(row.get("xsec_token") or "")
+                if token:
+                    comment_url = (
+                        f"https://www.xiaohongshu.com/explore/{video_id}"
+                        f"?xsec_token={token}&xsec_source=pc_search#comment-{comment_id}"
+                    )
             derived_homepage, derived_comment = derive_platform_links(platform, user_id, video_id, comment_id)
             if not homepage:
                 homepage = derived_homepage

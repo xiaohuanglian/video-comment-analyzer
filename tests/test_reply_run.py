@@ -111,7 +111,7 @@ def test_reply_run_sends_only_approved(tmp_path, monkeypatch):
     _make_run(run_id)
     sent = []
 
-    def fake_sender(*, platform, content_id, comment_id, message):
+    def fake_sender(*, platform, content_id, comment_id, message, url=""):
         sent.append((content_id, comment_id, message))
         return "rpid1"
 
@@ -165,7 +165,7 @@ def test_reply_run_records_failure_and_continues(tmp_path, monkeypatch):
     run_id = "reply_fail"
     _make_run(run_id)
 
-    def flaky_sender(*, platform, content_id, comment_id, message):
+    def flaky_sender(*, platform, content_id, comment_id, message, url=""):
         if content_id == "BV_bad":
             raise ReplySendError("平台限流")
         return "ok"

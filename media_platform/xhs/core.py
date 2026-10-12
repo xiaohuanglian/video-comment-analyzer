@@ -327,11 +327,15 @@ class XiaoHongShuCrawler(AbstractCrawler):
             utils.logger.info(f"[XiaoHongShuCrawler.get_comments] Begin get note id comments {note_id}")
             # Safe, jittered pacing between notes (adaptive pacer runs per page inside the client)
             base, jitter = compute_crawl_interval("xhs")
+            # 把 xsec_token 传给存储层，写入 comment_url 供受控回复直接打开笔记页
+            token = xsec_token or ""
             await self.xhs_client.get_note_all_comments(
                 note_id=note_id,
                 xsec_token=xsec_token,
                 crawl_interval=base,
-                callback=xhs_store.batch_update_xhs_note_comments,
+                callback=lambda nid, cmts, tok=token: xhs_store.batch_update_xhs_note_comments(
+                    nid, cmts, xsec_token=tok
+                ),
                 max_count=config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
             )
 
