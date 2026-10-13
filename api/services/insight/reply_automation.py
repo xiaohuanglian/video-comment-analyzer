@@ -662,16 +662,50 @@ async def ensure_bili_cookie(max_age_hours: float = 20.0) -> str:
     return await refresh_bili_cookie()
 
 
+def _find_chromium_executable() -> Optional[str]:
+    """解析浏览器二进制。优先系统 Chrome/Edge（与 tools.browser_launcher 的采集器
+    同一选择，同一 profile 必须始终用同一二进制打开，否则 Cookie 加密密钥
+    不匹配会导致登录态被作废——2026-10-13 的真实教训），否则回退
+    ms-playwright 缓存里的 Chrome for Testing。"""
+    for path in (
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    ):
+        if Path(path).is_file():
+            return path
+    cache = Path.home() / "Library" / "Caches" / "ms-playwright"
+    if not cache.exists():
+        return None
+    candidates: list[tuple[str, str]] = []
+    for chromium_dir in cache.glob("chromium-*"):
+        for app in chromium_dir.glob("chrome-mac*/"):
+            for rel in (
+                "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+                "Chromium.app/Contents/MacOS/Chromium",
+            ):
+                binary = app / rel
+                if binary.exists():
+                    candidates.append((chromium_dir.name, str(binary)))
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    return candidates[0][1]
+
+
 async def refresh_bili_cookie() -> str:
     """启动 cdp_bili 档案浏览器抓一次 Cookie（含 bili_jct 才算有效）。"""
     from playwright.async_api import async_playwright
 
+    launch_kwargs: dict[str, Any] = {
+        "user_data_dir": str(BILI_PROFILE_DIR),
+        "headless": True,
+        "args": ["--no-first-run", "--no-default-browser-check"],
+    }
+    executable = _find_chromium_executable()
+    if executable:
+        launch_kwargs["executable_path"] = executable
     async with async_playwright() as p:
-        context = await p.chromium.launch_persistent_context(
-            user_data_dir=str(BILI_PROFILE_DIR),
-            headless=True,
-            args=["--no-first-run", "--no-default-browser-check"],
-        )
+        context = await p.chromium.launch_persistent_context(**launch_kwargs)
         try:
             page = context.pages[0] if context.pages else await context.new_page()
             await page.goto("https://www.bilibili.com", wait_until="domcontentloaded", timeout=30000)
