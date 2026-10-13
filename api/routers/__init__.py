@@ -5,6 +5,7 @@ from .bilibili import router as bilibili_router
 from .creator import router as creator_router
 from .analysis import router as analysis_router
 from .growth import router as growth_router
+from .automation import router as automation_router
 
 __all__ = [
     "crawler_router",
@@ -14,4 +15,5 @@ __all__ = [
     "creator_router",
     "analysis_router",
     "growth_router",
+    "automation_router",
 ]
