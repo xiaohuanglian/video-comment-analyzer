@@ -235,6 +235,11 @@ function refreshAll() { refreshStatus(); refreshQueue(); refreshHistory(); }
 
 document.getElementById("btn-enable").onclick = toggleEnable;
 document.getElementById("btn-collect").onclick = collectNow;
+// 被 growth-v2 内嵌时隐藏返回链接，避免 iframe 套娃导航
+if (window.self !== window.top) {
+  const back = document.querySelector('a.au-link[href="/"]');
+  if (back) back.style.display = "none";
+}
 refreshAll();
 setInterval(refreshStatus, 5000);
 setInterval(refreshQueue, 8000);

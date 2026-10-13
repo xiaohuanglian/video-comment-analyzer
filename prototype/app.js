@@ -41,6 +41,10 @@ $("nav").addEventListener("click", (e) => {
     const f = $("legacyFrame");
     if (f && !f.src) f.src = "/legacy";  // 懒加载，首次点开才加载旧工作台
   }
+  if (btn.dataset.view === "automation") {
+    const f = $("automationFrame");
+    if (f && !f.src) f.src = "/automation";  // 懒加载 B 站回复自动化监工台
+  }
   if (btn.dataset.view === "projects") loadProjects();
   if (btn.dataset.view === "library") loadLibrary();
   if (btn.dataset.view === "review") loadReview();
