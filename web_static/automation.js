@@ -70,12 +70,16 @@ function renderStatus() {
   ].join("");
 
   const sender = s.sender || {};
+  const errLine = sender.last_error
+    ? `<div class="au-side-row"><span style="color:#991b1b">⚠️ 发送阻塞</span><span style="color:#991b1b">${esc(sender.last_error)}</span></div>`
+    : "";
   document.getElementById("sender-panel").innerHTML = `
     <div class="au-side-row"><span>今日已发</span><b>${sender.sent_today || 0} / ${s.config.daily_send_limit}</b></div>
     <div class="au-side-row"><span>发送窗口</span><span>${s.config.send_window_start}-${s.config.send_window_end}</span></div>
     <div class="au-side-row"><span>状态</span><span>${sender.can_send ? "✅ 可发送" : "⏳ " + esc(sender.wait_reason || "等待中")}</span></div>
     <div class="au-side-row"><span>下次可发</span><span>${sender.next_allowed_at || "随时"}</span></div>
-    <div class="au-side-row"><span>B站 Cookie</span><span>${sender.cookie_cached ? "✅ 已缓存" : "⚠️ 未缓存（发送前自动刷新）"}</span></div>`;
+    <div class="au-side-row"><span>B站 Cookie</span><span>${sender.cookie_cached ? "✅ 已缓存" : "⚠️ 未缓存（发送前自动刷新）"}</span></div>
+    ${errLine}`;
 
   document.getElementById("cycle-panel").innerHTML = `
     <div class="au-side-row"><span>采集间隔</span><span>${s.config.collect_interval_hours} 小时</span></div>
@@ -141,11 +145,48 @@ async function approve(id) {
   if (!draft) { alert("草稿为空，先填写或起草"); return; }
   try {
     const res = await api(`/candidates/${id}/approve`, { method: "POST", body: JSON.stringify({ draft }) });
-    if ((res.item.lint_warnings || []).length && !confirm("风格 lint 有警告：\n" + res.item.lint_warnings.join("\n") + "\n\n仍要批准发送？")) {
-      return; // 已批准，此分支不可达；提示放在 confirm 之前需要预检，简化：警告在批准后显示
+    if ((res.item.lint_warnings || []).length) {
+      console.warn("lint 警告:", res.item.lint_warnings);
+    }
+    if ((res.warnings || []).length) {
+      alert("✅ 已批准进入发送队列。\n\n但注意：\n· " + res.warnings.join("\n· "));
     }
     refreshAll();
   } catch (e) { alert("批准失败：" + e.message); }
+}
+
+async function retract(id) {
+  if (!confirm("撤回这条已批准的条目？（回到待审队列，可修改后重新批准）")) return;
+  try { await api(`/candidates/${id}/retract`, { method: "POST" }); refreshAll(); }
+  catch (e) { alert("撤回失败：" + e.message); }
+}
+
+async function refreshApproved() {
+  try {
+    const items = await api("/candidates?status=approved");
+    const box = document.getElementById("approved-list");
+    document.getElementById("approved-count").textContent = items.length;
+    if (!items.length) {
+      box.innerHTML = '<div class="au-note">暂无。批准后的条目在这里排队，按节奏自动发送。</div>';
+      return;
+    }
+    box.innerHTML = items.map(i => `
+      <div class="au-item">
+        <div class="au-item-head">
+          <span class="au-tag a">${i.tier}档</span>
+          <span>👤 ${esc(i.commenter)}</span>
+          <span>❤ ${i.like_count || 0}</span>
+          <span>批于 ${esc((i.decided_at || "").slice(11, 16))}</span>
+          ${i.attempts ? `<span class="au-tag" style="background:#fee2e2;color:#991b1b">重试${i.attempts}</span>` : ""}
+        </div>
+        <div class="au-video">←《${esc(i.video_title)}》</div>
+        <div class="au-quote" style="margin:0">${esc(i.draft)}</div>
+        ${(i.send_error || "") ? `<div class="au-lint" style="color:#991b1b">上次错误：${esc(i.send_error)}</div>` : ""}
+        <div class="au-actions">
+          <button class="au-btn ghost" onclick="retract('${esc(i.id)}')">↩️ 撤回到待审</button>
+        </div>
+      </div>`).join("");
+  } catch (e) { /* 静默 */ }
 }
 
 async function reject(id) {
@@ -231,7 +272,7 @@ function toggleHistory() {
   else p.style.display = "none";
 }
 
-function refreshAll() { refreshStatus(); refreshQueue(); refreshHistory(); }
+function refreshAll() { refreshStatus(); refreshQueue(); refreshApproved(); refreshHistory(); }
 
 document.getElementById("btn-enable").onclick = toggleEnable;
 document.getElementById("btn-collect").onclick = collectNow;
@@ -243,3 +284,4 @@ if (window.self !== window.top) {
 refreshAll();
 setInterval(refreshStatus, 5000);
 setInterval(refreshQueue, 8000);
+setInterval(refreshApproved, 8000);

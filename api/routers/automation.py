@@ -86,6 +86,21 @@ async def approve(item_id: str, body: CandidateDecision) -> dict[str, Any]:
     item = store.decide(item_id, "approve", draft=body.draft)
     if not item:
         raise HTTPException(status_code=400, detail="条目不存在、已处理或草稿为空")
+    # 批准后立刻告知阻塞项，避免「批了却没反应」的无声状态
+    warnings: list[str] = []
+    if not store.config.get("enabled"):
+        warnings.append("已批准，但自动化总开关未启动——点右上角「启动自动化」后才会发送")
+    if not auto._cached_cookie():
+        warnings.append("B 站登录 Cookie 未就绪——启动后首次采集会弹出扫码窗口，扫一次即恢复")
+    return {"ok": True, "item": item, "warnings": warnings}
+
+
+@router.post("/candidates/{item_id}/retract")
+async def retract(item_id: str) -> dict[str, Any]:
+    store = _store()
+    item = store.retract(item_id)
+    if not item:
+        raise HTTPException(status_code=400, detail="条目不存在或不在已批准状态")
     return {"ok": True, "item": item}
 
 

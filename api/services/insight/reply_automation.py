@@ -173,7 +173,7 @@ class AutomationStore:
             "cycle": data.get("cycle")
             or {"running": False, "last_run_at": "", "last_summary": "", "last_error": ""},
             "sender": data.get("sender")
-            or {"last_send_at": "", "next_allowed_at": "", "today": "", "sent_today": 0},
+            or {"last_send_at": "", "next_allowed_at": "", "today": "", "sent_today": 0, "last_error": "", "last_error_at": ""},
         }
         return state
 
@@ -268,6 +268,16 @@ class AutomationStore:
             it["decided_at"] = datetime.now().isoformat(timespec="seconds")
         else:
             return None
+        self.save()
+        return it
+
+    def retract(self, item_id: str) -> Optional[dict[str, Any]]:
+        """已批准的条目撤回到待审（可改草稿后重新批准）。"""
+        it = self.find(item_id)
+        if not it or it["status"] != "approved":
+            return None
+        it["status"] = "pending_review"
+        it["decided_at"] = ""
         self.save()
         return it
 
@@ -739,7 +749,14 @@ async def _sender_tick(store: AutomationStore) -> str:
     cookie_cached = _cached_cookie()
     if not cookie_cached and store._state["cycle"].get("running"):
         return "采集进行中，Cookie 刷新延后"
-    cookie = cookie_cached or await refresh_bili_cookie()
+    try:
+        cookie = cookie_cached or await refresh_bili_cookie()
+    except Exception as exc:  # noqa: BLE001
+        # 错误必须可见：记录到 sender 状态，监工台展示，不再静默吞掉
+        store._state["sender"]["last_error"] = str(exc)[:200]
+        store._state["sender"]["last_error_at"] = datetime.now().isoformat(timespec="seconds")
+        store.save()
+        return f"发送阻塞：{str(exc)[:120]}"
     store.mark_sending(item)
     try:
         from .reply_sender import send_bilibili_reply
@@ -752,6 +769,8 @@ async def _sender_tick(store: AutomationStore) -> str:
             cookie=cookie,
         )
         store.mark_sent(item, reply_id)
+        store._state["sender"]["last_error"] = ""
+        store.save()
         return f"已发送 → {item['commenter']}（《{item['video_title'][:20]}》）"
     except Exception as exc:  # noqa: BLE001
         msg = str(exc)
