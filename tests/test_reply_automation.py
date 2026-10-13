@@ -85,6 +85,31 @@ class TestClassifyComment:
         status, _ = auto.classify_comment("怎么做")
         assert status == "excluded"
 
+    # 2026-10-13 真实数据回归：观点/反问/抒情不进队列
+    def test_real_world_false_positives_excluded(self):
+        for text in (
+            # 观点长文：含「如何利用ai」但是论述不是提问
+            "应试教育考查人的方式真该改改了，以后新一代所有人都应该学会如何利用ai，而不是比谁会算题。闭卷计算数学，应该逐渐转向开放工具的数学推理与建模，如果二三十年后学生还",
+            # 反问式夸奖
+            "不是，没人夸这个Gemini的配音吗……逻辑重音和情绪节奏都非常完美，真的和真人科普纪录片配音一模一样了",
+            # 陈述句含「流程」
+            "全套流程提示词已跑通，免费分享",
+            # 习语反问
+            "3.8flash日用非常好了，比豆包聪明多模态跟豆包一样好软件体验也比豆包好，我真当豆包用的，一年68还要什么自行车",
+            # 抒情体
+            "我从没觉得自己是一个多愁善感的人，带着对AI的郻夷和无可奈何点进这个视频。是AI掌握了用音乐使人类哭泣的能力吗？",
+        ):
+            status, label = auto.classify_comment(text)
+            assert status == "excluded", f"{text[:30]}… 被误判为 {status}/{label}"
+
+    def test_real_world_true_positives_pass(self):
+        # 夸奖+真提问（好奇怎么做）应入选
+        status, _ = auto.classify_comment("做的视频真的很厉害，把一个复杂的问题简单化了。另外，我好奇，这些非常厉害的动画是怎么做的")
+        assert status == "target_a"
+        # 想动手的具体设想+能实现吗应入选
+        status, _ = auto.classify_comment("如果我想用大模型辅助数学学习，比如建立obsidian知识库、自动做读书笔记、归档学习记录，这个用gpt6.1sol能实现吗")
+        assert status == "target_b"
+
 
 # ---------------------------------------------------------------------------
 # build_candidates：新鲜度 / 去重 / 配额
