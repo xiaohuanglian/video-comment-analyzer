@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from api.services.growth import audience
@@ -101,3 +103,68 @@ class TestSyncIdempotent:
         assert s2["signals_added"] == 0  # 幂等
         opps = gstore.list_opportunities("test_prod")
         assert len(opps) == len(report["clusters"])
+
+
+class TestTopicLifecycle:
+    def test_lifecycle_field_present(self):
+        video_map = {"v1": {"video_play_count": 5000}}
+        rows = [
+            {"comment_id": "1", "content": "求提示词分享做同款", "like_count": 2, "video_id": "v1"},
+            {"comment_id": "2", "content": "gpt6和claude哪个好怎么选", "like_count": 1, "video_id": "v1"},
+        ]
+        report = audience.analyze_comments(rows, video_map)
+        valid = {"hot", "seasonal", "evergreen", "decay"}
+        for c in report["clusters"]:
+            assert c["topic_lifecycle"] in valid and c["lifecycle_play"]
+        by = {c["cluster"]: c for c in report["clusters"]}
+        assert by["提示词_求做法资产"]["topic_lifecycle"] == "evergreen"
+        assert by["模型选择_横评"]["topic_lifecycle"] == "hot"
+
+    def test_opportunity_carries_lifecycle(self, tmp_path, monkeypatch):
+        from api.services.growth import store as gstore
+        from api.services.growth.models import ProductProfile
+
+        monkeypatch.setattr(gstore, "GROWTH_ROOT", tmp_path, raising=True)
+        gstore.upsert_product(ProductProfile(product_id="p1", name="t"))
+        report = audience.analyze_comments(
+            [{"comment_id": "1", "content": "求提示词分享做同款", "like_count": 2, "video_id": "v1"}],
+            {"v1": {"video_play_count": 5000}},
+        )
+        audience.sync_to_engine(report, "p1")
+        opps = gstore.list_opportunities("p1")
+        assert any("选题生命周期" in o.production_need for o in opps)
+
+
+class TestMultiDirAndRefresh:
+    def _mk(self, d, cid, content="求提示词分享一下，谢谢"):
+        d.mkdir(parents=True, exist_ok=True)
+        with (d / "comments_x.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"comment_id": cid, "content": content, "like_count": 1, "video_id": "v1"}) + "\n")
+        p = d / "contents_x.jsonl"
+        if not p.exists():
+            p.write_text(
+                json.dumps({"video_id": "v1", "title": "新手教程", "video_play_count": 1000}) + "\n",
+                encoding="utf-8",
+            )
+
+    def test_multi_dir_merge_dedup(self, tmp_path):
+        d1, d2 = tmp_path / "a", tmp_path / "b"
+        self._mk(d1, "c1")
+        self._mk(d2, "c1")  # 同一条评论在两个目录（多轮采集）
+        self._mk(d2, "c2", "怎么入门做ai视频新手")
+        rows, video_map, ref = audience.load_bili_comments([d1, d2])
+        assert len(rows) == 3  # 原始行
+        report = audience.analyze_comments(rows, video_map)
+        total = sum(c["demand_count"] for c in report["clusters"])
+        assert total == 2  # comment_id 去重后
+
+    def test_refresh_default(self, tmp_path, monkeypatch):
+        from api.services.growth import store as gstore
+        from api.services.growth.models import ProductProfile
+
+        monkeypatch.setattr(gstore, "GROWTH_ROOT", tmp_path / "store", raising=True)
+        gstore.upsert_product(ProductProfile(product_id="p1", name="t"))
+        self._mk(tmp_path / "data1", "c1")
+        res = audience.refresh_default(product_id="p1", data_dirs=[tmp_path / "data1"])
+        assert res["ok"] is True and res["clusters"] >= 1
+        assert res["top"][0]["lifecycle"] in {"hot", "seasonal", "evergreen", "decay"}

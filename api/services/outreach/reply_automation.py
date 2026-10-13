@@ -640,6 +640,20 @@ async def run_cycle(store: AutomationStore) -> dict[str, Any]:
         store._state["cycle"]["last_run_at"] = datetime.now().isoformat(timespec="seconds")
         store._state["cycle"]["last_summary"] = json.dumps(summary, ensure_ascii=False)
         store.save()
+
+        # 数据飞轮：采集后自动刷新受众洞察（画像×生命周期×AVS → 机会库，幂等）
+        # 失败不影响回复主流程；可用 config.audience_refresh=false 关闭
+        if store.config.get("audience_refresh", True):
+            try:
+                from api.services.growth import audience as _audience
+
+                summary["audience_refresh"] = _audience.refresh_default(
+                    product_id=str(store.config.get("audience_product_id", "youvibe"))
+                )
+            except Exception as exc:  # noqa: BLE001
+                summary["audience_refresh"] = {"ok": False, "error": str(exc)[:200]}
+            store._state["cycle"]["last_summary"] = json.dumps(summary, ensure_ascii=False)
+            store.save()
         return summary
     except Exception as exc:  # noqa: BLE001
         store._state["cycle"]["last_error"] = str(exc)[:300]

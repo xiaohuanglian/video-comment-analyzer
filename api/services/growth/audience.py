@@ -44,20 +44,24 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 # 需求聚类主题（含商业匹配 M 与理由）——M 编码 YouVibe 的价值主张映射
 # ---------------------------------------------------------------------------
 
-CLUSTER_DEFS: list[tuple[str, re.Pattern, float, str]] = [
-    ("提示词_求做法资产", re.compile(r"提示词|prompt|咒语|口令|skill|知识库|求教程|模板|做法"), 0.9, "产品核心即做法库/skill 资产，需求与产品直接对口"),
-    ("数学_教学动画", re.compile(r"数学|几何|函数|物理|课件|教学动画|题(目|库)|中考|高考"), 0.9, "已验证素材库+学习场景，做法内容直接可产"),
-    ("工具选择_入门", re.compile(r"什么(软件|工具|app|模型)|哪个(软件|工具|app)|怎么入门|新手|小白|零基础"), 0.8, "「刷着刷着就会了」的入口人群，产品路径即为此设计"),
-    ("视频生成_工作流", re.compile(r"可灵|即梦|seedance|视频生成|文生视频|图生视频|ai视频|配音|衔接|分镜"), 0.7, "做法类内容主战场，实测与流程内容已验证"),
-    ("AI味_真实感", re.compile(r"ai味|太假|不真实|塑料感|一眼ai|真实感|质感"), 0.8, "做法质量类痛点，教程型内容可承接"),
-    ("成本_价格", re.compile(r"多少钱|收费|价格|贵不贵|免费|成本|划算|性价比|积分"), 0.6, "成本对比是已验证高流量题材，但转化路径间接"),
-    ("模型选择_横评", re.compile(r"哪个(好|强|适合|推荐)|怎么选|对比|横评|排名|选哪个|vs"), 0.6, "发版首测/横评是内容强项，人群偏尝鲜者"),
-    ("功能找不到", re.compile(r"找不到|入口|藏|位置在哪|菜单|按钮"), 0.7, "「入口藏得深」信息差，轻量栏目可批量做"),
-    ("部署_本地_进阶", re.compile(r"部署|本地|显卡|显存|跑得动|ollama|comfyui|开源|工作流|节点"), 0.4, "人群偏硬核，与产品轻量定位错位，转化弱"),
-    ("报错_调试", re.compile(r"报错|失败|崩|闪退|无法|检测不到|装不上|卡住"), 0.3, "个案支持类，不适合内容规模化"),
-    ("变现_副业", re.compile(r"变现|赚钱|副业|盈利|接单|商单|搞钱"), 0.3, "与 OPC/接活远期相关，但当前无标准答案可交付"),
-    ("使用渠道_账号", re.compile(r"用上|怎么用gpt|怎么用claude|注册|翻墙|科学上网|镜像|账号|会员|充值|中转|买.{0,4}号"), 0.0, "需求大但平台规则禁止且非产品业务——典型高分低配（用户示例：GPT账号购买）"),
+CLUSTER_DEFS: list[tuple[str, re.Pattern, float, str, tuple[str, str]]] = [
+    # (主题, 匹配正则, 商业匹配M, 匹配理由, (选题生命周期, 生命周期打法))
+    ("提示词_求做法资产", re.compile(r"提示词|prompt|咒语|口令|skill|知识库|求教程|模板|做法"), 0.9, "产品核心即做法库/skill 资产，需求与产品直接对口", ("evergreen", "新手持续涌入+收藏权重打法，做法库型内容可长期吃流量")),
+    ("数学_教学动画", re.compile(r"数学|几何|函数|物理|课件|教学动画|题(目|库)|中考|高考"), 0.9, "已验证素材库+学习场景，做法内容直接可产", ("evergreen", "教材级常青，开学季/考试季有周期性峰值")),
+    ("工具选择_入门", re.compile(r"什么(软件|工具|app|模型)|哪个(软件|工具|app)|怎么入门|新手|小白|零基础"), 0.8, "「刷着刷着就会了」的入口人群，产品路径即为此设计", ("evergreen", "每批新人都从『什么软件』开始问")),
+    ("视频生成_工作流", re.compile(r"可灵|即梦|seedance|视频生成|文生视频|图生视频|ai视频|配音|衔接|分镜"), 0.7, "做法类内容主战场，实测与流程内容已验证", ("seasonal", "跟平台版本走，窗口=大版本更新期")),
+    ("AI味_真实感", re.compile(r"ai味|太假|不真实|塑料感|一眼ai|真实感|质感"), 0.8, "做法质量类痛点，教程型内容可承接", ("decay", "随模型代际进步痛点递减，当前代际内仍有效")),
+    ("成本_价格", re.compile(r"多少钱|收费|价格|贵不贵|免费|成本|划算|性价比|积分"), 0.6, "成本对比是已验证高流量题材，但转化路径间接", ("seasonal", "跟价格/政策变动走，窗口=调价事件")),
+    ("模型选择_横评", re.compile(r"哪个(好|强|适合|推荐)|怎么选|对比|横评|排名|选哪个|vs"), 0.6, "发版首测/横评是内容强项，人群偏尝鲜者", ("hot", "发版窗口 3-7 天，先答先得，旧素材衰减快")),
+    ("功能找不到", re.compile(r"找不到|入口|藏|位置在哪|菜单|按钮"), 0.7, "「入口藏得深」信息差，轻量栏目可批量做", ("evergreen", "平台改版持续产生『入口藏得深』信息差")),
+    ("部署_本地_进阶", re.compile(r"部署|本地|显卡|显存|跑得动|ollama|comfyui|开源|工作流|节点"), 0.4, "人群偏硬核，与产品轻量定位错位，转化弱", ("evergreen", "硬核小众常驻需求")),
+    ("报错_调试", re.compile(r"报错|失败|崩|闪退|无法|检测不到|装不上|卡住"), 0.3, "个案支持类，不适合内容规模化", ("hot", "个案即时性，无复用价值")),
+    ("变现_副业", re.compile(r"变现|赚钱|副业|盈利|接单|商单|搞钱"), 0.3, "与 OPC/接活远期相关，但当前无标准答案可交付", ("evergreen", "欲望常青但无标准答案可交付")),
+    ("使用渠道_账号", re.compile(r"用上|怎么用gpt|怎么用claude|注册|翻墙|科学上网|镜像|账号|会员|充值|中转|买.{0,4}号"), 0.0, "需求大但平台规则禁止且非产品业务——典型高分低配（用户示例：GPT账号购买）", ("hot", "发版/封控事件驱动短窗口；且 mismatch 已否决")),
 ]
+
+# 选题生命周期语义（用户 2026-10-13 提出，区别于用户生命周期）：
+# hot=发版/事件窗口先答先得 seasonal=跟版本/价格走有窗口期 evergreen=常青可长期吃 decay=随模型进步递减
 
 # ---------------------------------------------------------------------------
 # 画像（Module 1）——权重用于 V 分（YouVibe BP：核心=年轻用户与职场人群）
@@ -134,7 +138,7 @@ def infer_lifecycle(text: str, video_context: str = "") -> str:
 
 
 def classify_cluster(text: str) -> Optional[str]:
-    for name, pat, _, _ in CLUSTER_DEFS:
+    for name, pat, *_ in CLUSTER_DEFS:
         if pat.search(text):
             return name
     return None
@@ -219,7 +223,7 @@ def analyze_comments(rows: Iterable[dict[str, Any]], video_map: dict[str, dict[s
     max_energy = max((c["likes"] + c["max_host_plays"] for c in clusters.values()), default=0)
 
     results = []
-    for name, _, match, match_reason in CLUSTER_DEFS:
+    for name, _, match, match_reason, (lifecycle, lifecycle_play) in CLUSTER_DEFS:
         c = clusters.get(name)
         if not c:
             continue
@@ -270,6 +274,8 @@ def analyze_comments(rows: Iterable[dict[str, Any]], video_map: dict[str, dict[s
                 },
                 "top_persona": top_persona,
                 "top_lifecycle": top_lifecycle,
+                "topic_lifecycle": lifecycle,
+                "lifecycle_play": lifecycle_play,
                 "verdict": verdict.value,
                 "rationale": rationale,
                 "match_reason": match_reason,
@@ -318,6 +324,7 @@ def sync_to_engine(report: dict[str, Any], product_id: str, dataset_ref: str = "
                     "persona_dist": r["persona_dist"],
                     "lifecycle_dist": r["lifecycle_dist"],
                     "pay_intent_ratio": r["pay_intent_ratio"],
+                    "topic_lifecycle": r["topic_lifecycle"],
                 },
                 confidence=round(conf, 2),
                 evidence_quality=EvidenceQuality.MEDIUM,
@@ -335,6 +342,7 @@ def sync_to_engine(report: dict[str, Any], product_id: str, dataset_ref: str = "
                 opportunity_kind="demand_first",
                 production_need=(
                     f"面向{r['top_persona']}的「{cluster}」内容；生命周期定位：{r['top_lifecycle']}阶段"
+                    f"；选题生命周期：{r['topic_lifecycle']}（{r['lifecycle_play']}）"
                 ),
                 recommended_action=(
                     "按 AVS 排序纳入选题；配完整做法钩子（要提示词的喊我）" if r["verdict"] == "recommend" else "暂缓或小样本试做"
@@ -362,19 +370,46 @@ def sync_to_engine(report: dict[str, Any], product_id: str, dataset_ref: str = "
 # 数据入口：读 B 站采集 jsonl
 # ---------------------------------------------------------------------------
 
-def load_bili_comments(data_dir: Path | None = None) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], str]:
-    data_dir = data_dir or (PROJECT_ROOT / "data" / "comments")
+DEFAULT_DATA_DIRS = [PROJECT_ROOT / "data" / "comments", PROJECT_ROOT / "data" / "automation" / "comments"]
+
+
+def load_bili_comments(data_dirs: list[Path] | None = None) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], str]:
+    """读多个采集目录（默认主扫描目录 + 自动化目录），合并后交给 analyze_comments。
+    同一 comment_id 多轮采集重复 → analyze 内按 comment_id 去重。"""
+    dirs = [Path(d) for d in (data_dirs or DEFAULT_DATA_DIRS)]
     video_map: dict[str, dict[str, Any]] = {}
     rows: list[dict[str, Any]] = []
     dataset_parts: list[str] = []
-    for path in sorted(data_dir.glob("contents_*.jsonl")):
-        dataset_parts.append(path.name)
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                v = json.loads(line)
-                video_map[str(v.get("video_id"))] = v
-    for path in sorted(data_dir.glob("comments_*.jsonl")):
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                rows.append(json.loads(line))
-    return rows, video_map, "data/comments: " + ",".join(dataset_parts[-2:])
+    for data_dir in dirs:
+        for path in sorted(data_dir.glob("contents_*.jsonl")):
+            dataset_parts.append(f"{data_dir.name}/{path.name}")
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    v = json.loads(line)
+                    video_map[str(v.get("video_id"))] = v
+        for path in sorted(data_dir.glob("comments_*.jsonl")):
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    rows.append(json.loads(line))
+    return rows, video_map, " + ".join(dataset_parts[-4:])
+
+
+def refresh_default(product_id: str = "youvibe", data_dirs: list[Path] | None = None) -> dict[str, Any]:
+    """数据飞轮自动刷新：全量数据 → 受众分析 → 写回引擎（信号+机会，幂等）。
+    供采集周期结束后调用；失败由调用方色 try/except 兑底，不影响主流程。"""
+    rows, video_map, dataset_ref = load_bili_comments(data_dirs)
+    if not rows:
+        return {"ok": False, "error": "no data"}
+    report = analyze_comments(rows, video_map)
+    sync = sync_to_engine(report, product_id, dataset_ref=dataset_ref)
+    top = [
+        {"cluster": c["cluster"], "avs": c["avs"]["score"], "lifecycle": c["topic_lifecycle"], "verdict": c["verdict"]}
+        for c in report["clusters"][:3]
+    ]
+    return {
+        "ok": True,
+        "clusters": len(report["clusters"]),
+        "total_rows": len(rows),
+        "top": top,
+        "sync": sync,
+    }
