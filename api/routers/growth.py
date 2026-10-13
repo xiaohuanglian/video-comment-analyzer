@@ -115,6 +115,22 @@ def get_opportunities(product_id: str) -> Dict[str, Any]:
     return {"opportunities": [o.model_dump() for o in store.list_opportunities(product_id)]}
 
 
+@router.post("/products/{product_id}/audience/analyze")
+def analyze_audience(product_id: str, sync: bool = True) -> Dict[str, Any]:
+    """受众智能层（画像×生命周期×AVS）：跑 B 站采集数据的聚类级分析，可选写回引擎。"""
+    from api.services.growth import audience
+
+    _require_product(product_id)
+    rows, video_map, dataset_ref = audience.load_bili_comments()
+    if not rows:
+        raise HTTPException(status_code=400, detail="data/comments 下没有采集数据，先跑一轮 B 站采集")
+    report = audience.analyze_comments(rows, video_map)
+    result: Dict[str, Any] = {"report": report, "dataset_ref": dataset_ref, "total_rows": len(rows)}
+    if sync:
+        result["sync"] = audience.sync_to_engine(report, product_id, dataset_ref=dataset_ref)
+    return result
+
+
 @router.post("/products/{product_id}/opportunities")
 def post_opportunity(product_id: str, opp: GrowthOpportunity) -> Dict[str, Any]:
     _require_product(product_id)
