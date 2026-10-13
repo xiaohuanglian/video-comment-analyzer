@@ -28,7 +28,7 @@ except Exception:  # pragma: no cover
     Page = None  # type: ignore[assignment]
     Browser = None  # type: ignore[assignment]
 
-from api.services.insight.xhs_reply_sender import ReplySendError, _connect_browser, _pick_context
+from api.services.outreach.xhs_reply_sender import ReplySendError, _connect_browser, _pick_context
 from tools.human_behavior import (
     dwell_seconds,
     human_pause,

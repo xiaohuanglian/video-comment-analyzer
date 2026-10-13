@@ -7,7 +7,7 @@ from api.services.insight.analyzer import run_analysis_batch
 from api.services.insight.candidates import build_candidates, build_contact_reason
 from api.services.insight.export import build_candidates_csv, build_outreach_csv
 from api.services.insight.ingestion import ingest_files
-from api.services.insight.outreach import generate_outreach_drafts
+from api.services.outreach.outreach import generate_outreach_drafts
 from api.services.insight.schemas import FieldMapping, RunConfig
 from api.services.insight.storage import create_run, load_candidates, load_outreach, save_candidates, save_outreach
 from api.services.insight.statistics import compute_candidate_score
