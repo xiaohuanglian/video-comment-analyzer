@@ -86,15 +86,22 @@ _RE_EXCLAIM = re.compile(
     r"打卡|前排|来了|222|hhh|666|顶|赞)[!！。～~\s]*$|^\d+$"
 )
 
+# 反问/抒情/赞叹（不是提问）
+_RE_RHETORIC = re.compile(r"没人(夸|说|提|注意)|还要什么自行车|难道说?|我从没觉得|多愁善感|破防|泪目|哭死")
 # A 档：看得到学不会（问工具/怎么做）
 _RE_HOWTO = re.compile(
     r"什么(软件|工具|app|模型|程序|网站)|哪个(软件|工具|app|平台)|"
-    r"怎么(做|弄|用|生成|实现|做到|衔接|设置|弄的|来的)|如何(做|用|实现|生成)|"
-    r"用什么|求(教|指导|推荐)|做法|步骤|流程"
+    r"怎么(做|弄|用|生成|实现|做到|衔接|设置|入门|开始|学)|如何(做|用|实现|生成|入门)|"
+    r"用什么|求(教|指导|推荐)|怎么做同款|怎么才能"
 )
 # B 档：想动手缺路径（新手自述，需带提问感）
 _RE_NEWBIE = re.compile(r"新手|小白|零基础|入坑|萌新|手残|想学|想试|我也想|入门")
 _RE_QUESTION_CUE = re.compile(r"？|\?|吗|呢|什么|怎么|哪|求|请教|能不能|有没有")
+# 求助动词（弱疑问必须同时命中，否则视为现后讨论）
+_RE_SEEKING = re.compile(
+    r"想学|想做|想试|想用|想了解|想知道|好奇|请教|请问|求教|求助|打算|想上手|想入|"
+    r"能不能|可不可以|有没有办法|怎么才能|能实现|能做"
+)
 
 
 def classify_comment(text: str) -> tuple[str, str]:
@@ -109,6 +116,7 @@ def classify_comment(text: str) -> tuple[str, str]:
         (_RE_DEBUG, "个案报错"),
         (_RE_RESOURCE_BEG, "求UP私有资源"),
         (_RE_DIRECTOR, "导演式提问"),
+        (_RE_RHETORIC, "反问/抒情"),
         (_RE_AI_WATER, "AI水评"),
         (_RE_EXCLAIM, "纯感叹"),
     ):
@@ -118,9 +126,13 @@ def classify_comment(text: str) -> tuple[str, str]:
         return "target_a", "问工具/怎么做"
     if _RE_NEWBIE.search(text) and _RE_QUESTION_CUE.search(text):
         return "target_b", "新手求路径"
-    if _RE_QUESTION_CUE.search(text) and re.search(r"提示词|skill|软件|工具|模型|视频|动画|修图|配音", text):
-        # 带实体词的弱疑问，交给人工闸门细看
-        return "target_b", "弱疑问带实体"
+    if (
+        _RE_QUESTION_CUE.search(text)
+        and _RE_SEEKING.search(text)
+        and re.search(r"提示词|skill|软件|工具|模型|视频|动画|修图|配音|数学|学习|笔记", text)
+    ):
+        # 弱疑问 + 明确求助意图 + 实体词，交给人工闸门细看
+        return "target_b", "想动手求路径"
     return "excluded", "无提问"
 
 
@@ -486,16 +498,26 @@ async def draft_with_llm(item: dict[str, Any]) -> str:
     client = build_openai_client(settings.get("base_url", ""), settings["api_key"])
 
     def _call() -> str:
-        completion = client.chat.completions.create(
-            model=settings.get("model_name") or "deepseek-chat",
-            messages=[
-                {"role": "system", "content": BILI_AUTO_SYSTEM_PROMPT},
-                {"role": "user", "content": _llm_user_message(item)},
-            ],
-            temperature=0.7,
-            max_tokens=300,
-        )
-        return (completion.choices[0].message.content or "").strip()
+        last_finish = ""
+        for max_tokens in (2000, 6000):
+            completion = client.chat.completions.create(
+                model=settings.get("model_name") or "deepseek-chat",
+                messages=[
+                    {"role": "system", "content": BILI_AUTO_SYSTEM_PROMPT},
+                    {"role": "user", "content": _llm_user_message(item)},
+                ],
+                temperature=0.7,
+                # 推理型模型会先在 reasoning_content 里消耗 token，
+                # 上限太小会导致正文尚未生成就被 length 截断（content=None）
+                max_tokens=max_tokens,
+            )
+            content = (completion.choices[0].message.content or "").strip()
+            last_finish = completion.choices[0].finish_reason or ""
+            if content:
+                return content
+        if last_finish == "length":
+            raise RuntimeError("推理 token 耗尽仍未出正文")
+        return ""
 
     try:
         return await asyncio.to_thread(_call)
