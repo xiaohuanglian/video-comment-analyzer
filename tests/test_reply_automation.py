@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from api.services.insight import reply_automation as auto
+from api.services.outreach import reply_automation as auto
 
 
 # ---------------------------------------------------------------------------

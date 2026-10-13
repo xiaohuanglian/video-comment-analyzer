@@ -61,9 +61,9 @@ from api.services.insight.task_runner import is_running, reconcile_thread_state,
 from api.services.insight.research_matching import parse_research_targets
 from api.services.insight.candidates import build_candidates, merge_candidate_updates
 from api.services.insight.candidate_schemas import ReplyControl
-from api.services.insight.outreach import generate_outreach_drafts, merge_outreach_update
-from api.services.insight.reply_runner import is_reply_running, start_reply_run, stop_reply_run
-from api.services.insight.outreach_prompts import DEFAULT_BASE_TEMPLATE
+from api.services.outreach.outreach import generate_outreach_drafts, merge_outreach_update
+from api.services.outreach.reply_runner import is_reply_running, start_reply_run, stop_reply_run
+from api.services.outreach.outreach_prompts import DEFAULT_BASE_TEMPLATE
 from api.services.insight.query_filters import paginate_candidates, paginate_results_iter
 from api.services.insight.trial_report import build_trial_report
 
@@ -1335,7 +1335,7 @@ async def start_outreach_reply(run_id: str, body: OutreachReplyStartRequest) -> 
     ordered_keys = sorted(wanted, key=lambda k: score_by_key.get(k, 0), reverse=True)
 
     # 频率默认值：未显式指定时按平台取风控安全值，多平台取最保守（间隔最大、日限最小）
-    from api.services.insight.reply_style import resolve_platform_defaults
+    from api.services.outreach.reply_style import resolve_platform_defaults
 
     defaults: dict[str, int] = {}
     for entry in doc.entries:

@@ -18,7 +18,7 @@ import threading
 from datetime import datetime, timedelta
 from typing import Callable, Dict, List, Optional
 
-from .candidate_schemas import OutreachDocument, ReplyControl
+from ..insight.candidate_schemas import OutreachDocument, ReplyControl
 from .reply_sender import ReplySendError, send_reply
 
 Sender = Callable[..., str]
@@ -102,7 +102,7 @@ class ReplyRun:
 
     # -- internals ---------------------------------------------------------
     def _save(self, doc: OutreachDocument) -> None:
-        from .storage import save_outreach
+        from ..insight.storage import save_outreach
 
         doc.updated_at = _iso()
         save_outreach(self.run_id, doc)
@@ -126,7 +126,7 @@ class ReplyRun:
         return not self.stop_event.wait(seconds)
 
     def _loop(self) -> None:
-        from .storage import load_outreach
+        from ..insight.storage import load_outreach
 
         try:
             doc = load_outreach(self.run_id)
@@ -247,8 +247,8 @@ class ReplyRun:
 
     def _mark_candidate_contacted(self, user_key: str) -> None:
         try:
-            from .candidates import merge_candidate_updates
-            from .storage import load_candidates, save_candidates
+            from ..insight.candidates import merge_candidate_updates
+            from ..insight.storage import load_candidates, save_candidates
 
             candidates = load_candidates(self.run_id)
             if merge_candidate_updates(candidates, user_key=user_key, contact_status="contacted"):

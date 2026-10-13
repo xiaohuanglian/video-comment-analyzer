@@ -9,7 +9,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from api.services.insight import reply_automation as auto
+from api.services.outreach import reply_automation as auto
 
 router = APIRouter(prefix="/automation", tags=["automation"])
 

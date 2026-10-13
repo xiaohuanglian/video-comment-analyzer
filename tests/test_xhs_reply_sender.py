@@ -13,9 +13,9 @@ from api.services.insight.field_mapping import (
     derive_xhs_links,
     parse_xhs_targets,
 )
-from api.services.insight.outreach import _apply_candidate_targets
-from api.services.insight.reply_sender import platform_capability
-from api.services.insight.xhs_reply_sender import ReplySendError, send_xhs_reply_async
+from api.services.outreach.outreach import _apply_candidate_targets
+from api.services.outreach.reply_sender import platform_capability
+from api.services.outreach.xhs_reply_sender import ReplySendError, send_xhs_reply_async
 
 
 # ---------------------------------------------------------------------------

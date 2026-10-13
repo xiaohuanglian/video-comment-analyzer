@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 
-from .candidate_schemas import CandidateRecord
+from ..insight.candidate_schemas import CandidateRecord
 
 # Domain-neutral purpose: write a genuinely helpful public reply under someone
 # else's content, aimed at one specific commenter.

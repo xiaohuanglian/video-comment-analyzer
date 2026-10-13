@@ -114,7 +114,7 @@ def automation_page():
 @app.on_event("startup")
 async def start_reply_automation_tasks():
     """B 站回复自动化：采集循环 + 受控发送循环（内部检查 enabled 开关）。"""
-    from api.services.insight.reply_automation import start_background_tasks
+    from api.services.outreach.reply_automation import start_background_tasks
 
     start_background_tasks()
 

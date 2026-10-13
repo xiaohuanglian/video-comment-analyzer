@@ -12,8 +12,8 @@ from api.services.insight.candidate_schemas import (
     ReplyControl,
 )
 from api.services.insight.field_mapping import parse_bilibili_targets
-from api.services.insight.outreach import merge_outreach_update
-from api.services.insight.reply_runner import (
+from api.services.outreach.outreach import merge_outreach_update
+from api.services.outreach.reply_runner import (
     ReplyRun,
     ReplySendError,
     seconds_until_window_open,
@@ -202,7 +202,7 @@ def test_stop_reply_run_is_safe_when_idle():
 
 
 def _is_done(run_id: str) -> bool:
-    from api.services.insight.reply_runner import is_reply_running
+    from api.services.outreach.reply_runner import is_reply_running
 
     if is_reply_running(run_id):
         return False

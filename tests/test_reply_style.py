@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from api.services.insight.reply_style import (
+from api.services.outreach.reply_style import (
     PLATFORM_REPLY_DEFAULTS,
     check_reply_style,
     resolve_platform_defaults,

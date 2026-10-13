@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from api.services.insight.candidate_schemas import CandidateRecord
-from api.services.insight.outreach_prompts import (
+from api.services.outreach.outreach_prompts import (
     DEFAULT_BASE_TEMPLATE,
     OUTREACH_SYSTEM_PROMPT,
     build_outreach_user_message,
