@@ -87,6 +87,20 @@ app.include_router(growth_router, prefix="/api")
 app.include_router(automation_router, prefix="/api")
 
 
+@app.middleware("http")
+async def html_no_cache(request, call_next):
+    """HTML 入口页强制每次向服务器验证（ETag 协商），避免浏览器启发式缓存
+    服务旧页面导致导航与新增页面不同步（2026-10-13 实际事故）；
+    JS/CSS 仍靠 ?v= 版本号 bust。"""
+    from fastapi import Request
+
+    response = await call_next(request)
+    ctype = response.headers.get("content-type", "")
+    if ctype.startswith("text/html"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 @app.get("/growth", include_in_schema=False)
 def growth_page():
     return FileResponse(WEB_TEMPLATES_DIR / "growth.html")
