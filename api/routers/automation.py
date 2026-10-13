@@ -68,6 +68,7 @@ async def status() -> dict[str, Any]:
             "can_send": ok,
             "wait_reason": wait_reason,
             "cookie_cached": bool(auto._cached_cookie()),
+            "account": auto.cached_account_info(),
         },
     }
 

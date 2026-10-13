@@ -351,11 +351,14 @@ class AutomationStore:
         self.save()
 
     def mark_failed(self, item: dict[str, Any], error: str, retry_status: str = "approved") -> None:
-        item["status"] = retry_status
+        # 永久性错误不重试：等级不足/该评论不可回复/需绑手机——重试也不会成功
+        permanent = re.search(r"等级不足|不可回复|绑定手机|评论不存在|已被删除", str(error))
         item["send_error"] = str(error)[:300]
         item["attempts"] = int(item.get("attempts") or 0) + 1
-        if item["attempts"] >= 3:
+        if permanent or item["attempts"] >= 3:
             item["status"] = "failed"
+        else:
+            item["status"] = retry_status
         # 失败后退避 10 分钟再试，避免连续撞风控
         self._state["sender"]["next_allowed_at"] = (
             datetime.now() + timedelta(minutes=10)
@@ -703,7 +706,7 @@ def _find_chromium_executable() -> Optional[str]:
 
 
 async def refresh_bili_cookie() -> str:
-    """启动 cdp_bili 档案浏览器抓一次 Cookie（含 bili_jct 才算有效）。"""
+    """启动 cdp_bili 档案浏览器抓一次 Cookie（含 bili_jct 才算有效），顺带记录登录账号信息（防扫错号）。"""
     from playwright.async_api import async_playwright
 
     launch_kwargs: dict[str, Any] = {
@@ -726,12 +729,48 @@ async def refresh_bili_cookie() -> str:
     cookie = "; ".join(pairs)
     if "bili_jct=" not in cookie:
         raise RuntimeError("B 站登录态失效（Cookie 缺少 bili_jct）：请先手动跑一次 B 站采集扫码登录")
+    # 顺带取登录账号信息（昵称/等级），监工台展示，防止扫错号
+    account = await asyncio.to_thread(_fetch_account_info, cookie)
     COOKIE_PATH.parent.mkdir(parents=True, exist_ok=True)
     COOKIE_PATH.write_text(
-        json.dumps({"cookie": cookie, "fetched_at": datetime.now().isoformat(timespec="seconds")}, ensure_ascii=False),
+        json.dumps(
+            {
+                "cookie": cookie,
+                "fetched_at": datetime.now().isoformat(timespec="seconds"),
+                "account": account,
+            },
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
     return cookie
+
+
+def _fetch_account_info(cookie: str) -> dict[str, Any]:
+    """用 Cookie 调 nav 接口取当前登录账号昵称与等级。"""
+    try:
+        import httpx
+
+        resp = httpx.get(
+            "https://api.bilibili.com/x/web-interface/nav",
+            headers={"Cookie": cookie, "User-Agent": "Mozilla/5.0"},
+            timeout=10.0,
+        )
+        data = resp.json().get("data") or {}
+        level = ((data.get("level_info") or {}).get("current_level")) or 0
+        return {"uname": str(data.get("uname") or ""), "mid": data.get("mid") or 0, "level": int(level)}
+    except Exception:  # noqa: BLE001
+        return {"uname": "", "mid": 0, "level": 0}
+
+
+def cached_account_info() -> dict[str, Any]:
+    if COOKIE_PATH.exists():
+        try:
+            data = json.loads(COOKIE_PATH.read_text(encoding="utf-8"))
+            return data.get("account") or {"uname": "", "mid": 0, "level": 0}
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {"uname": "", "mid": 0, "level": 0}
 
 
 # ---------------------------------------------------------------------------

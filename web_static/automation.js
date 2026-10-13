@@ -73,7 +73,12 @@ function renderStatus() {
   const errLine = sender.last_error
     ? `<div class="au-side-row"><span style="color:#991b1b">⚠️ 发送阻塞</span><span style="color:#991b1b">${esc(sender.last_error)}</span></div>`
     : "";
+  const acc = sender.account || {};
+  const accLine = acc.uname
+    ? `<div class="au-side-row"><span>当前登录账号</span><span><b>${esc(acc.uname)}</b> Lv${acc.level || "?"}${acc.level && acc.level < 2 ? ' <span style="color:#854d0e">（等级低，部分视频可能无法评论）</span>' : ""}</span></div>`
+    : "";
   document.getElementById("sender-panel").innerHTML = `
+    ${accLine}
     <div class="au-side-row"><span>今日已发</span><b>${sender.sent_today || 0} / ${s.config.daily_send_limit}</b></div>
     <div class="au-side-row"><span>发送窗口</span><span>${s.config.send_window_start}-${s.config.send_window_end}</span></div>
     <div class="au-side-row"><span>状态</span><span>${sender.can_send ? "✅ 可发送" : "⏳ " + esc(sender.wait_reason || "等待中")}</span></div>
