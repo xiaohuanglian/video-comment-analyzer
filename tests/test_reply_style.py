@@ -61,6 +61,20 @@ class TestCheckReplyStyle:
         # 方法直接给到 + 归因于产品的写法是干净的
         assert check_reply_style("批量导出是支持的，只是入口藏得比较深，列表里多选后点导出就行") == []
 
+    def test_pointing_phrasing_banned(self):
+        # 2026-10-13 真实案例：回复要给便利，不指路不提博主
+        cases = [
+            "博主自己在评论区也说过，可以换 gpt 试试",
+            "具体就在这条笔记评论区往下翻",
+            "好多人都在评论区找",
+            "你自己去搜一下就有了",
+        ]
+        for text in cases:
+            assert check_reply_style(text), text
+        # 答案直接给全的写法是干净的
+        assert check_reply_style("可灵的参数文档官方是有的，klingai.com 首页点文档中心，参数说明和 API 文档都在里面") == []
+        assert check_reply_style("gpt 就能做，照片加提示词直接出，不用装别的软件。vaeen ai design 这个网站也能出同类效果") == []
+
     def test_empty_text(self):
         assert check_reply_style("") == []
 

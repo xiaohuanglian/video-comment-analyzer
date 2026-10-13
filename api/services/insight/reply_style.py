@@ -73,6 +73,14 @@ _CONDESCENDING_PATTERNS: list[tuple[str, str]] = [
     (r"不怪你|你细品|你品品", "居高临下表述，删除"),
 ]
 
+# 指路式/元评论（回复的目的是给便利：答案直接给全，不把工作推给对方）
+# 2026-10-13 用户真实案例反馈固化
+_POINTING_PATTERNS: list[tuple[str, str]] = [
+    (r"博主|up主|楼主|up本人", "提到博主（答案直接给，不借助博主转述）"),
+    (r"(往下|回头|自己|去)翻|评论区里翻|自己(去)?(找|看|搜)一下", "指路式表述（把查找工作推给对方），答案直接给全"),
+    (r"(好多人|很多人|大家)都?在?(评论区)?(找|问|求|蹲)", "无信息量元评论，删除"),
+]
+
 
 def check_reply_style(text: str) -> List[str]:
     """返回硬禁令命中列表（空列表 = 干净）。"""
@@ -98,6 +106,10 @@ def check_reply_style(text: str) -> List[str]:
             warnings.append(label)
 
     for pattern, label in _CONDESCENDING_PATTERNS:
+        if re.search(pattern, text):
+            warnings.append(label)
+
+    for pattern, label in _POINTING_PATTERNS:
         if re.search(pattern, text):
             warnings.append(label)
 
