@@ -27,6 +27,7 @@ h2 { font-size: 17px; margin-bottom: 12px; }
 h3 { font-size: 14px; margin-bottom: 8px; }
 .sub, .count { font-size: 12px; color: var(--muted); font-weight: normal; }
 .view { display: flex; flex-direction: column; gap: 16px; }
+.view[hidden] { display: none; }  /* 类选择器的 display 会覆盖 hidden 属性的 UA 样式，必须显式赢回来，否则导航切换全部失效 */
 
 .demo-banner { background: #fef3c7; color: #7c2d12; border: 1px solid #fcd34d; border-radius: 10px; padding: 8px 14px; margin-bottom: 14px; font-size: 13px; }
 .warn-banner { background: #fff7ed; color: var(--warn); border: 1px solid #fdba74; border-radius: 10px; padding: 8px 14px; font-size: 13px; }
