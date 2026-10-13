@@ -292,3 +292,17 @@ class TestAutomationStore:
         store.add_items([_item("c1", draft="旧草稿")])
         item = store.decide("c_c1", "approve", draft="新草稿，答案直接给全步骤。")
         assert item["draft"] == "新草稿，答案直接给全步骤。"
+
+class TestRetractAndVisibility:
+    def test_retract_approved_back_to_pending(self, store):
+        store.add_items([_item("c1")])
+        store.decide("c_c1", "approve", draft="答案直接给全的测试草稿。")
+        back = store.retract("c_c1")
+        assert back and back["status"] == "pending_review"
+        # 撤回后可再次批准
+        again = store.decide("c_c1", "approve", draft="修改后的草稿，步骤给全。")
+        assert again and again["status"] == "approved"
+
+    def test_retract_only_works_on_approved(self, store):
+        store.add_items([_item("c1")])
+        assert store.retract("c_c1") is None  # pending 状态不可撤回
