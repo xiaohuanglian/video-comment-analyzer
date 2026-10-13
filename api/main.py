@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 
-from .routers import crawler_router, data_router, websocket_router, bilibili_router, creator_router, analysis_router, growth_router
+from .routers import crawler_router, data_router, websocket_router, bilibili_router, creator_router, analysis_router, growth_router, automation_router
 from .services.platform_capabilities import PLATFORM_CAPABILITIES
 from .services.browser_check import probe_browser_launch
 
@@ -84,11 +84,25 @@ app.include_router(bilibili_router, prefix="/api")
 app.include_router(creator_router, prefix="/api")
 app.include_router(analysis_router, prefix="/api")
 app.include_router(growth_router, prefix="/api")
+app.include_router(automation_router, prefix="/api")
 
 
 @app.get("/growth", include_in_schema=False)
 def growth_page():
     return FileResponse(WEB_TEMPLATES_DIR / "growth.html")
+
+
+@app.get("/automation", include_in_schema=False)
+def automation_page():
+    return FileResponse(WEB_TEMPLATES_DIR / "automation.html")
+
+
+@app.on_event("startup")
+async def start_reply_automation_tasks():
+    """B 站回复自动化：采集循环 + 受控发送循环（内部检查 enabled 开关）。"""
+    from api.services.insight.reply_automation import start_background_tasks
+
+    start_background_tasks()
 
 
 # 产品重设计工作台（Stage B：/growth-v2 为新版入口；/growth 旧页保留作回退）
