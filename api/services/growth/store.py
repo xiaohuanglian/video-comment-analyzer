@@ -279,11 +279,34 @@ def list_experiments(product_id: str) -> List[GrowthExperiment]:
 
 def upsert_experiment(exp: GrowthExperiment) -> GrowthExperiment:
     get_product_or_raise(exp.product_id)
+    _guard_frozen_variants(exp)
     now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
     exp = exp.model_copy(update={"updated_at": now, "created_at": exp.created_at or now})
     items = _upsert(list_experiments(exp.product_id), exp, lambda e: e.experiment_id)
     _save_collection(exp.product_id, "experiments", items)
     return exp
+
+
+def _guard_frozen_variants(new_exp: GrowthExperiment) -> None:
+    """冻结不可变的技术强制（P0-A）：已 _frozen / _publish_binding 的变体字节级不可改。
+    合法重做路径：新 variant_id（redo 政策，旧记录永久保留）。"""
+    old_by_id: Dict[str, Dict[str, Any]] = {
+        v.get("variant_id"): v
+        for e in list_experiments(new_exp.product_id)
+        if e.experiment_id == new_exp.experiment_id
+        for v in e.content_variants
+    }
+    for v in new_exp.content_variants:
+        vid = v.get("variant_id")
+        old = old_by_id.get(vid)
+        if not old:
+            continue  # 新变体（redo）→ 放行
+        if old.get("_frozen") and v.get("_frozen") != old["_frozen"]:
+            raise ValueError(
+                f"variant {vid} 已冻结，禁止修改（含 meta 字段）；重做请创建新 variant_id，旧记录永久保留"
+            )
+        if old.get("_publish_binding") and v.get("_publish_binding") != old["_publish_binding"]:
+            raise ValueError(f"variant {vid} 的发布绑定不可修改；错绑走新变体 redo")
 
 
 def list_learnings(product_id: str) -> List[LearningRecord]:

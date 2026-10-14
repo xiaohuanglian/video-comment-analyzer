@@ -40,6 +40,10 @@ from .models import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
+# 模型版本（P1 晋升协议）：AVS 权重/聚类正则/画像规则的当前版本。
+# 任何 promoted 变更（走 promotion.py holdout 验证）→ 版本号 +1，旧预测凭 model_version 公平对比。
+AUDIENCE_MODEL_VERSION = "v1"
+
 # ---------------------------------------------------------------------------
 # 需求聚类主题（含商业匹配 M 与理由）——M 编码 YouVibe 的价值主张映射
 # ---------------------------------------------------------------------------
