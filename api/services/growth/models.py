@@ -347,6 +347,17 @@ class LearningRecord(BaseModel):
     next_adjustments: List[str] = Field(default_factory=list)
     # 人工反馈：verdict=accepted/rejected/modified，reason 必填；是可推翻的经验而非铁律。
     human_feedback: Optional[Dict[str, str]] = None
+    # --- 晋升协议（P1，2026-10-14 用户裁决 5/6/7）---
+    # stage: observation（种子）→ hypothesis（发现窗口内提出）→ promoted（仅凭未来 holdout 数据）/ refuted
+    stage: Literal["observation", "hypothesis", "promoted", "refuted"] = "observation"
+    # 学习对象分离：topic（选题模型）/ creative（包装）/ delivery（交付）/ audience / distribution / platform
+    learning_scope: Literal["topic", "creative", "delivery", "audience", "distribution", "platform"] = "topic"
+    # 晋升所需未来一致样本数——声明制，不写死全局 k（大效果 3-5 个够，小权重调 20 个都嫌少）
+    evidence_requirement: int = 0
+    # 发现窗口截止日：此日期之后的数据才有资格验证该假设（in-sample 防护）
+    discovery_window_end: str = ""
+    # 针对的模型/规则目标，如 "avs.potential_weight" / "persona.student_rules"
+    model_target: str = ""
     created_at: str = ""
 
 

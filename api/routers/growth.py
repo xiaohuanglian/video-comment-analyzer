@@ -563,3 +563,106 @@ def post_agent_stop(product_id: str, session_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="会话不在运行中")
     orch.request_cancel()
     return {"ok": True}
+
+
+# --- 冻结协议 + 漏斗诊断 + 晋升协议（P0/P1，2026-10-14）-----------------------
+
+
+@router.post("/products/{product_id}/experiments/{experiment_id}/variants/{variant_id}/freeze")
+def post_freeze_prediction(product_id: str, experiment_id: str, variant_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    """冻结预测（发布前必须）：创意包 + 区间预测 + 赌注 → payload_hash 盖章，此后不可改。"""
+    from api.services.growth import prediction_freeze as pf
+
+    _require_product(product_id)
+    try:
+        return {"frozen": pf.freeze_predictions(product_id, experiment_id, variant_id, body.get("payload") or {})}
+    except pf.FreezeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post("/products/{product_id}/experiments/{experiment_id}/variants/{variant_id}/bind-published-asset")
+def post_bind_asset(product_id: str, experiment_id: str, variant_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    """发布时绑定实际资产：creative_asset_hash（成品哈希）+ account_state_version + publish_time。"""
+    from api.services.growth import prediction_freeze as pf
+
+    _require_product(product_id)
+    try:
+        return {"binding": pf.bind_published_asset(product_id, experiment_id, variant_id, body)}
+    except pf.FreezeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.get("/products/{product_id}/experiments/{experiment_id}/integrity")
+def get_integrity(product_id: str, experiment_id: str) -> Dict[str, Any]:
+    """完整性校验：重算哈希，篡改样本降级为参考（不入校准池）。"""
+    from api.services.growth import prediction_freeze as pf
+
+    _require_product(product_id)
+    return pf.verify_integrity(product_id, experiment_id)
+
+
+@router.post("/products/{product_id}/experiments/{experiment_id}/diagnose")
+def post_diagnose(product_id: str, experiment_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    """漏斗诊断：actual 观测 + 冻结预测 → 分层停诊 + topic/creative 分离判定。"""
+    from api.services.growth import funnel
+
+    _require_product(product_id)
+    exp = next((e for e in store.list_experiments(product_id) if e.experiment_id == experiment_id), None)
+    if not exp:
+        raise HTTPException(status_code=404, detail=f"实验 {experiment_id} 不存在")
+    variant_id = body.get("variant_id")
+    frozen_pred = None
+    for v in exp.content_variants:
+        if v.get("_frozen") and (not variant_id or v.get("variant_id") == variant_id):
+            frozen_pred = v["_frozen"]["predictions"]
+            break
+    if frozen_pred is None:
+        raise HTTPException(status_code=400, detail="该实验没有冻结预测——先 freeze 再 diagnose")
+    observations = body.get("observations") or []
+    if body.get("use_stored"):
+        observations = [
+            {"name": o.name, "value": o.value}
+            for o in store.list_observations(product_id, experiment_id)
+        ]
+    return funnel.diagnose(observations, frozen_pred, own_baseline=body.get("own_baseline"))
+
+
+@router.post("/products/{product_id}/hypotheses")
+def post_hypothesis(product_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    """注册假设（裁决5/6）：声明 learning_scope / evidence_requirement / discovery_window_end。"""
+    from api.services.growth import promotion as pr
+    from api.services.growth.models import LearningRecord
+
+    _require_product(product_id)
+    body = {**body, "product_id": product_id, "stage": "hypothesis"}
+    try:
+        lr = pr.register_hypothesis(LearningRecord(**body))
+        return {"learning": lr.model_dump()}
+    except pr.PromotionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+@router.post("/products/{product_id}/hypotheses/{learning_id}/validate")
+def post_validate_hypothesis(product_id: str, learning_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    """holdout 验证：只收发现窗口之后的结果（in-sample 拒收）。"""
+    from api.services.growth import promotion as pr
+
+    _require_product(product_id)
+    try:
+        return pr.validate_hypothesis(product_id, learning_id, body.get("outcomes") or [])
+    except pr.PromotionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+@router.post("/products/{product_id}/adjustment-check")
+def post_adjustment_check(product_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    """样本量纪律闸门（裁决7）：改模型前先问准不准。"""
+    from api.services.growth import promotion as pr
+
+    _require_product(product_id)
+    try:
+        return pr.check_adjustment_allowed(
+            product_id, body.get("kind", ""), model_target=body.get("model_target", "")
+        )
+    except pr.PromotionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
