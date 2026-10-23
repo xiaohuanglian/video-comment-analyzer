@@ -91,8 +91,6 @@ export VCA_OUTREACH_COOKIE="SESSDATA=...; bili_jct=...; ..."
 ├── api/                  # FastAPI 后端与业务服务（洞察/回复/选题/公众号/对话等）
 │   └── services/insight/ # 评论洞察 / 回复 / 内容选题
 ├── web_react/            # React 工作台面板（Vite+React+Tailwind+Radix，npm run dev @5173）
-├── web_templates/        # 旧版 Web 页面（8766 根路径）
-├── web_static/           # 旧版前端静态资源
 ├── media_platform/       # 各平台爬虫
 ├── tools/                # 浏览器与通用工具
 ├── data/                 # 采集与分析结果（已被 .gitignore 忽略）
