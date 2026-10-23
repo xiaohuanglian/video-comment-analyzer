@@ -6,17 +6,15 @@ Or: ./run_web.sh
 """
 import asyncio
 import os
-import re
 import sys
 import subprocess
 import uvicorn
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 
-from .routers import crawler_router, data_router, websocket_router, bilibili_router, creator_router, analysis_router, growth_router, automation_router, chat_router, topics_router, writer_router, youvibe_router, comments_router, strategy_router, wechat_router
+from .routers import crawler_router, data_router, websocket_router, bilibili_router, creator_router, analysis_router, growth_router, automation_router, chat_router, topics_router, writer_router, youvibe_router, comments_router, strategy_router, wechat_router, costs_router
 from .services.platform_capabilities import PLATFORM_CAPABILITIES
 from .services.browser_check import probe_browser_launch
 
@@ -50,9 +48,6 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 os.environ.setdefault("PYTHONUTF8", "1")
-
-WEB_TEMPLATES_DIR = APP_DIR / "web_templates"
-WEB_STATIC_DIR = APP_DIR / "web_static"
 
 app = FastAPI(
     title="视频评论分析 WebUI API",
@@ -92,30 +87,7 @@ app.include_router(youvibe_router, prefix="/api")
 app.include_router(comments_router, prefix="/api")
 app.include_router(strategy_router, prefix="/api")
 app.include_router(wechat_router, prefix="/api")
-
-
-@app.middleware("http")
-async def html_no_cache(request, call_next):
-    """HTML 入口页强制每次向服务器验证（ETag 协商），避免浏览器启发式缓存
-    服务旧页面导致导航与新增页面不同步（2026-10-13 实际事故）；
-    JS/CSS 仍靠 ?v= 版本号 bust。"""
-    from fastapi import Request
-
-    response = await call_next(request)
-    ctype = response.headers.get("content-type", "")
-    if ctype.startswith("text/html"):
-        response.headers["Cache-Control"] = "no-cache"
-    return response
-
-
-@app.get("/growth", include_in_schema=False)
-def growth_page():
-    return FileResponse(WEB_TEMPLATES_DIR / "growth.html")
-
-
-@app.get("/automation", include_in_schema=False)
-def automation_page():
-    return FileResponse(WEB_TEMPLATES_DIR / "automation.html")
+app.include_router(costs_router, prefix="/api")
 
 
 @app.on_event("startup")
@@ -126,35 +98,14 @@ async def start_reply_automation_tasks():
     start_background_tasks()
 
 
-# 产品重设计工作台（Stage B：/growth-v2 为新版入口；/growth 旧页保留作回退）
-app.mount("/proto", StaticFiles(directory=APP_DIR / "prototype", html=True), name="proto")
-app.mount("/growth-v2", StaticFiles(directory=APP_DIR / "prototype", html=True), name="growth_v2")
-
-
 @app.get("/")
-async def root_redirect():
-    """唯一入口：新版增长工作台。旧采集工作台在 /legacy。"""
-    from fastapi.responses import RedirectResponse
-
-    return RedirectResponse(url="/growth-v2/", status_code=307)
-
-
-@app.get("/legacy")
-async def serve_frontend():
-    """Return Chinese comment crawler UI（旧版采集/分析工作台，内嵌于新工作台）"""
-    index_path = WEB_TEMPLATES_DIR / "index.html"
-    if index_path.exists():
-        content = index_path.read_text(encoding="utf-8")
-        static_version = os.environ.get("VC_STATIC_VERSION") or str(int(index_path.stat().st_mtime))
-        content = re.sub(r"(comment|insight)\.js\?v=[^\"']+", lambda m: f"{m.group(1)}.js?v={static_version}", content)
-        from fastapi.responses import HTMLResponse
-
-        return HTMLResponse(content)
+async def root():
+    """8766 只提供 API;工作台面板在 web_react(默认 http://localhost:5173,/api 自动代理)。"""
     return {
-        "message": "视频评论分析 WebUI API",
-        "version": "1.0.0",
+        "message": "视频评论分析 API",
+        "workbench": "http://localhost:5173 (cd web_react && npm run dev)",
         "docs": "/docs",
-        "note": "WebUI not found, please ensure web_templates/index.html exists"
+        "health": "/api/health",
     }
 
 
@@ -293,10 +244,6 @@ async def get_config_options():
         ],
     }
 
-
-# Mount static resources - must be placed after all routes
-if WEB_STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(WEB_STATIC_DIR)), name="comment-static")
 
 if __name__ == "__main__":
     host = os.environ.get("WEB_HOST", "127.0.0.1")
