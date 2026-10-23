@@ -27,6 +27,11 @@ export default function CandidateCard({
         >
           {c.tier} 类
         </span>
+        {c.lane === 'engage' ? (
+          <span className="rounded bg-sky-100 px-1.5 py-0.5 font-medium text-sky-700">互动</span>
+        ) : (
+          <span className="rounded bg-orange-100 px-1.5 py-0.5 font-medium text-(--brand)">帮助</span>
+        )}
         {typeof c.worth === 'number' && c.worth > 0 && (
           <span
             className={clsx(
@@ -44,6 +49,9 @@ export default function CandidateCard({
         )}
         {c.screened_by === 'rules' && (
           <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-600">规则筛</span>
+        )}
+        {c.tier === 'A' && (
+          <span className="rounded bg-orange-50 px-1.5 py-0.5 text-orange-500">新鲜</span>
         )}
         <span className="truncate">{c.video_title}</span>
         <span className="ml-auto shrink-0">👍 {c.like_count}</span>

@@ -61,7 +61,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 # 筛选规则（与 docs/回复待审清单 及记分卡标准一致）
 # ---------------------------------------------------------------------------
 
-_RE_SPAM = re.compile(r"成品号|出售|低价出|代充|加[vV薇微]|微信号|带赚|稳赚|项目私|求关注")
+_RE_SPAM = re.compile(r"成品号|出售|低价出|代充|加[vV薇微]|微信号|带赚|稳赚|项目私|求关注|免费(分享|领取)|私我|滴滴")
 # 使用渠道类（用户规则：不碰）
 _RE_ACCESS = re.compile(
     r"用上|怎么用gpt|怎么用claude|如何用gpt|注册|翻墙|科学上网|镜像|账号|会员|充值|买.{0,4}号|"
@@ -89,8 +89,8 @@ _RE_EXCLAIM = re.compile(
     r"打卡|前排|来了|222|hhh|666|顶|赞)[!！。～~\s]*$|^\d+$"
 )
 
-# 反问/抒情/赞叹（不是提问）
-_RE_RHETORIC = re.compile(r"没人(夸|说|提|注意)|还要什么自行车|难道说?|我从没觉得|多愁善感|破防|泪目|哭死")
+# 反问/抒情/赞叹(纯修辞,无观点内容;「还要什么自行车」等习语常见于实质观点中,不再拦)
+_RE_RHETORIC = re.compile(r"没人(夸|说|提|注意)|我从没觉得|多愁善感|破防|泪目|哭死")
 # A 档：看得到学不会（问工具/怎么做）
 _RE_HOWTO = re.compile(
     r"什么(软件|工具|app|模型|程序|网站)|哪个(软件|工具|app|平台)|"
@@ -105,6 +105,18 @@ _RE_SEEKING = re.compile(
     r"想学|想做|想试|想用|想了解|想知道|好奇|请教|请问|求教|求助|打算|想上手|想入|"
     r"能不能|可不可以|有没有办法|怎么才能|能实现|能做"
 )
+# C 档：AI 相关实体（观点/讨论评论的召回判据；边界防误伤 said/hair 等）
+_RE_AI_ENTITY = re.compile(
+    r"(?<![a-zA-Z])[aA][iI](?![a-zA-Z])|人工智能|大模型|llm|智能体|agent|生成式|"
+    r"gpt|claude|gemini|opus|astra|deepseek|sora|veo|"
+    r"可灵|即梦|seedance|千问|qwen|豆包|智谱|nano banana|"
+    r"提示词|数字人|ai视频|ai动画|ai修图|ai绘图|ai画|ai配音|ai生成",
+    re.IGNORECASE,
+)
+
+
+# 营销号昵称(卖号/代充/接单工作室——评论再像样也不值得回)
+_RE_SPAM_NICK = re.compile(r"订阅|可开票|低价|代充|出号|回收|接单|工作室|招商|代理")
 
 
 def classify_comment(text: str) -> tuple[str, str]:
@@ -132,10 +144,14 @@ def classify_comment(text: str) -> tuple[str, str]:
     if (
         _RE_QUESTION_CUE.search(text)
         and _RE_SEEKING.search(text)
-        and re.search(r"提示词|skill|软件|工具|模型|视频|动画|修图|配音|数学|学习|笔记", text)
+        and re.search(r"提示词|skill|软件|工具|模型|视频|动画|修图|配音", text)
     ):
         # 弱疑问 + 明确求助意图 + 实体词，交给人工闸门细看
+        # (实体表已去掉 数学/学习/笔记——离域提问由 LLM 精筛判 lane=skip 拦下)
         return "target_b", "想动手求路径"
+    if len(text) >= 12 and _RE_AI_ENTITY.search(text):
+        # C 档:AI 相关且有实质内容的观点/体验/讨论——不求助也值得互动接话
+        return "target_c", "AI相关观点/讨论"
     return "excluded", "无提问"
 
 
@@ -416,11 +432,16 @@ def build_candidates(
         if cid in processed_ids:
             funnel["dedup"] += 1
             continue
+        nickname = str(row.get("nickname") or "")
+        if _RE_SPAM_NICK.search(nickname):
+            funnel["excluded"] += 1
+            continue  # 营销号昵称:卖订阅/代充/接单,评论再像样也不回
         text = str(row.get("content") or "").strip()
         status, signal = classify_comment(text)
         if status == "excluded":
             funnel["excluded"] += 1
             continue
+        lane = "help" if status in ("target_a", "target_b") else "engage"
         try:
             ts = int(row.get("create_time") or 0)
         except (TypeError, ValueError):
@@ -452,6 +473,7 @@ def build_candidates(
                 "age_hours": round(age_hours, 1),
                 "signal": signal,
                 "tier": tier,
+                "lane": lane,
                 "worth": 0,
                 "intent": "",
                 "match_reason": signal,
@@ -482,29 +504,26 @@ def build_candidates(
 _DEFAULT_NICHE = "用 AI 做视频/动画/图片内容的实战教程,只讲能落地的做法"
 _DEFAULT_AUDIENCE = "想自己动手用 AI 做内容(视频/动画/图)的新手和创作者"
 
-LLM_SCREEN_PROMPT = """你是B站评论区「值得回复的人」的精筛助手。回复名额有限,只留给最值得帮的人。
+LLM_SCREEN_PROMPT = """你是B站评论区「值得回复的人」的精筛助手。回复名额有限,只留给值得回复的人。
 
-账号定位:{niche}
+我们是谁:{niche}
 目标受众:{audience}
-我们能答的域:AI 内容创作的做法/路径/工具选型(视频、动画、图片、配音等),能给出具体步骤或选型干货。
-不碰的域(一律 worth=0):购买渠道/账号充值/翻墙镜像、变现赚钱、个案报错调试、求UP主私有资源(skill/素材包)。
 
-评论信号分型(选最贴近的一个):
-- 求工具/求推荐:问用什么软件/模型/平台,求好用推荐
-- 求做法/路径:问怎么做/从哪开始/怎么实现某效果
-- 痛点吐槽求解决:被具体问题卡住,想要解法
-- 对比纠结:A和B选哪个,求过来人解答
-- 讨论闲聊:发表观点、玩梗、抒情,不需要答案
-- 求UP主专属:只有UP本人能答的(您的素材/您的参数)
-- 离域求助:真实提问,但和我们能答的域无关(备考、学术研究、生活问题等)
+值得回复的人分两类(lane):
+- help(帮助型):被困在我们能答的域里——AI 内容创作(视频/动画/图片/配音)的做法、路径、工具选型。特征:具体问题、真实被困、我们能给全答案。备考/学术研究/生活问题等离域求助不是 help。
+- engage(互动型):对 AI 话题发表真实观点/看法/体验的评论——惊叹、怀疑、预测、吐槽、经验分享、讨论。特征:有内容可接话,我们自然回应能延续对话、攒账号信用。看热闹式纯情绪("太强了""泪目")没内容可接,不是 engage。
 
-判断:
-1. is_our_audience:评论者是不是目标受众。备考学习、学术研究、纯围观讨论都不是。
-2. we_can_answer:按我们的域能不能答出有价值的干货(客套话不算)。
-3. worth(0-10 整数):高分=具体问题+真实被困+我们能给全答案;低分=泛泛而谈/纯情绪/我们答不出。
+一律不选(skip):纯水(666/哈哈哈/打卡)、AI生成水评、纯礼貌夸up、引战抬杠、和我们域无关的求助、购买渠道/账号充值/变现赚钱/个案报错调试、求UP主私有资源。
+
+评论信号分型(选最贴近的一个,填进 intent):
+求工具/求推荐 | 求做法/路径 | 痛点吐槽求解决 | 对比纠结 | 观点/预测 | 经验分享 | 吐槽/怀疑 | 讨论闲聊 | 求UP主专属 | 离域求助
+
+打分 worth(0-10 整数):
+- help:具体问题×真实被困×我们能给全答案,三者越齐分越高
+- engage:观点有内容×能自然接话,能延续对话的吐槽/预测/体验分享高分,纯情绪低分
 
 输入给你评论原文和所在视频标题。只输出一个 JSON 对象,不要输出其他文字:
-{{"is_our_audience": true|false, "intent": "信号类型", "we_can_answer": true|false, "worth": 0-10, "reason": "一句话理由,给人工审核看,说清为什么值得或不值得"}}
+{{"lane": "help|engage|skip", "intent": "信号类型", "worth": 0-10, "reason": "一句话理由,给人工审核看,说清为什么值得或不值得"}}
 """
 
 
@@ -589,14 +608,25 @@ async def llm_screen_candidates(
             worth = max(0, min(10, int(data.get("worth") or 0)))
         except (TypeError, ValueError):
             worth = 0
+        lane = str(data.get("lane") or "skip").strip().lower()
+        if lane not in ("help", "engage"):
+            lane = "skip"
+        item["lane"] = lane
         item["worth"] = worth
         item["intent"] = str(data.get("intent") or "")[:20]
         item["screened_by"] = "llm"
         item["match_reason"] = str(data.get("reason") or "")[:120] or item.get("signal", "")
-        if bool(data.get("is_our_audience")) and bool(data.get("we_can_answer")) and worth >= threshold:
+        if lane in ("help", "engage") and worth >= threshold:
             stats["kept"] += 1
             kept.append(item)
-    kept.sort(key=lambda x: (-(x.get("worth") or 0), -(x.get("like_count") or 0)))
+    # 帮助型优先于互动型,同 lane 内按分数、赞数降序
+    kept.sort(
+        key=lambda x: (
+            0 if x.get("lane") == "help" else 1,
+            -(x.get("worth") or 0),
+            -(x.get("like_count") or 0),
+        )
+    )
     return kept, stats
 
 
@@ -638,13 +668,39 @@ BILI_AUTO_SYSTEM_PROMPT = """为B站评论区一位具体用户起草公开回�
 - 禁黑话（赋能/闭环/底层逻辑/码住/建议收藏/值得关注）
 - 不编造不确定的事实；没有十足把握就不提自己的主页或作品"""
 
+BILI_ENGAGE_SYSTEM_PROMPT = """为B站评论区一位具体用户起草公开回复（只输出正文，30-120中文字）。
+对方发表了对 AI 的看法/体验/吐槽，不是在求助。目标：自然接话，像评论区里一个懂行的路人，延续对话、攒账号信用。
+
+写法：
+- 先接住对方的具体观点再回应：认可哪点、补充一点，或有不一致就温和说出来
+- 带一句自己的实际经验或反例，具体到工具/参数/场景，不空对空
+- 平等口吻，对观点不对人，不说教不纠正人
+- 结尾可自然抛回一个小问题或补充，让对话能继续
+
+硬禁令：
+- 不出现任何产品名、下载、链接、App、网址、关注我、私信我
+- 不用破折号；冒号只能用来引直接原话
+- 禁"不是…而是…"翻案句式；禁居高临下（其实很简单/再找找看/别急着放弃）
+- 禁黑话（赋能/闭环/底层逻辑/码住/建议收藏/值得关注）
+- 不编造事实；没把握的经验不说"""
+
+
+def _system_prompt_for(item: dict[str, Any]) -> str:
+    return (
+        BILI_ENGAGE_SYSTEM_PROMPT
+        if item.get("lane") == "engage"
+        else BILI_AUTO_SYSTEM_PROMPT
+    )
+
 
 def _llm_user_message(item: dict[str, Any]) -> str:
     return "起草评论区回复：\n" + json.dumps(
         {
+            "回复类型": "帮助型(给全答案)" if item.get("lane", "help") == "help" else "互动型(自然接话)",
             "对方评论": item["comment_text"],
             "视频标题": item["video_title"],
-            "提问信号": item["signal"],
+            "信号": item.get("intent") or item["signal"],
+            "入选理由": item.get("match_reason", ""),
         },
         ensure_ascii=False,
         separators=(",", ":"),
@@ -661,8 +717,8 @@ async def draft_with_llm(item: dict[str, Any]) -> str:
         return ""
     client = build_openai_client(settings.get("base_url", ""), settings["api_key"], feature="reply_draft")
 
-    # 注入账号策略档案口吻(与硬禁令冲突时以硬禁令为准)
-    system_prompt = BILI_AUTO_SYSTEM_PROMPT
+    # 注入账号策略档案口吻(与硬禁令冲突时以硬禁令为准);按 lane 选话术
+    system_prompt = _system_prompt_for(item)
     try:
         from api.services.strategy import tone_summary
 
