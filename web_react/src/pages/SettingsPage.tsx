@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Save, Loader2, Check } from 'lucide-react'
-import { api, type AutomationStatus } from '../lib/api'
+import { Save, Loader2, Check, Coins } from 'lucide-react'
+import { api, type AutomationStatus, type Strategy, type CostSummary, type CostEntry } from '../lib/api'
 
 export default function SettingsPage() {
   const [status, setStatus] = useState<AutomationStatus | null>(null)
@@ -14,11 +14,27 @@ export default function SettingsPage() {
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
+  // 账号定位(策略档案)——上一版漏了这组状态声明导致白屏,补齐
+  const [strategy, setStrategy] = useState<Partial<Strategy>>({})
+  const [strategyDirty, setStrategyDirty] = useState(false)
+  const [strategyBusy, setStrategyBusy] = useState(false)
+  const [strategySaved, setStrategySaved] = useState(false)
+  // 费用统计
+  const [costs, setCosts] = useState<CostSummary | null>(null)
+  const [recentCalls, setRecentCalls] = useState<CostEntry[]>([])
 
   useEffect(() => {
     api
       .strategyGet()
       .then((s) => setStrategy(s.exists === false ? {} : s))
+      .catch(() => {})
+    api
+      .costsSummary()
+      .then(setCosts)
+      .catch(() => {})
+    api
+      .costsLedger(8)
+      .then(setRecentCalls)
       .catch(() => {})
     api
       .automationStatus()
@@ -200,6 +216,103 @@ export default function SettingsPage() {
           )}
           {strategySaved ? '已保存,全部生成入口已生效' : strategyDirty ? '保存定位' : '无改动'}
         </button>
+      </section>
+
+      {/* 费用统计(只记账,不限流) */}
+      <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="flex items-center gap-1.5 text-sm font-semibold">
+              <Coins size={14} /> 费用统计
+            </h2>
+            <p className="text-xs text-stone-400">
+              全部 LLM 消耗台账(对话/选题/写稿/洞察/回复起草),只记账不限制
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              api.costsSummary().then(setCosts).catch(() => {})
+              api.costsLedger(8).then(setRecentCalls).catch(() => {})
+            }}
+            className="rounded-lg border border-stone-200 p-1.5 text-stone-400 hover:border-(--brand) hover:text-(--brand)"
+          >
+            刷新
+          </button>
+        </div>
+
+        {!costs ? (
+          <p className="py-4 text-center text-xs text-stone-400">还没有消耗记录</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-xl bg-stone-50 p-3">
+                <p className="text-xs text-stone-400">今日</p>
+                <p className="text-lg font-semibold">
+                  {costs.today.calls} 次 · {costs.today.total_tokens.toLocaleString()} tokens
+                </p>
+                {costs.pricing.configured && (
+                  <p className="text-xs text-stone-400">≈ ¥{costs.today.cost.toFixed(2)}</p>
+                )}
+              </div>
+              <div className="rounded-xl bg-stone-50 p-3">
+                <p className="text-xs text-stone-400">累计</p>
+                <p className="text-lg font-semibold">
+                  {costs.total.calls} 次 · {costs.total.total_tokens.toLocaleString()} tokens
+                </p>
+                {costs.pricing.configured ? (
+                  <p className="text-xs text-stone-400">≈ ¥{costs.total.cost.toFixed(2)}</p>
+                ) : (
+                  <p className="text-xs text-stone-400">未配价格,按 tokens 统计</p>
+                )}
+              </div>
+            </div>
+
+            {costs.by_feature.length > 0 && (
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-stone-400">
+                    <th className="py-1 font-normal">功能</th>
+                    <th className="py-1 font-normal text-right">调用</th>
+                    <th className="py-1 font-normal text-right">输入 tok</th>
+                    <th className="py-1 font-normal text-right">输出 tok</th>
+                    {costs.pricing.configured && <th className="py-1 font-normal text-right">费用</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {costs.by_feature.map((f) => (
+                    <tr key={f.feature} className="border-t border-stone-100">
+                      <td className="py-1">{f.feature}</td>
+                      <td className="py-1 text-right">{f.calls}</td>
+                      <td className="py-1 text-right">{f.prompt_tokens.toLocaleString()}</td>
+                      <td className="py-1 text-right">{f.completion_tokens.toLocaleString()}</td>
+                      {costs.pricing.configured && (
+                        <td className="py-1 text-right">¥{f.cost.toFixed(2)}</td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            {recentCalls.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-xs text-stone-400">最近调用</p>
+                {recentCalls.slice(0, 8).map((c, i) => (
+                  <p key={i} className="flex items-center gap-2 text-xs text-stone-500">
+                    <span className={c.ok ? 'text-emerald-500' : 'text-red-400'}>●</span>
+                    <span className="w-32 shrink-0 truncate">{c.feature}</span>
+                    <span className="text-stone-300">
+                      {new Date(c.ts * 1000).toLocaleTimeString('zh-CN', { hour12: false })}
+                    </span>
+                    <span>{c.total_tokens.toLocaleString()} tok</span>
+                    <span className="text-stone-300">{(c.duration_ms / 1000).toFixed(1)}s</span>
+                    {!c.ok && c.error && <span className="truncate text-red-400">{c.error.slice(0, 60)}</span>}
+                  </p>
+                ))}
+              </div>
+            )}
+          </>
+        )}
       </section>
 
       <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">

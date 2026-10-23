@@ -186,6 +186,7 @@ async def analyze(body: AnalyzeRequest) -> dict[str, Any]:
             ],
             temperature=0.5,
             timeout=180,
+            feature="comments.analyze",
         )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"LLM 调用失败:{e}") from e

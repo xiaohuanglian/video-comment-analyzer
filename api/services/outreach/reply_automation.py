@@ -509,7 +509,7 @@ async def draft_with_llm(item: dict[str, Any]) -> str:
     settings = load_model_settings()
     if not (settings.get("api_key") or "").strip():
         return ""
-    client = build_openai_client(settings.get("base_url", ""), settings["api_key"])
+    client = build_openai_client(settings.get("base_url", ""), settings["api_key"], feature="reply_draft")
 
     # 注入账号策略档案口吻(与硬禁令冲突时以硬禁令为准)
     system_prompt = BILI_AUTO_SYSTEM_PROMPT
