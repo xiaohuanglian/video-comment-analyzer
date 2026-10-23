@@ -136,6 +136,27 @@ async def draft_manual(item_id: str, body: CandidateDecision) -> dict[str, Any]:
     return {"ok": True, "item": updated}
 
 
+class ScreenRequest(BaseModel):
+    max_candidates: int = 50
+    auto_draft: bool = True
+
+
+@router.post("/screen-collected")
+async def screen_collected(body: ScreenRequest) -> dict[str, Any]:
+    """从手动批量采集的存量数据(data/comments)里筛目标用户 + LLM 起草。"""
+    store = _store()
+    if store._state["cycle"].get("running"):
+        raise HTTPException(status_code=409, detail="已有筛选/采集任务在运行")
+
+    async def _run() -> None:
+        await auto.screen_collected(
+            store, max_candidates=body.max_candidates, auto_draft=body.auto_draft
+        )
+
+    asyncio.create_task(_run())
+    return {"ok": True, "message": f"已从存量数据开始筛选(上限 {body.max_candidates} 条),后台运行,稍后刷新待批准"}
+
+
 @router.post("/collect-now")
 async def collect_now() -> dict[str, Any]:
     store = _store()

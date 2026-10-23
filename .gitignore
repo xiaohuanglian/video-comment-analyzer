@@ -186,3 +186,5 @@ database/*.db
 # Insight run index (also covered by /data/)
 data/.insight_run_index.json
 **/.insight/
+
+
