@@ -22,6 +22,7 @@ import json
 import os
 import random
 import re
+import subprocess
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -510,13 +511,24 @@ async def draft_with_llm(item: dict[str, Any]) -> str:
         return ""
     client = build_openai_client(settings.get("base_url", ""), settings["api_key"])
 
+    # 注入账号策略档案口吻(与硬禁令冲突时以硬禁令为准)
+    system_prompt = BILI_AUTO_SYSTEM_PROMPT
+    try:
+        from api.services.strategy import tone_summary
+
+        tone = tone_summary()
+        if tone:
+            system_prompt += f"\n\n作者口吻参考(与上方硬禁令冲突时,以硬禁令为准):\n{tone}"
+    except Exception:
+        pass
+
     def _call() -> str:
         last_finish = ""
         for max_tokens in (2000, 6000):
             completion = client.chat.completions.create(
                 model=settings.get("model_name") or "deepseek-chat",
                 messages=[
-                    {"role": "system", "content": BILI_AUTO_SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": _llm_user_message(item)},
                 ],
                 temperature=0.7,
@@ -582,6 +594,72 @@ def read_collected(comment_dir: Path = COMMENT_DIR) -> tuple[list[dict[str, Any]
         except (json.JSONDecodeError, OSError):
             continue
     return rows, video_map
+
+
+BULK_COMMENT_DIR = PROJECT_ROOT / "data" / "comments"
+
+
+async def screen_collected(
+    store: AutomationStore,
+    max_candidates: int = 50,
+    auto_draft: bool = True,
+    source_dir: Optional[Path] = None,
+) -> dict[str, Any]:
+    """从手动批量采集的数据(data/comments)里筛目标用户并起草。
+
+    与 run_cycle 的区别:不自己跑采集器,只消费已经爬回来的存量数据。
+    流程:读存量 jsonl → 同一套筛选规则 → LLM 起草 → 入队待批准。
+    """
+    if store._state["cycle"].get("running"):
+        return {"ok": False, "error": "有任务正在运行,稍后再试"}
+    store._state["cycle"]["running"] = True
+    store._state["cycle"]["last_error"] = ""
+    store.save()
+    try:
+        rows, video_map = read_collected(source_dir or BULK_COMMENT_DIR)
+        if not rows:
+            return {"ok": False, "error": f"{(source_dir or BULK_COMMENT_DIR)} 下没有采集数据,先用「评论采集」面板爬一批"}
+        cfg = dict(store.config)
+        cfg["max_new_candidates_per_cycle"] = max(1, int(max_candidates))
+        today = datetime.now().strftime("%Y-%m-%d")
+        cfg["_items_today"] = [
+            it for it in store.items if str(it.get("created_at", "")).startswith(today)
+        ]
+        picked, funnel = build_candidates(
+            rows, video_map, cfg, store._state["processed_comment_ids"]
+        )
+
+        drafted = 0
+        if auto_draft:
+            for item in picked:
+                draft = await draft_with_llm(item)
+                if draft:
+                    item["draft"] = draft
+                    item["lint_warnings"] = check_reply_style(draft)
+                    item["draft_source"] = "llm"
+                    drafted += 1
+
+        added = store.add_items(picked)
+        summary = {
+            "ok": True,
+            "source": str(source_dir or BULK_COMMENT_DIR),
+            "videos": len(video_map),
+            "comments": len(rows),
+            "funnel": funnel,
+            "new_candidates": added,
+            "llm_drafted": drafted,
+        }
+        store._state["cycle"]["last_run_at"] = datetime.now().isoformat(timespec="seconds")
+        store._state["cycle"]["last_summary"] = json.dumps(summary, ensure_ascii=False)
+        store.save()
+        return summary
+    except Exception as exc:  # noqa: BLE001
+        store._state["cycle"]["last_error"] = str(exc)[:300]
+        store.save()
+        return {"ok": False, "error": str(exc)[:300]}
+    finally:
+        store._state["cycle"]["running"] = False
+        store.save()
 
 
 async def run_cycle(store: AutomationStore) -> dict[str, Any]:
@@ -856,7 +934,9 @@ async def automation_loop() -> None:
     while True:
         try:
             cfg = store.config
-            if cfg.get("enabled") and not store._state["cycle"].get("running"):
+            # auto_collect:自动化自己定时扫描采集(默认关)。
+            # 2026-10-20 用户定调:先手动批量采集,再从存量数据里筛,效率更高。
+            if cfg.get("enabled") and cfg.get("auto_collect", False) and not store._state["cycle"].get("running"):
                 last = store._state["cycle"].get("last_run_at", "")
                 due = True
                 if last:

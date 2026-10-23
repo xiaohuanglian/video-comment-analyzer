@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 
-from .routers import crawler_router, data_router, websocket_router, bilibili_router, creator_router, analysis_router, growth_router, automation_router
+from .routers import crawler_router, data_router, websocket_router, bilibili_router, creator_router, analysis_router, growth_router, automation_router, chat_router, topics_router, writer_router, youvibe_router, comments_router, strategy_router, wechat_router
 from .services.platform_capabilities import PLATFORM_CAPABILITIES
 from .services.browser_check import probe_browser_launch
 
@@ -85,6 +85,13 @@ app.include_router(creator_router, prefix="/api")
 app.include_router(analysis_router, prefix="/api")
 app.include_router(growth_router, prefix="/api")
 app.include_router(automation_router, prefix="/api")
+app.include_router(chat_router, prefix="/api")
+app.include_router(topics_router, prefix="/api")
+app.include_router(writer_router, prefix="/api")
+app.include_router(youvibe_router, prefix="/api")
+app.include_router(comments_router, prefix="/api")
+app.include_router(strategy_router, prefix="/api")
+app.include_router(wechat_router, prefix="/api")
 
 
 @app.middleware("http")

@@ -186,3 +186,5 @@ database/*.db
 # Insight run index (also covered by /data/)
 data/.insight_run_index.json
 **/.insight/
+# 内嵌的官方数据查询 skill 拷贝(内网信息,永不提交)
+tools/youvibe-analytics-query/

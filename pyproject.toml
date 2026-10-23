@@ -41,6 +41,9 @@ dependencies = [
     "xhshow>=0.1.9",
     "instructor>=1.6",
     "openai>=1.30",
+    "yt-dlp>=2026.8.19",
+    "html2text>=2025.4.15",
+    "beautifulsoup4>=4.15.0",
 ]
 
 [project.optional-dependencies]
