@@ -12,8 +12,12 @@ Guidance for AI coding agents working in this repository.
 ```bash
 uv sync
 uv run pytest tests -q          # 期望全绿
-./run_web.sh                    # http://127.0.0.1:8766
+./run_web.sh                    # 后端 API http://127.0.0.1:8766（启动时自动加载 .env）
+cd web_react && npm run dev     # 工作台面板 http://localhost:5173（/api 代理到 8766）
 ```
+
+- 本地网关/密钥等配置在 `.env`（git 忽略，模板见 `.env.example`）；LLM 网关需 `LLM_BASE_URL/LLM_API_KEY/LLM_MODEL`。
+- 公众号视频下载用无头 Chrome（`channel="chrome"`）捕获签名直链；不需要登录态。
 
 ## 约定
 

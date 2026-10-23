@@ -11,6 +11,9 @@
 - **评论洞察**：微批次证据抽取 → 代码校验 → 数据集研究 Agent → 可读报告；支持断点续跑、预算上限、停止/继续、失败重试、大任务二次确认，并可一键生成中文 AI 解读。
 - **评论区回复**：算法筛选值得回复的用户 → 人工确认 → AI 按用户意图生成回复 → 人工逐条审核 → 受控发送（最小间隔 / 每日上限 / 允许时段）。
 - **内容选题**：把评论里反复出现的需求转成可发布选题，并由 AI 生成多形态草稿。
+- **公众号采集**：文章/合集批量下载（md+html+图片+**内嵌视频**，含公众号原生 wxv 视频，自动落盘本地）；素材进资料库供选题与文案引用。
+- **工作台对话**：内置对话入口，可问状态、布置采集/选题任务，LLM 网关由环境变量配置。
+- **选题双轨与写稿**：评论区内生选题 + 「最强视频」博采众长稿；支持去 AI 味等方法学。
 - **可配置项目档案**：不同产品/领域可通过 profile 定制研究目标、假设、**分类维度（意图 / 信号）**与内容人设；也可让 AI 根据真实评论一键生成档案，无需改代码即可适配新业务。
 - **数据本地化**：API 无鉴权、默认仅绑定 `127.0.0.1`；结果保存在本地 `data/`，可随时导出 CSV / Markdown。
 
@@ -85,10 +88,11 @@ export VCA_OUTREACH_COOKIE="SESSDATA=...; bili_jct=...; ..."
 ## 项目结构
 
 ```
-├── api/                  # FastAPI 后端与业务服务
+├── api/                  # FastAPI 后端与业务服务（洞察/回复/选题/公众号/对话等）
 │   └── services/insight/ # 评论洞察 / 回复 / 内容选题
-├── web_templates/        # Web 页面
-├── web_static/           # 前端静态资源
+├── web_react/            # React 工作台面板（Vite+React+Tailwind+Radix，npm run dev @5173）
+├── web_templates/        # 旧版 Web 页面（8766 根路径）
+├── web_static/           # 旧版前端静态资源
 ├── media_platform/       # 各平台爬虫
 ├── tools/                # 浏览器与通用工具
 ├── data/                 # 采集与分析结果（已被 .gitignore 忽略）
@@ -103,7 +107,14 @@ uv run pytest tests -q
 
 # 命令行入口
 uv run python main.py --help
+
+# 工作台面板（React，另开终端）
+cd web_react && npm install && npm run dev   # http://localhost:5173，/api 自动代理到 8766
 ```
+
+LLM 网关等本地配置放在 `.env`（参考 `.env.example`，已被 git 忽略；`run_web.sh` 启动时自动加载）。
+
+公众号视频下载依赖本机 Chrome（Playwright `channel="chrome"`）：公众号原生视频的签名直链需无头浏览器点播捕获，无需登录。
 
 调整浏览器行为（可选，环境变量）：
 
