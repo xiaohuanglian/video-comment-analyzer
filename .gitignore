@@ -14,7 +14,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+/lib/  # 仅根目录(模板遗留规则曾误伤 web_react/src/lib)
 lib64/
 parts/
 sdist/
