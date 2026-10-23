@@ -1,0 +1,14 @@
+@import "tailwindcss";
+
+:root {
+  --brand: #c2562c;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  @apply bg-stone-100 text-stone-800 antialiased;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+}
