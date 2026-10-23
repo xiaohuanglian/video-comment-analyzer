@@ -53,6 +53,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "send_window_start": "09:00",
     "send_window_end": "22:00",
     "auto_draft": True,
+    "llm_screen": True,
+    "llm_screen_threshold": 6,
 }
 
 # ---------------------------------------------------------------------------
@@ -213,7 +215,7 @@ class AutomationStore:
             "collect_interval_hours", "max_notes_per_keyword", "max_comments_per_video",
             "collect_timeout_minutes", "freshness_a_hours", "freshness_b_hours",
             "max_new_candidates_per_cycle", "max_per_video_per_day", "daily_send_limit",
-            "send_interval_seconds", "send_jitter_seconds",
+            "send_interval_seconds", "send_jitter_seconds", "llm_screen_threshold",
         ):
             if key in partial:
                 try:
@@ -225,7 +227,7 @@ class AutomationStore:
                 val = str(partial[key] or "").strip()
                 if re.fullmatch(r"\d{1,2}:\d{2}", val):
                     cfg[key] = val
-        for key in ("enabled", "auto_draft"):
+        for key in ("enabled", "auto_draft", "llm_screen"):
             if key in partial:
                 cfg[key] = bool(partial[key])
         self.save()
@@ -450,6 +452,10 @@ def build_candidates(
                 "age_hours": round(age_hours, 1),
                 "signal": signal,
                 "tier": tier,
+                "worth": 0,
+                "intent": "",
+                "match_reason": signal,
+                "screened_by": "rules",
                 "draft": "",
                 "lint_warnings": [],
                 "draft_source": "",
@@ -467,6 +473,150 @@ def build_candidates(
         quota_left -= 1
         funnel["candidates"] += 1
     return picked, funnel
+
+
+# ---------------------------------------------------------------------------
+# LLM 语义精筛(规则粗筛管召回,这里管精度:对齐账号定位,只留值得回复的人)
+# ---------------------------------------------------------------------------
+
+_DEFAULT_NICHE = "用 AI 做视频/动画/图片内容的实战教程,只讲能落地的做法"
+_DEFAULT_AUDIENCE = "想自己动手用 AI 做内容(视频/动画/图)的新手和创作者"
+
+LLM_SCREEN_PROMPT = """你是B站评论区「值得回复的人」的精筛助手。回复名额有限,只留给最值得帮的人。
+
+账号定位:{niche}
+目标受众:{audience}
+我们能答的域:AI 内容创作的做法/路径/工具选型(视频、动画、图片、配音等),能给出具体步骤或选型干货。
+不碰的域(一律 worth=0):购买渠道/账号充值/翻墙镜像、变现赚钱、个案报错调试、求UP主私有资源(skill/素材包)。
+
+评论信号分型(选最贴近的一个):
+- 求工具/求推荐:问用什么软件/模型/平台,求好用推荐
+- 求做法/路径:问怎么做/从哪开始/怎么实现某效果
+- 痛点吐槽求解决:被具体问题卡住,想要解法
+- 对比纠结:A和B选哪个,求过来人解答
+- 讨论闲聊:发表观点、玩梗、抒情,不需要答案
+- 求UP主专属:只有UP本人能答的(您的素材/您的参数)
+- 离域求助:真实提问,但和我们能答的域无关(备考、学术研究、生活问题等)
+
+判断:
+1. is_our_audience:评论者是不是目标受众。备考学习、学术研究、纯围观讨论都不是。
+2. we_can_answer:按我们的域能不能答出有价值的干货(客套话不算)。
+3. worth(0-10 整数):高分=具体问题+真实被困+我们能给全答案;低分=泛泛而谈/纯情绪/我们答不出。
+
+输入给你评论原文和所在视频标题。只输出一个 JSON 对象,不要输出其他文字:
+{{"is_our_audience": true|false, "intent": "信号类型", "we_can_answer": true|false, "worth": 0-10, "reason": "一句话理由,给人工审核看,说清为什么值得或不值得"}}
+"""
+
+
+class LlmScreenUnavailable(RuntimeError):
+    """LLM 精筛整体不可用(未配置/网关不通),调用方应降级为纯规则模式。"""
+
+
+def _screen_brief() -> str:
+    """账号定位注入精筛 prompt(策略档案优先,无档案用默认定位)。"""
+    try:
+        from api.services import strategy as _strategy
+
+        s = _strategy.load() or {}
+    except Exception:  # noqa: BLE001
+        s = {}
+    niche = str(s.get("niche") or "").strip() or _DEFAULT_NICHE
+    audience = str(s.get("target_audience") or "").strip() or _DEFAULT_AUDIENCE
+    return LLM_SCREEN_PROMPT.format(niche=niche, audience=audience)
+
+
+def _extract_screen_json(reply: str) -> Optional[dict[str, Any]]:
+    text = (reply or "").strip()
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m:
+        return None
+    try:
+        data = json.loads(m.group(0))
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+async def llm_screen_candidates(
+    picked: list[dict[str, Any]],
+    threshold: int = 6,
+    complete_fn: Optional[Any] = None,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """对粗筛候选逐条 LLM 语义评分,只留值得回复的。
+
+    返回 (保留列表[worth 降序], 统计 {screened, kept, llm_failed})。
+    条目更新字段:worth / intent / match_reason / screened_by。
+    未配置网关或首条即网络失败 → 抛 LlmScreenUnavailable(整体降级);
+    单条回复解析失败 → 按规则结果保留并标记。
+    """
+    if complete_fn is None:
+        from api.services.llm import complete as complete_fn  # type: ignore[no-redef]
+    system_prompt = _screen_brief()
+    stats = {"screened": 0, "kept": 0, "llm_failed": 0}
+    kept: list[dict[str, Any]] = []
+    first = True
+    for item in picked:
+        user_msg = json.dumps(
+            {"视频标题": item.get("video_title", ""), "评论原文": item.get("comment_text", "")},
+            ensure_ascii=False,
+        )
+        try:
+            reply = await complete_fn(
+                [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_msg}],
+                temperature=0.1,
+                timeout=60,
+                feature="automation.screen",
+            )
+            data = _extract_screen_json(reply)
+            if not data:
+                raise ValueError("模型未返回合规 JSON")
+        except RuntimeError:
+            # 未配置等基础设施错误 → 整体降级
+            raise LlmScreenUnavailable("LLM 网关未配置") from None
+        except Exception as e:  # noqa: BLE001
+            if first:
+                # 首条就失败大概率网关不通,不再逐条空等超时
+                raise LlmScreenUnavailable(str(e)[:100]) from e
+            stats["llm_failed"] += 1
+            item["screened_by"] = "rules"
+            item["match_reason"] = f"{item.get('signal', '')}(LLM判读失败,按规则保留)"
+            kept.append(item)
+            first = False
+            continue
+        first = False
+        stats["screened"] += 1
+        try:
+            worth = max(0, min(10, int(data.get("worth") or 0)))
+        except (TypeError, ValueError):
+            worth = 0
+        item["worth"] = worth
+        item["intent"] = str(data.get("intent") or "")[:20]
+        item["screened_by"] = "llm"
+        item["match_reason"] = str(data.get("reason") or "")[:120] or item.get("signal", "")
+        if bool(data.get("is_our_audience")) and bool(data.get("we_can_answer")) and worth >= threshold:
+            stats["kept"] += 1
+            kept.append(item)
+    kept.sort(key=lambda x: (-(x.get("worth") or 0), -(x.get("like_count") or 0)))
+    return kept, stats
+
+
+async def _refine_candidates(
+    picked: list[dict[str, Any]], cfg: dict[str, Any], max_candidates: int
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """LLM 精筛包装:不可用则降级规则模式(候选全保留、标记 screened_by=rules)。"""
+    if not picked:
+        return picked, {"mode": "none", "screened": 0, "kept": 0, "llm_failed": 0}
+    if not cfg.get("llm_screen", True):
+        return picked, {"mode": "rules", "note": "llm_screen 已关闭", "screened": 0, "kept": len(picked), "llm_failed": 0}
+    try:
+        threshold = max(1, min(10, int(cfg.get("llm_screen_threshold", 6))))
+        kept, stats = await llm_screen_candidates(picked, threshold=threshold)
+        return kept[: max(1, int(max_candidates))], {"mode": "llm", **stats}
+    except LlmScreenUnavailable as e:
+        note = f"LLM精筛不可用({str(e)[:80]}),已按规则模式入队"
+        for it in picked:
+            it["match_reason"] = f"{it.get('signal', '')}(精筛降级)"
+        return picked, {"mode": "rules", "note": note, "screened": 0, "kept": len(picked), "llm_failed": 0}
 
 
 # ---------------------------------------------------------------------------
@@ -620,7 +770,8 @@ async def screen_collected(
         if not rows:
             return {"ok": False, "error": f"{(source_dir or BULK_COMMENT_DIR)} 下没有采集数据,先用「评论采集」面板爬一批"}
         cfg = dict(store.config)
-        cfg["max_new_candidates_per_cycle"] = max(1, int(max_candidates))
+        # 粗筛放大 3 倍(封顶 36)给 LLM 精筛挑选,最终仍按 max_candidates 截断
+        cfg["max_new_candidates_per_cycle"] = max(1, min(int(max_candidates) * 3, 36))
         today = datetime.now().strftime("%Y-%m-%d")
         cfg["_items_today"] = [
             it for it in store.items if str(it.get("created_at", "")).startswith(today)
@@ -628,6 +779,8 @@ async def screen_collected(
         picked, funnel = build_candidates(
             rows, video_map, cfg, store._state["processed_comment_ids"]
         )
+        picked, screen_stats = await _refine_candidates(picked, cfg, max_candidates)
+        picked = picked[: max(1, int(max_candidates))]
 
         drafted = 0
         if auto_draft:
@@ -646,6 +799,7 @@ async def screen_collected(
             "videos": len(video_map),
             "comments": len(rows),
             "funnel": funnel,
+            "llm_screen": screen_stats,
             "new_candidates": added,
             "llm_drafted": drafted,
         }
@@ -690,6 +844,9 @@ async def run_cycle(store: AutomationStore) -> dict[str, Any]:
         cfg = dict(store.config)
         cfg["_items_today"] = [it for it in store.items if it["created_at"].startswith(datetime.now().strftime("%Y-%m-%d"))]
         picked, funnel = build_candidates(rows, video_map, cfg, store._state["processed_comment_ids"])
+        quota = int(store.config.get("max_new_candidates_per_cycle", 8))
+        picked, screen_stats = await _refine_candidates(picked, cfg, quota)
+        picked = picked[:quota]
 
         drafted = 0
         if store.config.get("auto_draft", True):
@@ -712,6 +869,7 @@ async def run_cycle(store: AutomationStore) -> dict[str, Any]:
             "videos": len(video_map),
             "comments": len(rows),
             "funnel": funnel,
+            "llm_screen": screen_stats,
             "new_candidates": added,
             "llm_drafted": drafted,
         }

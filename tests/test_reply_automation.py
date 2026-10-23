@@ -306,3 +306,136 @@ class TestRetractAndVisibility:
     def test_retract_only_works_on_approved(self, store):
         store.add_items([_item("c1")])
         assert store.retract("c_c1") is None  # pending 状态不可撤回
+
+
+# ---------------------------------------------------------------------------
+# LLM 语义精筛
+# ---------------------------------------------------------------------------
+
+def _screen_item(cid: str, text: str, likes: int = 3) -> dict:
+    return {
+        "id": f"c_{cid}",
+        "comment_id": cid,
+        "video_id": "v1",
+        "video_title": "AI视频教程",
+        "video_url": "u",
+        "commenter": "u",
+        "comment_text": text,
+        "like_count": likes,
+        "age_hours": 1.0,
+        "signal": "问工具/怎么做",
+        "tier": "A",
+        "worth": 0,
+        "intent": "",
+        "match_reason": "问工具/怎么做",
+        "screened_by": "rules",
+        "draft": "",
+        "lint_warnings": [],
+        "draft_source": "",
+        "status": "pending_review",
+        "created_at": "2026-10-23T10:00:00",
+        "decided_at": "",
+        "sent_at": "",
+        "send_error": "",
+        "reply_id": "",
+        "attempts": 0,
+        "note": "",
+    }
+
+
+def _fake_complete(responses: dict[str, str]):
+    """按评论原文关键词路由返回不同判定 JSON。"""
+
+    async def _fn(messages, temperature=0.1, timeout=60, feature="automation.screen"):
+        user = messages[-1]["content"]
+        for key, resp in responses.items():
+            if key in user:
+                return resp
+        return json.dumps({"is_our_audience": True, "intent": "求做法/路径", "we_can_answer": True, "worth": 7, "reason": "默认通过"})
+
+    return _fn
+
+
+class TestLlmScreen:
+    def test_keeps_high_worth_with_reason(self):
+        fn = _fake_complete({"动画": json.dumps({"is_our_audience": True, "intent": "求做法/路径", "we_can_answer": True, "worth": 8, "reason": "具体问做法,能给全步骤"}, ensure_ascii=False)})
+        items = [_screen_item("1", "这个数学动画用什么做的呀")]
+        kept, stats = asyncio.run(auto.llm_screen_candidates(items, threshold=6, complete_fn=fn))
+        assert len(kept) == 1
+        assert kept[0]["worth"] == 8
+        assert kept[0]["screened_by"] == "llm"
+        assert "步骤" in kept[0]["match_reason"]
+        assert stats == {"screened": 1, "kept": 1, "llm_failed": 0}
+
+    def test_drops_off_domain_study_help(self):
+        # 真提问但离域(备考/学术)→不入选:这是此前队列不精准的主场景
+        fn = _fake_complete({"绩点": json.dumps({"is_our_audience": False, "intent": "离域求助", "we_can_answer": False, "worth": 2, "reason": "备考学习求助,不是内容创作人群"}, ensure_ascii=False)})
+        items = [_screen_item("1", "大三重修求绩点复习规划建议")]
+        kept, stats = asyncio.run(auto.llm_screen_candidates(items, threshold=6, complete_fn=fn))
+        assert kept == []
+        assert stats["screened"] == 1 and stats["kept"] == 0
+
+    def test_threshold_boundary(self):
+        fn = _fake_complete({"动画": json.dumps({"is_our_audience": True, "intent": "求做法/路径", "we_can_answer": True, "worth": 5, "reason": "泛泛问法"}, ensure_ascii=False)})
+        items = [_screen_item("1", "这个动画怎么做的")]
+        kept, _ = asyncio.run(auto.llm_screen_candidates(items, threshold=6, complete_fn=fn))
+        assert kept == []  # 5 < 6 不入选
+
+    def test_sort_by_worth_desc(self):
+        responses = {
+            "高": json.dumps({"is_our_audience": True, "intent": "求做法/路径", "we_can_answer": True, "worth": 9, "reason": "r9"}, ensure_ascii=False),
+            "低": json.dumps({"is_our_audience": True, "intent": "求工具/求推荐", "we_can_answer": True, "worth": 6, "reason": "r6"}, ensure_ascii=False),
+        }
+        fn = _fake_complete(responses)
+        items = [_screen_item("1", "低分问题怎么弄"), _screen_item("2", "高分问题怎么做", likes=1)]
+        kept, _ = asyncio.run(auto.llm_screen_candidates(items, threshold=6, complete_fn=fn))
+        assert [k["worth"] for k in kept] == [9, 6]
+
+    def test_unconfigured_raises_for_fallback(self):
+        async def _fn(messages, **kw):
+            raise RuntimeError("LLM 网关未配置")
+
+        items = [_screen_item("1", "怎么做的")]
+        with pytest.raises(auto.LlmScreenUnavailable):
+            asyncio.run(auto.llm_screen_candidates(items, complete_fn=_fn))
+
+    def test_first_network_failure_aborts_all(self):
+        # 首条网络失败 → 整体降级,不逐条空等
+        async def _fn(messages, **kw):
+            raise OSError("connection reset")
+
+        items = [_screen_item("1", "a"), _screen_item("2", "b")]
+        with pytest.raises(auto.LlmScreenUnavailable):
+            asyncio.run(auto.llm_screen_candidates(items, complete_fn=_fn))
+
+    def test_later_parse_failure_keeps_item_as_rules(self):
+        calls = {"n": 0}
+
+        async def _fn(messages, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return json.dumps({"is_our_audience": True, "intent": "求做法/路径", "we_can_answer": True, "worth": 8, "reason": "ok"}, ensure_ascii=False)
+            return "模型抽风了,没有JSON"
+
+        items = [_screen_item("1", "first"), _screen_item("2", "second")]
+        kept, stats = asyncio.run(auto.llm_screen_candidates(items, threshold=6, complete_fn=_fn))
+        assert len(kept) == 2
+        assert stats["llm_failed"] == 1
+        assert kept[1]["screened_by"] == "rules"
+        assert "LLM判读失败" in kept[1]["match_reason"]
+
+    def test_screen_brief_injects_strategy(self, monkeypatch):
+        from api.services import strategy as strategy_mod
+
+        monkeypatch.setattr(
+            strategy_mod, "load", lambda: {"niche": "给新手的AI视频实战教程", "target_audience": "上班族"}
+        )
+        brief = auto._screen_brief()
+        assert "给新手的AI视频实战教程" in brief and "上班族" in brief
+
+    def test_screen_brief_falls_back_to_default(self, monkeypatch):
+        from api.services import strategy as strategy_mod
+
+        monkeypatch.setattr(strategy_mod, "load", lambda: {})
+        brief = auto._screen_brief()
+        assert auto._DEFAULT_NICHE in brief
