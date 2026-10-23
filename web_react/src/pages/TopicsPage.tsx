@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
-import { api, type Topic, type TopicBoard, type PlanTopic, type PlanResult, type BoostVideoResult } from '../lib/api'
+import { api, type Topic, type TopicBoard, type PlanResult, type BoostVideoResult } from '../lib/api'
 
 export default function TopicsPage() {
   const [tab, setTab] = useState<'plan' | 'mine' | 'boost'>('plan')

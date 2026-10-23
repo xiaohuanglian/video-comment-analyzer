@@ -348,7 +348,7 @@ def post_model_settings_test(body: Optional[ModelSettingsRequest] = None) -> Dic
     )
     if not creds["api_key"]:
         return {"ok": False, "error": "未配置 API Key"}
-    client = build_openai_client(creds["base_url"] or "https://api.deepseek.com", creds["api_key"])
+    client = build_openai_client(creds["base_url"] or "https://api.deepseek.com", creds["api_key"], feature="growth")
     import time as _t
 
     t0 = _t.monotonic()

@@ -159,6 +159,7 @@ async def generate(body: GenerateRequest) -> dict[str, Any]:
                 {"role": "user", "content": user_msg},
             ],
             temperature=0.6,
+            feature="topics.signal",
         )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"LLM 调用失败:{e}") from e
@@ -312,6 +313,7 @@ async def plan(body: PlanRequest) -> dict[str, Any]:
             ],
             temperature=0.7,
             timeout=180,
+            feature="topics.plan",
         )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"LLM 调用失败:{e}") from e
@@ -424,6 +426,7 @@ async def boost(body: BoostRequest) -> dict[str, Any]:
         reply = await complete(
             [{"role": "system", "content": BOOST_PROMPT}, {"role": "user", "content": user_msg}],
             temperature=0.6,
+            feature="topics.boost",
         )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"LLM 调用失败:{e}") from e
@@ -481,6 +484,7 @@ async def boost_video(body: BoostVideoRequest) -> dict[str, Any]:
                 ],
                 temperature=0.3,
                 timeout=30,
+                feature="topics.translate",
             )
         except Exception:
             en = ""
@@ -538,6 +542,7 @@ async def boost_video(body: BoostVideoRequest) -> dict[str, Any]:
             [{"role": "system", "content": BOOST_VIDEO_PROMPT}, {"role": "user", "content": user_msg}],
             temperature=0.7,
             timeout=180,
+            feature="topics.boost_video",
         )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"LLM 调用失败:{e}") from e

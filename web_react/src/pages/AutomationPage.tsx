@@ -90,15 +90,6 @@ export default function AutomationPage() {
     }
   }
 
-  const act = async (fn: () => Promise<unknown>) => {
-    try {
-      await fn()
-      await refresh()
-    } catch (e) {
-      setNotice(e instanceof Error ? e.message : String(e))
-    }
-  }
-
   return (
     <div className="mx-auto max-w-5xl px-6 py-6 space-y-4">
       <header className="flex items-center justify-between">

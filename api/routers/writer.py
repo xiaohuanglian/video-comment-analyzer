@@ -137,6 +137,7 @@ async def generate(body: WriteRequest) -> dict[str, Any]:
                 {"role": "user", "content": user_msg},
             ],
             temperature=0.8,
+            feature="writer",
         )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"LLM 调用失败:{e}") from e
@@ -195,6 +196,7 @@ async def humanize(body: HumanizeRequest) -> dict[str, Any]:
                 {"role": "user", "content": text},
             ],
             temperature=0.4,
+            feature="writer.humanize",
         )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"LLM 调用失败:{e}") from e

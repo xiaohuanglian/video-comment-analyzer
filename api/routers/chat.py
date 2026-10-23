@@ -209,7 +209,7 @@ async def send(body: SendRequest) -> dict[str, Any]:
         messages.append({"role": m["role"], "content": m["text"]})
 
     try:
-        reply = await complete(messages, temperature=0.7, timeout=60) or "(模型返回为空)"
+        reply = await complete(messages, temperature=0.7, timeout=60, feature="chat") or "(模型返回为空)"
     except Exception as e:  # noqa: BLE001
         _save_history(history)
         raise HTTPException(status_code=502, detail=f"LLM 调用失败:{e}") from e
