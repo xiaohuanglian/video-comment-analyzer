@@ -85,22 +85,32 @@ class TestClassifyComment:
         status, _ = auto.classify_comment("怎么做")
         assert status == "excluded"
 
-    # 2026-10-13 真实数据回归：观点/反问/抒情不进队列
+    # 2026-10-13 真实数据回归(2026-10-23 双通道模型重审):
+    # 观点评论分两类——AI 相关有实质内容的观点是互动对象(target_c,交 LLM 精筛判 engage);
+    # 纯修辞/抒情/引流仍是噪声。
     def test_real_world_false_positives_excluded(self):
         for text in (
-            # 观点长文：含「如何利用ai」但是论述不是提问
-            "应试教育考查人的方式真该改改了，以后新一代所有人都应该学会如何利用ai，而不是比谁会算题。闭卷计算数学，应该逐渐转向开放工具的数学推理与建模，如果二三十年后学生还",
-            # 反问式夸奖
+            # 反问式夸奖(钓夸,非观点)
             "不是，没人夸这个Gemini的配音吗……逻辑重音和情绪节奏都非常完美，真的和真人科普纪录片配音一模一样了",
-            # 陈述句含「流程」
+            # 引流分享
             "全套流程提示词已跑通，免费分享",
-            # 习语反问
-            "3.8flash日用非常好了，比豆包聪明多模态跟豆包一样好软件体验也比豆包好，我真当豆包用的，一年68还要什么自行车",
-            # 抒情体
+            # 抒情体(纯情绪无内容可接)
             "我从没觉得自己是一个多愁善感的人，带着对AI的郻夷和无可奈何点进这个视频。是AI掌握了用音乐使人类哭泣的能力吗？",
         ):
             status, label = auto.classify_comment(text)
             assert status == "excluded", f"{text[:30]}… 被误判为 {status}/{label}"
+
+    def test_real_world_ai_opinions_now_target_c(self):
+        # 用户画像重定义:对AI感兴趣、发表看法的人值得互动——不再当误报拦掉
+        cases = (
+            # AI 时代教育观点长文
+            "应试教育考查人的方式真该改改了，以后新一代所有人都应该学会如何利用ai，而不是比谁会算题。闭卷计算数学，应该逐渐转向开放工具的数学推理与建模",
+            # 模型对比体验(含习语但观点实质)
+            "3.8flash日用非常好了，比豆包聪明多模态跟豆包一样好软件体验也比豆包好，我真当豆包用的，一年68还要什么自行车",
+        )
+        for text in cases:
+            status, label = auto.classify_comment(text)
+            assert status == "target_c", f"{text[:30]}… 应为互动候选,实际 {status}/{label}"
 
     def test_real_world_true_positives_pass(self):
         # 夸奖+真提问（好奇怎么做）应入选
@@ -325,6 +335,7 @@ def _screen_item(cid: str, text: str, likes: int = 3) -> dict:
         "age_hours": 1.0,
         "signal": "问工具/怎么做",
         "tier": "A",
+        "lane": "help",
         "worth": 0,
         "intent": "",
         "match_reason": "问工具/怎么做",
@@ -351,14 +362,14 @@ def _fake_complete(responses: dict[str, str]):
         for key, resp in responses.items():
             if key in user:
                 return resp
-        return json.dumps({"is_our_audience": True, "intent": "求做法/路径", "we_can_answer": True, "worth": 7, "reason": "默认通过"})
+        return json.dumps({"lane": "help", "intent": "求做法/路径", "worth": 7, "reason": "默认通过"}, ensure_ascii=False)
 
     return _fn
 
 
 class TestLlmScreen:
     def test_keeps_high_worth_with_reason(self):
-        fn = _fake_complete({"动画": json.dumps({"is_our_audience": True, "intent": "求做法/路径", "we_can_answer": True, "worth": 8, "reason": "具体问做法,能给全步骤"}, ensure_ascii=False)})
+        fn = _fake_complete({"动画": json.dumps({"lane": "help", "intent": "求做法/路径", "worth": 8, "reason": "具体问做法,能给全步骤"}, ensure_ascii=False)})
         items = [_screen_item("1", "这个数学动画用什么做的呀")]
         kept, stats = asyncio.run(auto.llm_screen_candidates(items, threshold=6, complete_fn=fn))
         assert len(kept) == 1
@@ -369,22 +380,22 @@ class TestLlmScreen:
 
     def test_drops_off_domain_study_help(self):
         # 真提问但离域(备考/学术)→不入选:这是此前队列不精准的主场景
-        fn = _fake_complete({"绩点": json.dumps({"is_our_audience": False, "intent": "离域求助", "we_can_answer": False, "worth": 2, "reason": "备考学习求助,不是内容创作人群"}, ensure_ascii=False)})
+        fn = _fake_complete({"绩点": json.dumps({"lane": "skip", "intent": "离域求助", "worth": 2, "reason": "备考学习求助,不是内容创作人群"}, ensure_ascii=False)})
         items = [_screen_item("1", "大三重修求绩点复习规划建议")]
         kept, stats = asyncio.run(auto.llm_screen_candidates(items, threshold=6, complete_fn=fn))
         assert kept == []
         assert stats["screened"] == 1 and stats["kept"] == 0
 
     def test_threshold_boundary(self):
-        fn = _fake_complete({"动画": json.dumps({"is_our_audience": True, "intent": "求做法/路径", "we_can_answer": True, "worth": 5, "reason": "泛泛问法"}, ensure_ascii=False)})
+        fn = _fake_complete({"动画": json.dumps({"lane": "help", "intent": "求做法/路径", "worth": 5, "reason": "泛泛问法"}, ensure_ascii=False)})
         items = [_screen_item("1", "这个动画怎么做的")]
         kept, _ = asyncio.run(auto.llm_screen_candidates(items, threshold=6, complete_fn=fn))
         assert kept == []  # 5 < 6 不入选
 
     def test_sort_by_worth_desc(self):
         responses = {
-            "高": json.dumps({"is_our_audience": True, "intent": "求做法/路径", "we_can_answer": True, "worth": 9, "reason": "r9"}, ensure_ascii=False),
-            "低": json.dumps({"is_our_audience": True, "intent": "求工具/求推荐", "we_can_answer": True, "worth": 6, "reason": "r6"}, ensure_ascii=False),
+            "高": json.dumps({"lane": "help", "intent": "求做法/路径", "worth": 9, "reason": "r9"}, ensure_ascii=False),
+            "低": json.dumps({"lane": "help", "intent": "求工具/求推荐", "worth": 6, "reason": "r6"}, ensure_ascii=False),
         }
         fn = _fake_complete(responses)
         items = [_screen_item("1", "低分问题怎么弄"), _screen_item("2", "高分问题怎么做", likes=1)]
@@ -414,7 +425,7 @@ class TestLlmScreen:
         async def _fn(messages, **kw):
             calls["n"] += 1
             if calls["n"] == 1:
-                return json.dumps({"is_our_audience": True, "intent": "求做法/路径", "we_can_answer": True, "worth": 8, "reason": "ok"}, ensure_ascii=False)
+                return json.dumps({"lane": "help", "intent": "求做法/路径", "worth": 8, "reason": "ok"}, ensure_ascii=False)
             return "模型抽风了,没有JSON"
 
         items = [_screen_item("1", "first"), _screen_item("2", "second")]
@@ -439,3 +450,76 @@ class TestLlmScreen:
         monkeypatch.setattr(strategy_mod, "load", lambda: {})
         brief = auto._screen_brief()
         assert auto._DEFAULT_NICHE in brief
+
+
+class TestLaneModel:
+    """双通道:帮助型(help)与互动型(engage)。"""
+
+    def test_ai_opinion_comment_is_target_c(self):
+        # 不提问但有实质内容的 AI 观点 → C 档互动候选(用户画像:对AI感兴趣、发表看法可互动)
+        status, signal = auto.classify_comment("说实话AI生成的东西现在还是有一种塑料感,但进步速度真的吓人,再过两年估计看不出来了")
+        assert status == "target_c"
+        assert signal == "AI相关观点/讨论"
+
+    def test_ai_opinion_short_water_excluded(self):
+        status, _ = auto.classify_comment("AI真强")
+        assert status == "excluded"  # 太短没内容可接
+
+    def test_non_ai_opinion_excluded(self):
+        status, _ = auto.classify_comment("这个up主的剪辑节奏是真的舒服,看着不累,下饭神器")
+        assert status == "excluded"  # 与 AI 无关的泛观点
+
+    def test_english_word_not_misjudged_as_ai(self):
+        status, _ = auto.classify_comment("I said hello to the world and waited")
+        assert status == "excluded"  # said/hair 不应命中 AI 实体
+
+    def test_llm_screen_keeps_engage_lane(self):
+        fn = _fake_complete({"塑料感": json.dumps({"lane": "engage", "intent": "吐槽/怀疑", "worth": 7, "reason": "对AI成品有真实体感,可接话聊具体场景"}, ensure_ascii=False)})
+        items = [_screen_item("1", "AI生成的还是有塑料感,但进步太快了")]
+        items[0]["lane"] = "engage"
+        kept, stats = asyncio.run(auto.llm_screen_candidates(items, threshold=6, complete_fn=fn))
+        assert len(kept) == 1 and kept[0]["lane"] == "engage"
+
+    def test_help_sorted_before_engage(self):
+        responses = {
+            "帮": json.dumps({"lane": "help", "intent": "求做法/路径", "worth": 6, "reason": "rh"}, ensure_ascii=False),
+            "聊": json.dumps({"lane": "engage", "intent": "观点/预测", "worth": 9, "reason": "re"}, ensure_ascii=False),
+        }
+        fn = _fake_complete(responses)
+        items = [_screen_item("1", "聊聊这个"), _screen_item("2", "帮我怎么做")]
+        kept, _ = asyncio.run(auto.llm_screen_candidates(items, threshold=6, complete_fn=fn))
+        assert [k["lane"] for k in kept] == ["help", "engage"]  # 帮助型优先
+
+    def test_llm_off_domain_question_marked_skip(self):
+        # 离域真实提问(如 GPT vs Claude 用于学术笔记)→ LLM 应判 skip 而非硬编进 help
+        fn = _fake_complete({"obsidian": json.dumps({"lane": "skip", "intent": "离域求助", "worth": 3, "reason": "学术笔记场景,非内容创作域"}, ensure_ascii=False)})
+        items = [_screen_item("1", "请问用GPT还是Claude做obsidian学术笔记知识库")]
+        kept, _ = asyncio.run(auto.llm_screen_candidates(items, threshold=6, complete_fn=fn))
+        assert kept == []
+
+    def test_engage_draft_uses_engage_prompt(self):
+        item = _screen_item("1", "AI还是塑料感")
+        item["lane"] = "engage"
+        assert "自然接话" in auto._system_prompt_for(item)
+        assert "把答案直接给全" not in auto._system_prompt_for(item)
+        assert "把答案直接给全" in auto._system_prompt_for(_screen_item("2", "怎么做"))
+
+
+class TestSpamNick:
+    def test_subscription_seller_nick_excluded_in_build(self):
+        # 真实案例:昵称「GPT等AI订阅-可开票61」卖订阅,评论是体面观点也不值得回
+        rows = [{
+            "comment_id": "9001", "video_id": "v9", "content": "感觉AI正在成为新的生产力入口,以后人人都要会用",
+            "nickname": "GPT等AI订阅-可开票61", "like_count": 9, "create_time": int(datetime.now().timestamp()) - 3600,
+        }]
+        picked, funnel = auto.build_candidates(rows, {"v9": {"title": "t", "video_url": "u"}}, {"max_new_candidates_per_cycle": 5}, set())
+        assert picked == []
+        assert funnel["excluded"] == 1
+
+    def test_normal_nick_still_passes(self):
+        rows = [{
+            "comment_id": "9002", "video_id": "v9", "content": "这个AI动画用什么软件做的呀,求推荐",
+            "nickname": "一只神秘的羊", "like_count": 2, "create_time": int(datetime.now().timestamp()) - 3600,
+        }]
+        picked, _ = auto.build_candidates(rows, {"v9": {"title": "t", "video_url": "u"}}, {"max_new_candidates_per_cycle": 5}, set())
+        assert len(picked) == 1 and picked[0]["lane"] == "help"

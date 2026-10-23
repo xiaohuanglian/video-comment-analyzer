@@ -14,6 +14,7 @@ export interface AutomationCandidate {
   tier: 'A' | 'B' | string
   worth?: number
   intent?: string
+  lane?: 'help' | 'engage' | string
   match_reason?: string
   screened_by?: string
   draft: string
