@@ -882,8 +882,17 @@ def _llm_user_message(item: dict[str, Any]) -> str:
     return "起草评论区回复：\n" + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
+# 自动重写触发类(AI味硬伤,命中即重写;冒号/排比等低危格式仅标注不重写)
+_REWRITE_TRIGGER_KEYS = ("结尾开放反问", "金句收尾", "套话开场", "翻译腔", "群发味", "连接词堆叠", "编造感精确数字")
+
+
+def _ai_flavor_issues(warnings: list[str]) -> list[str]:
+    """从 lint 警告里抽出需要自动重写的 AI 味硬伤。"""
+    return [w for w in warnings if any(k in w for k in _REWRITE_TRIGGER_KEYS)]
+
+
 async def draft_with_llm(item: dict[str, Any]) -> str:
-    """用服务端已保存的模型配置起草；未配置返回空串（留给人工起草）。"""
+    """起草→自动去 AI 味环:lint 命中硬伤→带具体反馈重写→复检,干净才返回。"""
     from api.services.growth.model_settings import load_model_settings
     from api.services.insight.llm_analyzer import build_openai_client
 
@@ -926,9 +935,41 @@ async def draft_with_llm(item: dict[str, Any]) -> str:
         return ""
 
     try:
-        return await asyncio.to_thread(_call)
+        draft = await asyncio.to_thread(_call)
     except Exception:
         return ""
+    if not draft:
+        return ""
+
+    # —— 自动去 AI 味环:lint 硬伤→带反馈重写→复检(最多 2 轮,干净即出) ——
+    for _round in range(2):
+        issues = _ai_flavor_issues(check_reply_style(draft))
+        if not issues:
+            break
+
+        def _rewrite() -> str:
+            completion = client.chat.completions.create(
+                model=settings.get("model_name") or "deepseek-chat",
+                messages=[
+                    {"role": "system", "content": system_prompt
+                     + "\n\n你现在修改自己的草稿。只修复下列问题,内容与长度大致保持,其余一字不动;输出修改后的完整回复正文,不要任何说明。"},
+                    {"role": "user", "content": _llm_user_message(item)
+                     + f"\n\n我的草稿:\n{draft}\n\n必须修复的问题:\n"
+                       + "\n".join(f"- {w}" for w in issues)},
+                ],
+                temperature=0.4,
+                max_tokens=2000,
+            )
+            return (completion.choices[0].message.content or "").strip()
+
+        try:
+            fixed = await asyncio.to_thread(_rewrite)
+        except Exception:  # noqa: BLE001
+            break
+        if not fixed:
+            break
+        draft = fixed
+    return draft
 
 
 # ---------------------------------------------------------------------------
