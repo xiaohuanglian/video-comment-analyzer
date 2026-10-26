@@ -116,7 +116,7 @@ CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = 999999
 
 # Whether to enable the mode of crawling second-level comments. By default, crawling of second-level comments is not enabled.
 # If the old version of the project uses db, you need to refer to schema/tables.sql line 287 to add table fields.
-ENABLE_GET_SUB_COMMENTS = False
+ENABLE_GET_SUB_COMMENTS = True  # P1-4:楼中楼入采集,筛选用其判断「问题是否已被答好」
 
 # Stop a comment pass after this many consecutive pages with no new records (dedupe / empty pages).
 BILI_MAX_EMPTY_COMMENT_PAGES = 25

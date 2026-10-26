@@ -670,3 +670,68 @@ class TestNotifyThrottle:
         async def _t():
             await nm.notify("测试", ["行1"])  # 未配置时静默 False,不抛异常
         asyncio.run(_t())
+
+
+# ---------------------------------------------------------------------------
+# P1-4 子评论语境 + 已答拦截
+# ---------------------------------------------------------------------------
+
+class TestSubCommentContext:
+    def _rows_with_subs(self):
+        top = _crow("1000", "请问这种AI动画用什么软件做的呀", uid="u1", likes=5)
+        sub1 = _crow("1001", "剪映就行,手机也能做", uid="u2")
+        sub1["parent_comment_id"] = "1000"
+        sub1["like_count"] = 2
+        sub2 = _crow("1002", "谢谢,我去试试", uid="u1")
+        sub2["parent_comment_id"] = "1000"
+        # 孙子楼
+        sub3 = _crow("1003", "剪映特效没有这个丝滑", uid="u3")
+        sub3["parent_comment_id"] = "1001"
+        return [top, sub1, sub2, sub3]
+
+    def test_sub_rows_not_candidates_but_context(self):
+        rows = self._rows_with_subs()
+        cfg = {"max_new_candidates_per_cycle": 5}
+        picked, funnel = auto.build_candidates(rows, {"v1": {"title": "t", "video_url": "u"}}, cfg, set())
+        # 只有顶层那条入选;3 条楼中楼全部只进语境
+        assert len(picked) == 1 and picked[0]["comment_id"] == "1000"
+        assert funnel["sub_context"] == 3
+        assert funnel["candidates"] == 1
+        # 语境收拢:直接子楼 + 孙子楼都进来了
+        texts = picked[0]["sub_replies"]
+        assert any("剪映" in t for t in texts)
+        assert any("丝滑" in t for t in texts)
+        assert picked[0]["sub_reply_count"] == len(texts)
+
+    def test_no_sub_rows_no_regression(self):
+        # 老数据没有楼中楼:行为不变
+        picked, funnel = auto.build_candidates(
+            [_crow("2000", "请问这种AI动画用什么软件做的呀")],
+            {"v1": {"title": "t", "video_url": "u"}}, {"max_new_candidates_per_cycle": 5}, set())
+        assert picked[0]["sub_replies"] == [] and picked[0]["sub_reply_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_screen_includes_sub_replies_in_user_msg(self):
+        async def fake_complete(messages, **kwargs):
+            user = messages[-1]["content"]
+            assert "评论区已有回复" in user and "剪映" in user
+            return '{"lane":"help","intent":"求工具","worth":8,"already_answered":false,"reason":"值得"}'
+        item = {"id": "c_1", "comment_text": "问软件", "video_title": "t", "sub_replies": ["剪映就能做"], "signal": "s"}
+        kept, stats = await auto.llm_screen_candidates([item], complete_fn=fake_complete)
+        assert stats["kept"] == 1 and kept[0]["worth"] == 8
+
+    @pytest.mark.asyncio
+    async def test_already_answered_forces_skip(self):
+        async def fake_complete(messages, **kwargs):
+            return '{"lane":"help","intent":"求做法/路径","worth":9,"already_answered":true,"reason":"评论区已有人给出靠谱答案"}'
+        item = {"id": "c_2", "comment_text": "这个怎么做", "video_title": "t",
+                "sub_replies": ["用A软件,先xx再yy"], "signal": "s", "like_count": 10}
+        kept, stats = await auto.llm_screen_candidates([item], complete_fn=fake_complete)
+        # 哪怕 worth=9:已被答好 → 一律拦下
+        assert kept == [] and stats["screened"] == 1
+
+    def test_draft_user_msg_mentions_sub_replies(self):
+        item = {"comment_text": "怎么做", "video_title": "t", "intent": "求做法",
+                "sub_replies": ["有人答了一半"], "signal": "s"}
+        msg = auto._llm_user_message(item)
+        assert "楼中楼" in msg and "不重复原话" in msg
