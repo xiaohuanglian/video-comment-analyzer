@@ -141,6 +141,14 @@ class ScreenRequest(BaseModel):
     auto_draft: bool = True
 
 
+@router.post("/candidates/bulk-reject")
+async def bulk_reject() -> dict[str, Any]:
+    """一键拒绝全部旧规则筛的待审条目(仅限 screened_by != llm 的遗留项)。"""
+    store = _store()
+    n = store.bulk_reject_rules_screened()
+    return {"ok": True, "rejected": n}
+
+
 @router.post("/screen-collected")
 async def screen_collected(body: ScreenRequest) -> dict[str, Any]:
     """从手动批量采集的存量数据(data/comments)里筛目标用户 + LLM 起草。"""

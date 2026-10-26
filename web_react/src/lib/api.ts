@@ -253,6 +253,10 @@ export const api = {
     ),
   reject: (id: string) =>
     req<{ ok: boolean }>(`/automation/candidates/${id}/reject`, { method: 'POST' }),
+  bulkRejectRules: () =>
+    req<{ ok: boolean; rejected: number }>('/automation/candidates/bulk-reject', {
+      method: 'POST',
+    }),
   retract: (id: string) =>
     req<{ ok: boolean }>(`/automation/candidates/${id}/retract`, { method: 'POST' }),
   redraft: (id: string) =>
