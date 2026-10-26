@@ -802,3 +802,36 @@ class TestCollectCommand:
     def test_keywords_joined(self):
         cmd = auto.build_collect_command({"keywords": ["AI工具", "一人公司"]})
         assert "AI工具,一人公司" in cmd
+
+
+class TestTailQuestionLint:
+    # 用户 2026-10-26 实测反馈:草稿结尾全是反问,批量看像机器人
+    USER_CASE = ("同感，早期那些作品现在回看还是能看进去。我自己做片子时把分辨率拉到4K、"
+                 "帧率提到60，画面精致不少，结果观众留言记住的全是开头那个怪点子。"
+                 "精细度更像门槛，过了线之后拼的还是创意那口气。你觉得现在AI创作最缺的是哪块？")
+
+    def test_user_case_caught(self):
+        from api.services.outreach.reply_style import check_reply_style
+        ws = check_reply_style(self.USER_CASE)
+        assert any("结尾开放反问" in w for w in ws), ws
+
+    def test_common_open_questions_caught(self):
+        from api.services.outreach.reply_style import check_reply_style
+        for tail in ("这个思路你们怎么看？", "效率是不是才是关键呢？", "大家觉得哪个更好？", "你说是不是这个道理？"):
+            ws = check_reply_style("我觉得工具只是放大器。" + tail)
+            assert any("结尾开放反问" in w for w in ws), tail
+
+    def test_specific_question_not_caught(self):
+        # 针对对方处境的具体提问是真人行为,不误伤
+        from api.services.outreach.reply_style import check_reply_style
+        ws = check_reply_style("我这边用即梦跑分镜挺稳的。你那条卡住的是生成还是剪辑环节？")
+        assert not any("结尾开放反问" in w for w in ws), ws
+
+    def test_plain_statement_clean(self):
+        from api.services.outreach.reply_style import check_reply_style
+        ws = check_reply_style("同感，我拉到4K之后观看完成率反而没变，记住的还都是开头那个怪点子。")
+        assert not any("结尾开放反问" in w for w in ws), ws
+
+    def test_engage_prompt_bans_tail_question(self):
+        assert "禁结尾开放反问" in auto.BILI_ENGAGE_SYSTEM_PROMPT
+        assert "让对话能继续" not in auto.BILI_ENGAGE_SYSTEM_PROMPT  # 旧指令已删

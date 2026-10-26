@@ -81,6 +81,24 @@ _POINTING_PATTERNS: list[tuple[str, str]] = [
     (r"(好多人|很多人|大家)都?在?(评论区)?(找|问|求|蹲)", "无信息量元评论，删除"),
 ]
 
+# 结尾开放反问(AI味最强特征:真人接话陈述完就走,抛回去的是运营号)
+# 只打引导互动式(你觉得/怎么看/哪个好/是不是这样),不打针对对方处境的具体提问
+_RE_TAIL_OPEN_QUESTION = re.compile(
+    r"(你觉得|你们觉得|大家觉得|大伙觉得|怎么(看|想|说)|哪个(更)?好|"
+    r"是不是.{0,14}(呢|吗)[?？。]?$|你说?是不是|(不是吗|对吧|对不对)$|"
+    r"你们说|评论区.{0,6}(聊聊|讨论)|欢迎.{0,6}(讨论|分享))"
+)
+
+
+def _tail_sentence(text: str) -> str:
+    """取末句:先去尾部标点,再按句读切取最后一段(末尾分隔符不会再产生空段)。"""
+    t = (text or "").strip().rstrip("。！!？?～~\n ")
+    if not t:
+        return ""
+    parts = re.split(r"[。！!？?]", t)
+    tail = parts[-1] if parts[-1] else (parts[-2] if len(parts) > 1 else t)
+    return tail.strip()
+
 
 def check_reply_style(text: str) -> List[str]:
     """返回硬禁令命中列表（空列表 = 干净）。"""
@@ -128,6 +146,11 @@ def check_reply_style(text: str) -> List[str]:
     ):
         if re.search(pat, text):
             warnings.append(fix)
+
+    # 结尾开放反问:真人接话陈述完就走,结尾抛引导式问题=运营号/机器人腔
+    tail = _tail_sentence(text)
+    if _RE_TAIL_OPEN_QUESTION.search(tail):
+        warnings.append(f"结尾开放反问「{tail[:24]}…」(AI味最强特征;删掉末句或换陈述,具体到对方处境的提问除外)")
 
     return warnings
 
