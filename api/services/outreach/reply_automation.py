@@ -898,6 +898,13 @@ async def draft_with_llm(item: dict[str, Any]) -> str:
 
 def build_collect_command(config: dict[str, Any]) -> list[str]:
     keywords = ",".join(config.get("keywords") or [])
+    # 子评论开关从采集器全局配置读(P1-4 打开;曾因硬编码 false 导致始终不采)
+    try:
+        from config import base_config as _crawler_cfg
+
+        sub_comment = str(bool(_crawler_cfg.ENABLE_GET_SUB_COMMENTS)).lower()
+    except Exception:  # noqa: BLE001
+        sub_comment = "false"
     return [
         "uv", "run", "python", "main.py",
         "--platform", "bili",
@@ -907,7 +914,7 @@ def build_collect_command(config: dict[str, Any]) -> list[str]:
         "--crawler_max_notes_count", str(config.get("max_notes_per_keyword", 20)),
         "--max_comments_count_singlenotes", str(config.get("max_comments_per_video", 100)),
         "--get_comment", "true",
-        "--get_sub_comment", "false",
+        "--get_sub_comment", sub_comment,
         "--save_data_option", "jsonl",
         "--save_data_path", str(COMMENT_DIR.relative_to(PROJECT_ROOT)),
         "--headless", "false",
