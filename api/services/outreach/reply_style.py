@@ -172,3 +172,57 @@ def resolve_platform_defaults(platform: str) -> dict:
     if key and key in PLATFORM_REPLY_DEFAULTS:
         return dict(PLATFORM_REPLY_DEFAULTS[key])
     return {"interval_seconds": 90, "jitter_seconds": 150, "session_replies": 6, "break_seconds": 1200, "break_jitter": 1500, "daily_limit": 40}
+
+
+# ---------------------------------------------------------------------------
+# 草稿相似度防线(P0-2):同账号短期内发出高度相似的回复是平台风控的典型信号。
+# 参考 autoshu「避免重复评论」;LLM 逐条独立起草也会风格趋同,必须有量化闸。
+# ---------------------------------------------------------------------------
+
+# Jaccard 阈值:block 以上拒绝入队;warn-block 之间放行但标警告。互动型话术更容易趋同,阈值更严。
+SIMILARITY_BLOCK_HELP = 0.55
+SIMILARITY_WARN_HELP = 0.40
+SIMILARITY_BLOCK_ENGAGE = 0.45
+SIMILARITY_WARN_ENGAGE = 0.30
+
+
+def _char_bigrams(text: str) -> set:
+    """中文短文本用字符二元组;过滤空白,大小写不敏感。"""
+    s = "".join((text or "").split()).lower()
+    if len(s) < 2:
+        return set()
+    return {s[i : i + 2] for i in range(len(s) - 1)}
+
+
+def draft_similarity(a: str, b: str) -> float:
+    """两条草稿的 char-bigram Jaccard 相似度,0-1;任一太短返回 0。"""
+    ga, gb = _char_bigrams(a), _char_bigrams(b)
+    if not ga or not gb:
+        return 0.0
+    return len(ga & gb) / len(ga | gb)
+
+
+def similarity_against(draft: str, recent_drafts: List[str]) -> tuple[float, str]:
+    """与一批近期草稿比,返回 (最高相似度, 最相似的那条);空集返回 (0.0, '')。"""
+    best_score, best_text = 0.0, ""
+    for other in recent_drafts:
+        score = draft_similarity(draft, other)
+        if score > best_score:
+            best_score, best_text = score, other
+    return round(best_score, 3), best_text
+
+
+def similarity_verdict(draft: str, recent_drafts: List[str], lane: str = "help") -> tuple[str, float]:
+    """返回 ('ok'|'warn'|'block', 最高相似度)。互动型阈值更严。"""
+    score, _ = similarity_against(draft, recent_drafts)
+    if lane == "engage":
+        if score >= SIMILARITY_BLOCK_ENGAGE:
+            return "block", score
+        if score >= SIMILARITY_WARN_ENGAGE:
+            return "warn", score
+    else:
+        if score >= SIMILARITY_BLOCK_HELP:
+            return "block", score
+        if score >= SIMILARITY_WARN_HELP:
+            return "warn", score
+    return "ok", score

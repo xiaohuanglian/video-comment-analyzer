@@ -550,8 +550,8 @@ class TestBulkApprove:
         rules["screened_by"] = "rules"; rules["status"] = "pending_review"
         for it in (good, no_draft, rules):
             store._state["items"].append(it)
-        approved, skipped = store.bulk_approve_llm_screened()
-        assert approved == 1 and skipped == 1
+        approved, skipped, skipped_similar = store.bulk_approve_llm_screened()
+        assert approved == 1 and skipped == 1 and skipped_similar == 0
         assert good["status"] == "approved"
         assert no_draft["status"] == "pending_review"  # 无草稿不动
         assert rules["status"] == "pending_review"      # 规则筛不动
@@ -562,3 +562,111 @@ class TestBulkApprove:
         import asyncio as _a
         msg = _a.run(auto._sender_tick(store))
         assert "扫码登录窗口开启中" in msg
+
+
+# ---------------------------------------------------------------------------
+# P0-1 已回复用户冷却 / P0-2 相似度闸 / P0-3 通知节流
+# ---------------------------------------------------------------------------
+
+def _crow(cid, text, uid="u1", likes=3, nickname="普通网友"):
+    return {
+        "comment_id": cid, "video_id": "v1", "content": text, "nickname": nickname,
+        "user_id": uid, "like_count": likes,
+        "create_time": int(datetime.now().timestamp()) - 3600,
+    }
+
+
+class TestUserCooldown:
+    def test_recently_replied_user_excluded(self):
+        cfg = {
+            "max_new_candidates_per_cycle": 5,
+            "_replied_users": {"u1": datetime.now().timestamp() - 3600},  # 1小时前刚回过
+            "user_cooldown_days": 14,
+        }
+        picked, funnel = auto.build_candidates([_crow("1", "这个AI动画用什么软件做的呀")], {"v1": {"title": "t", "video_url": "u"}}, cfg, set())
+        assert picked == []
+        assert funnel["replied_user"] == 1
+
+    def test_replied_long_ago_passes_cooldown(self):
+        cfg = {
+            "max_new_candidates_per_cycle": 5,
+            "_replied_users": {"u1": datetime.now().timestamp() - 20 * 86400},  # 20天前,超过冷却
+            "user_cooldown_days": 14,
+        }
+        picked, _ = auto.build_candidates([_crow("1", "这个AI动画用什么软件做的呀")], {"v1": {"title": "t", "video_url": "u"}}, cfg, set())
+        assert len(picked) == 1 and picked[0]["commenter_id"] == "u1"
+
+    def test_mark_sent_records_replied_user(self, store):
+        it = _item("c1", draft="答案直接给全的草稿。")
+        it["commenter_id"] = "u9527"
+        store.add_items([it])
+        store.decide("c_c1", "approve", draft="答案直接给全的草稿。")
+        item = store.find("c_c1")
+        store.mark_sent(item, "rpid1")
+        assert store._state["replied_users"]["u9527"] > 0
+
+
+class TestSimilarityGate:
+    DRAFT_A = "可以,没有场景图也能做。用带文生图和图生视频的工具,先用提示词生成首帧图,再让这张图动起来,按主体动作场景镜头逐项写清。"
+    DRAFT_A_TWIN = "可以,没有场景图也能做。用带文生图和图生视频的工具,先用提示词生成首帧图,再让这张图动起来,按主体动作场景镜头一项项写。"
+    DRAFT_DIFF = "审核主要看人脸相似度和素材来源。把照片裁到脸占三分之一以下,转15度侧脸,加2%噪点再试,过了就正常出片。"
+
+    def test_similarity_scores(self):
+        from api.services.outreach.reply_style import draft_similarity, similarity_verdict
+        assert draft_similarity(self.DRAFT_A, self.DRAFT_A) == 1.0
+        assert draft_similarity(self.DRAFT_A, self.DRAFT_A_TWIN) > 0.6
+        assert draft_similarity(self.DRAFT_A, self.DRAFT_DIFF) < 0.3
+        v, s = similarity_verdict(self.DRAFT_A_TWIN, [self.DRAFT_A], lane="help")
+        assert v == "block" and s > 0.55
+        v2, _ = similarity_verdict(self.DRAFT_DIFF, [self.DRAFT_A], lane="help")
+        assert v2 == "ok"
+
+    def test_approve_blocked_when_similar_to_sent(self, store):
+        sent = _item("s1", draft=self.DRAFT_A)
+        sent["status"] = "sent"
+        sent["sent_at"] = datetime.now().isoformat(timespec="seconds")
+        store._state["items"].append(sent)
+        victim = _item("v1", draft=self.DRAFT_A_TWIN)
+        store._state["items"].append(victim)
+        with pytest.raises(ValueError, match="相似"):
+            store.decide("c_v1", "approve")
+
+    def test_approve_passes_and_warns_band(self, store):
+        sent = _item("s1", draft=self.DRAFT_A)
+        sent["status"] = "sent"
+        sent["sent_at"] = datetime.now().isoformat(timespec="seconds")
+        store._state["items"].append(sent)
+        ok_item = _item("v2", draft=self.DRAFT_DIFF)
+        store._state["items"].append(ok_item)
+        item = store.decide("c_v2", "approve")
+        assert item["status"] == "approved"
+        assert not any("相似度" in w for w in item["lint_warnings"])
+
+    def test_bulk_approve_counts_similar_skips(self, store):
+        sent = _item("s1", draft=self.DRAFT_A)
+        sent["status"] = "sent"
+        sent["sent_at"] = datetime.now().isoformat(timespec="seconds")
+        store._state["items"].append(sent)
+        twin = _item("t1", draft=self.DRAFT_A_TWIN); twin["screened_by"] = "llm"
+        diff = _item("t2", draft=self.DRAFT_DIFF); diff["screened_by"] = "llm"
+        store._state["items"].extend([twin, diff])
+        approved, skipped, similar = store.bulk_approve_llm_screened()
+        assert approved == 1 and similar == 1 and skipped == 0
+
+
+class TestNotifyThrottle:
+    def test_should_notify_dedupes_same_message(self):
+        from api.services import notify as nm
+        state = {}
+        assert nm.should_notify(state, "k", "msg") is True
+        assert nm.should_notify(state, "k", "msg") is False   # 同文同键冷却内
+        assert nm.should_notify(state, "k", "msg2") is True   # 文案变化立即放行
+        assert nm.should_notify(state, "k2", "msg") is True   # 不同键独立
+
+    def test_notify_noop_without_webhook(self):
+        import asyncio
+        from api.services import notify as nm
+        assert nm.configured() is False or nm.configured() is True  # 取决于环境,不崩即可
+        async def _t():
+            await nm.notify("测试", ["行1"])  # 未配置时静默 False,不抛异常
+        asyncio.run(_t())

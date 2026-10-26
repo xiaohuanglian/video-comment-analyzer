@@ -28,7 +28,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
-from .reply_style import check_reply_style
+from .reply_style import check_reply_style, similarity_verdict
+from api.services import notify as notify_mod
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 STORE_PATH = PROJECT_ROOT / "data" / "automation" / "bili_reply.json"
@@ -55,6 +56,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "auto_draft": True,
     "llm_screen": True,
     "llm_screen_threshold": 6,
+    "user_cooldown_days": 14,
 }
 
 # ---------------------------------------------------------------------------
@@ -231,7 +233,7 @@ class AutomationStore:
             "collect_interval_hours", "max_notes_per_keyword", "max_comments_per_video",
             "collect_timeout_minutes", "freshness_a_hours", "freshness_b_hours",
             "max_new_candidates_per_cycle", "max_per_video_per_day", "daily_send_limit",
-            "send_interval_seconds", "send_jitter_seconds", "llm_screen_threshold",
+            "send_interval_seconds", "send_jitter_seconds", "llm_screen_threshold", "user_cooldown_days",
         ):
             if key in partial:
                 try:
@@ -279,18 +281,42 @@ class AutomationStore:
                     n += 1
         return n
 
-    def bulk_approve_llm_screened(self) -> tuple[int, int]:
-        """批量批准全部 LLM 精筛且已有草稿的待审条目。返回 (批准数, 跳过数[无草稿])。"""
-        approved = skipped = 0
+    def bulk_approve_llm_screened(self) -> tuple[int, int, int]:
+        """批量批准全部 LLM 精筛且已有草稿的待审条目。返回 (批准数, 无草稿跳过, 相似度拦截跳过)。"""
+        approved = skipped = skipped_similar = 0
         for it in list(self._state["items"]):
             if it.get("status") != "pending_review" or it.get("screened_by") != "llm":
                 continue
             if not (it.get("draft") or "").strip():
                 skipped += 1
                 continue
-            if self.decide(it["id"], "approve"):
-                approved += 1
-        return approved, skipped
+            try:
+                if self.decide(it["id"], "approve"):
+                    approved += 1
+            except ValueError:  # 相似度拦截
+                skipped_similar += 1
+        return approved, skipped, skipped_similar
+
+    def _recent_outbound_drafts(self, exclude_id: str = "", days: int = 30) -> list[str]:
+        """近 N 天已发/发送中/已批准的草稿,作为相似度比对基准。"""
+        cutoff = datetime.now() - timedelta(days=days)
+        out: list[str] = []
+        for it in self._state["items"]:
+            if it.get("status") not in ("sent", "sending", "approved"):
+                continue
+            if exclude_id and it["id"] == exclude_id:
+                continue
+            ts_str = it.get("sent_at") or it.get("decided_at") or it.get("created_at") or ""
+            try:
+                ts = datetime.fromisoformat(ts_str) if ts_str else None
+            except ValueError:
+                ts = None
+            if ts and ts < cutoff:
+                continue
+            d = (it.get("draft") or "").strip()
+            if d:
+                out.append(d)
+        return out
 
     def decide(self, item_id: str, action: str, draft: str = "") -> Optional[dict[str, Any]]:
         it = self.find(item_id)
@@ -300,8 +326,18 @@ class AutomationStore:
             final = (draft or it.get("draft") or "").strip()
             if not final:
                 return None
+            # P0-2 相似度闸:与近 30 天已发/已批草稿比对,block 拒绝、warn 放行但标警
+            verdict, score = similarity_verdict(
+                final, self._recent_outbound_drafts(exclude_id=item_id), lane=str(it.get("lane") or "help")
+            )
+            if verdict == "block":
+                raise ValueError(
+                    f"草稿与近期已发/已批内容过于相似({score:.0%}),为防账号风控已拦截,请改写后再批"
+                )
             it["draft"] = final
-            it["lint_warnings"] = check_reply_style(final)
+            it["lint_warnings"] = list(check_reply_style(final))
+            if verdict == "warn":
+                it["lint_warnings"].append(f"与近期内容相似度 {score:.0%},建议微调措辞")
             it["status"] = "approved"
             it["decided_at"] = datetime.now().isoformat(timespec="seconds")
         elif action == "reject":
@@ -389,6 +425,10 @@ class AutomationStore:
         ).isoformat(timespec="seconds")
         self._roll_daily()
         s["sent_today"] = s.get("sent_today", 0) + 1
+        # P0-1:发送成功即记入已回复用户表(冷却期内不再选中同一个人)
+        cid = str(item.get("commenter_id") or "").strip()
+        if cid:
+            self._state.setdefault("replied_users", {})[cid] = time.time()
         self.save()
 
     def mark_failed(self, item: dict[str, Any], error: str, retry_status: str = "approved") -> None:
@@ -435,12 +475,17 @@ def build_candidates(
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """从采集行里筛出候选。返回 (候选列表, 漏斗统计)。"""
     now = now or datetime.now()
-    funnel = {"comments": 0, "excluded": 0, "stale": 0, "dedup": 0, "candidates": 0}
+    funnel = {"comments": 0, "excluded": 0, "stale": 0, "dedup": 0, "candidates": 0, "replied_user": 0}
     quota_left = max(1, int(config.get("max_new_candidates_per_cycle", 8)))
     video_today: dict[str, str] = {}
     today = now.strftime("%Y-%m-%d")
     for it in config.get("_items_today", []):  # 由调用方注入：今天已入队的视频
         video_today[str(it.get("video_id"))] = today
+    # 已回复用户冷却表(调用方注入 {mid: 上次发送成功 ts});同一人短期内不重复回复
+    cooldown_s = float(config.get("user_cooldown_days", 14)) * 86400
+    replied_users: dict[str, float] = {
+        str(k): float(v) for k, v in (config.get("_replied_users") or {}).items()
+    }
 
     picked: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -458,6 +503,11 @@ def build_candidates(
         if _RE_SPAM_NICK.search(nickname):
             funnel["excluded"] += 1
             continue  # 营销号昵称:卖订阅/代充/接单,评论再像样也不回
+        commenter_id = str(row.get("user_id") or "").strip()
+        if commenter_id and commenter_id in replied_users:
+            if now.timestamp() - replied_users[commenter_id] < cooldown_s:
+                funnel["replied_user"] += 1
+                continue  # 冷却期内已回过的人,不重复回复
         text = str(row.get("content") or "").strip()
         status, signal = classify_comment(text)
         if status == "excluded":
@@ -489,7 +539,8 @@ def build_candidates(
                 "video_id": vid,
                 "video_title": str(video.get("title") or "")[:80],
                 "video_url": str(video.get("video_url") or ""),
-                "commenter": str(row.get("nickname") or ""),
+                "commenter": nickname,
+                "commenter_id": commenter_id,
                 "comment_text": text[:500],
                 "like_count": _lk(row),
                 "age_hours": round(age_hours, 1),
@@ -854,6 +905,7 @@ async def screen_collected(
         cfg["_items_today"] = [
             it for it in store.items if str(it.get("created_at", "")).startswith(today)
         ]
+        cfg["_replied_users"] = dict(store._state.get("replied_users") or {})
         picked, funnel = build_candidates(
             rows, video_map, cfg, store._state["processed_comment_ids"]
         )
@@ -921,6 +973,7 @@ async def run_cycle(store: AutomationStore) -> dict[str, Any]:
         rows, video_map = read_collected()
         cfg = dict(store.config)
         cfg["_items_today"] = [it for it in store.items if it["created_at"].startswith(datetime.now().strftime("%Y-%m-%d"))]
+        cfg["_replied_users"] = dict(store._state.get("replied_users") or {})
         picked, funnel = build_candidates(rows, video_map, cfg, store._state["processed_comment_ids"])
         quota = int(store.config.get("max_new_candidates_per_cycle", 8))
         picked, screen_stats = await _refine_candidates(picked, cfg, quota)
@@ -1150,6 +1203,10 @@ async def _sender_tick(store: AutomationStore) -> str:
         return "扫码登录窗口开启中,发送暂停"
     ok, reason = store.can_send_now()
     if not ok:
+        # P0-3:配额用尽/窗口外等重要节奏事件推飞书(节流:同文案 6h 一次)
+        if "配额" in reason or "窗口" in reason:
+            if notify_mod.should_notify(store._state["sender"].setdefault("notified", {}), "pace", reason):
+                await notify_mod.notify("发送节奏提醒", [reason, "可在设置页查看发送通道状态"])
         return reason or "等待中"
     item = store.next_approved()
     if not item:
@@ -1161,10 +1218,17 @@ async def _sender_tick(store: AutomationStore) -> str:
     try:
         cookie = cookie_cached or await refresh_bili_cookie()
     except Exception as exc:  # noqa: BLE001
-        # 错误必须可见：记录到 sender 状态，监工台展示，不再静默吞掉
+        # 错误必须可见：记录到 sender 状态，监工台展示;登录失效推飞书(节流)
         store._state["sender"]["last_error"] = str(exc)[:200]
         store._state["sender"]["last_error_at"] = datetime.now().isoformat(timespec="seconds")
         store.save()
+        if notify_mod.should_notify(
+            store._state["sender"].setdefault("notified", {}), "blocked", str(exc)[:120]
+        ):
+            await notify_mod.notify(
+                "发送通道阻塞",
+                [str(exc)[:160], "批准的回复在队列等待;去设置页「扫码恢复B站登录」"],
+            )
         return f"发送阻塞：{str(exc)[:120]}"
     store.mark_sending(item)
     try:
@@ -1180,10 +1244,29 @@ async def _sender_tick(store: AutomationStore) -> str:
         store.mark_sent(item, reply_id)
         store._state["sender"]["last_error"] = ""
         store.save()
+        # 队列清空即告知(节流 1h):全部发送完成
+        if not store.next_approved():
+            if notify_mod.should_notify(
+                store._state["sender"].setdefault("notified", {}), "queue_empty", "队列已清空"
+            ):
+                await notify_mod.notify("发送队列已清空", ["所有已批准回复均已发送完毕"])
         return f"已发送 → {item['commenter']}（《{item['video_title'][:20]}》）"
     except Exception as exc:  # noqa: BLE001
         msg = str(exc)
         store.mark_failed(item, msg)
+        # P0-3:发送失败/风控预警码推飞书(同条目同错误节流)
+        risk = "风控预警:" if any(k in msg for k in ("折叠", "验证", "频繁", "限流")) else ""
+        if notify_mod.should_notify(
+            store._state["sender"].setdefault("notified", {}), f"fail:{item['id']}", msg[:120]
+        ):
+            await notify_mod.notify(
+                f"回复发送失败 {risk}".strip(),
+                [
+                    f"对象:{item['commenter']}《{item['video_title'][:24]}》",
+                    f"原因:{msg[:160]}",
+                    f"状态:{item['status']}(重试 {item.get('attempts', 0)}/3)",
+                ],
+            )
         if "bili_jct" in msg or "Cookie" in msg:
             try:
                 COOKIE_PATH.unlink()
