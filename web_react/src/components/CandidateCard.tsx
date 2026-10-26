@@ -59,6 +59,25 @@ export default function CandidateCard({
         {c.screened_by === 'rules' && (
           <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-600">规则筛</span>
         )}
+        {!!c.persona && (
+          <span
+            className="rounded px-1.5 py-0.5 text-violet-600"
+            title="对方画像:决定回复话术分层"
+            style={{ background: 'rgb(245 243 255)' }}
+          >
+            {c.persona === 'novice_doer'
+              ? '新手实干'
+              : c.persona === 'expert_doer'
+                ? '老手实干'
+                : c.persona === 'thinker'
+                  ? '观点讨论'
+                  : c.persona === 'watcher'
+                    ? '观望焦虑'
+                    : c.persona === 'beggar'
+                      ? '求带党'
+                      : '营销号'}
+          </span>
+        )}
         {c.tier === 'A' && (
           <span className="rounded bg-orange-50 px-1.5 py-0.5 text-orange-500">新鲜</span>
         )}

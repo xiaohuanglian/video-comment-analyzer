@@ -213,6 +213,20 @@ export default function SettingsPage() {
             setStrat({ reference_styles: v.split('\n').map((x) => x.trim()).filter(Boolean) })
           }
         />
+        <TextField
+          label="90天唯一目标(成功标准)"
+          value={strategy.goal ?? ''}
+          placeholder="如:把「AI创业者」人设立住,评论区出现等更新/怎么跟你学型信号"
+          onChange={(v) => setStrat({ goal: v })}
+        />
+        <AreaField
+          label="实战证据(可公开讲的经历与数字)"
+          value={strategy.evidence ?? ''}
+          placeholder={
+            '如:\n操盘:公众号矩阵 0→X 万粉,周期 X 个月\nYouVibe:开发 X 个月,X 用户,收入 X(没收入就写"过程全公开")\n可公开:用户量级/投入时间;永不公开:内网域名/客户信息'
+          }
+          onChange={(v) => setStrat({ evidence: v })}
+        />
         <button
           onClick={saveStrategy}
           disabled={strategyBusy || !strategyDirty}

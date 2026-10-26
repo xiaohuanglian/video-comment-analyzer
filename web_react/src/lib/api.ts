@@ -17,6 +17,7 @@ export interface AutomationCandidate {
   lane?: 'help' | 'engage' | string
   match_reason?: string
   screened_by?: string
+  persona?: string
   sub_replies?: string[]
   sub_reply_count?: number
   draft: string
@@ -145,6 +146,8 @@ export interface Strategy {
   tone_rules?: string[]
   forbidden?: string[]
   reference_styles?: string[]
+  goal?: string
+  evidence?: string
   updated_at?: string
   exists?: boolean
 }

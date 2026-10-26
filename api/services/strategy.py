@@ -16,7 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STRATEGY_DIR = PROJECT_ROOT / "data" / "strategy"
 STRATEGY_FILE = STRATEGY_DIR / "youvibe_account.json"
 
-FIELDS = ("niche", "target_audience", "monetization", "tone_rules", "forbidden", "reference_styles")
+FIELDS = ("niche", "target_audience", "monetization", "tone_rules", "forbidden", "reference_styles", "goal", "evidence")
 
 
 def load() -> dict[str, Any]:
