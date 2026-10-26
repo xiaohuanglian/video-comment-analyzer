@@ -900,3 +900,60 @@ class TestHumanFlavorLintV2:
         from api.services.outreach.reply_style import check_reply_style
         ws = check_reply_style("确实,我之前也这么试过,后来直接把分辨率降一半先抽构图,能用的高清重跑,废卡少了一多半。")
         assert not any(k in w for w in ws for k in ("套话", "金句", "翻译腔", "群发味", "连接词")), ws
+
+
+class TestAutoDeAIFlavor:
+    """去AI味内置于起草管线:lint 硬伤→自动重写→干净才出(用户要求:呈现即终稿)。"""
+
+    def test_fake_precision_caught_but_integer_ok(self):
+        from api.services.outreach.reply_style import check_reply_style
+        ws = check_reply_style("句间留 0.2 秒,导出前对一遍口型。")
+        assert any("编造感精确数字" in w for w in ws)
+        ws2 = check_reply_style("每镜三到五秒,一条只写一个动作。")
+        assert not any("编造感精确数字" in w for w in ws2)
+
+    def test_ai_flavor_issues_filters_rewrite_class(self):
+        from api.services.outreach.reply_style import check_reply_style
+        ws = check_reply_style("太真实了。然而事实上,工具在变。更重要的是,人在变。")
+        hard = auto._ai_flavor_issues(ws)
+        assert len(hard) >= 2  # 套话开场 + 连接词堆叠
+        # 低危格式问题(冒号/排比)不触发重写
+        soft = auto._ai_flavor_issues(["第 3 字附近有提示性冒号（冒号只能用来引直接原话）"])
+        assert soft == []
+
+    @pytest.mark.asyncio
+    async def test_draft_pipeline_rewrites_until_clean(self):
+        """起草→lint 抓反问→带反馈重写→干净;重写调用带修复指令。"""
+        calls = []
+
+        from types import SimpleNamespace
+
+        class FakeCompletions:
+            def create(self, messages, **kw):
+                calls.append(messages)
+                if len(calls) == 1:
+                    content = "同感,精细度是门槛。你觉得现在AI创作最缺的是哪块？"  # 首稿带反问
+                else:
+                    content = "同感,精细度是门槛,过了线拼的还是创意那口气。"  # 重写后干净
+                return SimpleNamespace(choices=[SimpleNamespace(
+                    message=SimpleNamespace(content=content), finish_reason="stop")])
+
+        class FakeClient:
+            chat = type("Chat", (), {"completions": FakeCompletions()})()
+
+        import api.services.growth.model_settings as ms
+        import api.services.insight.llm_analyzer as la
+        orig_ms, orig_la = ms.load_model_settings, la.build_openai_client
+        ms.load_model_settings = lambda: {"api_key": "k", "base_url": "http://x", "model_name": "m"}
+        la.build_openai_client = lambda *a, **k: FakeClient()
+        try:
+            item = {"id": "c_x", "comment_text": "AI创作日趋精美", "video_title": "t",
+                    "signal": "s", "lane": "engage"}
+            out = await auto.draft_with_llm(item)
+        finally:
+            ms.load_model_settings, la.build_openai_client = orig_ms, orig_la
+        assert "你觉得" not in out
+        assert len(calls) == 2  # 首稿 + 一次重写
+        rewrite_msgs = calls[1]
+        assert "必须修复的问题" in rewrite_msgs[1]["content"]
+        assert "修改自己的草稿" in rewrite_msgs[0]["content"]

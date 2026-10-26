@@ -104,6 +104,9 @@ _RE_TRANSLATION_TONE = re.compile(r"进行(一|了|一次)?(分析|处理|优化
 # 群发味称呼
 _RE_BROADCAST_TONE = re.compile(r"亲[，,!！]|家人们")
 
+# 编造感精确数字:小数点参数真人开口极少说(0.2秒/12.5%),整数约数(3到5秒)正常
+_RE_FAKE_PRECISION = re.compile(r"\d+\.\d+\s*(秒|分钟|小时|%|倍|张|条|次|个点)")
+
 # 固定连接词(堆叠才报)
 _RE_CONNECTIVES = re.compile(r"然而|事实上|值得注意的是|更重要的是|与此同时|不得不说")
 
@@ -185,6 +188,11 @@ def check_reply_style(text: str) -> List[str]:
     # 固定连接词堆叠(≥2次)
     if len(_RE_CONNECTIVES.findall(text)) >= 2:
         warnings.append("固定连接词堆叠(然而/事实上/值得注意的是;删掉一半,读者自己感觉得到话锋)")
+
+    # 编造感精确数字(小数点参数)
+    m = _RE_FAKE_PRECISION.search(text)
+    if m:
+        warnings.append(f"编造感精确数字「{m.group(0)}」(没量过的不写小数点,改成约数:留一点空隙/快了近半)")
 
     return warnings
 
