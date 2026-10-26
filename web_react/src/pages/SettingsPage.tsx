@@ -22,6 +22,31 @@ export default function SettingsPage() {
   // 费用统计
   const [costs, setCosts] = useState<CostSummary | null>(null)
   const [recentCalls, setRecentCalls] = useState<CostEntry[]>([])
+  const [loginBusy, setLoginBusy] = useState(false)
+
+  const refreshStatus = useCallback(() => {
+    api
+      .automationStatus()
+      .then((s) => {
+        setStatus(s)
+        const c = s.config as Record<string, unknown>
+        setKeywordsText(((c.keywords as string[]) ?? []).join('\n'))
+        setDailySendLimit(Number(c.daily_send_limit ?? 5))
+        setSendInterval(Number(c.send_interval_seconds ?? 300))
+        setSendWindowStart(String(c.send_window_start ?? '10:00'))
+        setSendWindowEnd(String(c.send_window_end ?? '22:00'))
+        setFreshnessA(Number(c.freshness_a_hours ?? 48))
+        setFreshnessB(Number(c.freshness_b_hours ?? 168))
+      })
+      .catch(() => {})
+  }, [])
+
+  // 发送通道状态轮询:登录进行中加密轮询,平时也是低频刷新
+  useEffect(() => {
+    refreshStatus()
+    const t = setInterval(refreshStatus, 4000)
+    return () => clearInterval(t)
+  }, [refreshStatus])
 
   useEffect(() => {
     api
@@ -36,20 +61,6 @@ export default function SettingsPage() {
       .costsLedger(8)
       .then(setRecentCalls)
       .catch(() => {})
-    api
-      .automationStatus()
-      .then((s) => {
-        setStatus(s)
-        const c = s.config as Record<string, unknown>
-        setKeywordsText(((c.keywords as string[]) ?? []).join('\n'))
-        setDailySendLimit(Number(c.daily_send_limit ?? 5))
-        setSendInterval(Number(c.send_interval_seconds ?? 300))
-        setSendWindowStart(String(c.send_window_start ?? '10:00'))
-        setSendWindowEnd(String(c.send_window_end ?? '22:00'))
-        setFreshnessA(Number(c.freshness_a_hours ?? 48))
-        setFreshnessB(Number(c.freshness_b_hours ?? 168))
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
   }, [])
 
   const save = useCallback(async () => {
@@ -216,6 +227,67 @@ export default function SettingsPage() {
           )}
           {strategySaved ? '已保存,全部生成入口已生效' : strategyDirty ? '保存定位' : '无改动'}
         </button>
+      </section>
+
+      {/* 发送通道(B站):登录态监控与扫码恢复 */}
+      <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold">发送通道(B 站)</h2>
+          <p className="text-xs text-stone-400">受控回复的登录态与发送状态;失效了在这里扫码恢复</p>
+        </div>
+        <div className="rounded-xl bg-stone-50 px-3.5 py-2.5 text-xs space-y-1">
+          <p>
+            Cookie 状态:
+            {status?.sender?.cookie_cached ? (
+              <span className="font-medium text-emerald-600">已就绪</span>
+            ) : (
+              <span className="font-medium text-red-500">失效(批准的回复会排队等待)</span>
+            )}
+            {status?.sender?.account?.uname ? (
+              <span className="text-stone-400">
+                {' '}
+                · 账号 {status.sender.account.uname} Lv.{status.sender.account.level ?? '?'}
+              </span>
+            ) : null}
+          </p>
+          {status?.sender?.login_flow?.message && (
+            <p className="text-amber-600">{status.sender.login_flow.message}</p>
+          )}
+          {status?.sender?.wait_reason && (
+            <p className="text-stone-400">发送节奏:{String(status.sender.wait_reason)}</p>
+          )}
+          {status?.sender && !status.sender.cookie_cached && !status.sender.login_flow?.running && (
+            <p className="text-red-400">
+              {String((status.sender as { last_error?: string }).last_error || '')}
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={async () => {
+              if (loginBusy || status?.sender?.login_flow?.running) return
+              setLoginBusy(true)
+              try {
+                await api.biliLogin()
+              } catch (e) {
+                setError(e instanceof Error ? e.message : String(e))
+              } finally {
+                setLoginBusy(false)
+              }
+            }}
+            disabled={loginBusy || status?.sender?.login_flow?.running}
+            className="flex items-center gap-1.5 rounded-lg bg-(--brand) px-4 py-2 text-sm text-white hover:opacity-90 disabled:opacity-40"
+          >
+            {status?.sender?.login_flow?.running ? (
+              <>
+                <Loader2 size={14} className="animate-spin" /> 登录窗口已打开,等你扫码…
+              </>
+            ) : (
+              '扫码恢复 B 站登录'
+            )}
+          </button>
+          <p className="text-xs text-stone-400">本机会弹出浏览器窗口,用 B 站 App 扫码(3 分钟内有效)</p>
+        </div>
       </section>
 
       {/* 费用统计(只记账,不限流) */}

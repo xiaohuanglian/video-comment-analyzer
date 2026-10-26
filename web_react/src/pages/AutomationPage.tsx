@@ -209,11 +209,52 @@ export default function AutomationPage() {
             清掉旧规则筛的遗留条目({items.filter((c) => c.screened_by !== 'llm').length} 条,一键拒绝)
           </button>
         )}
+        {tab === 'pending_review' && items.some((c) => c.screened_by === 'llm') && (
+          <button
+            onClick={async () => {
+              const n = items.filter((c) => c.screened_by === 'llm' && (c.draft || '').trim()).length
+              if (!window.confirm(`批量批准 ${n} 条 LLM 精筛条目(以当前草稿入队,之后自动发送)?`)) return
+              try {
+                const res = await api.bulkApproveLlm()
+                setNotice(
+                  `已批准 ${res.approved} 条${res.skipped_no_draft ? `,${res.skipped_no_draft} 条无草稿跳过` : ''}`,
+                )
+                await refresh()
+              } catch (e) {
+                setNotice(e instanceof Error ? e.message : String(e))
+              }
+            }}
+            className="w-full rounded-xl border border-dashed border-orange-300 bg-orange-50/60 py-2 text-xs font-medium text-(--brand) hover:bg-orange-50"
+          >
+            批量批准 LLM 精筛条目({items.filter((c) => c.screened_by === 'llm' && (c.draft || '').trim()).length} 条有草稿)
+          </button>
+        )}
         {items.length === 0 && (
           <p className="py-12 text-center text-sm text-stone-400">这个状态下没有条目</p>
         )}
         {items.map((c) => (
-          <CandidateCard key={c.id} c={c} onClick={() => setSelected(c)} />
+          <CandidateCard
+            key={c.id}
+            c={c}
+            onClick={() => setSelected(c)}
+            onApprove={async (cc) => {
+              try {
+                const res = await api.approve(cc.id, cc.draft)
+                setNotice(res.warnings?.length ? `已批准,但草稿有 ${res.warnings.length} 条样式提醒:${res.warnings[0]}` : '已批准,排队发送')
+                await refresh()
+              } catch (e) {
+                setNotice(e instanceof Error ? e.message : String(e))
+              }
+            }}
+            onReject={async (cc) => {
+              try {
+                await api.reject(cc.id)
+                await refresh()
+              } catch (e) {
+                setNotice(e instanceof Error ? e.message : String(e))
+              }
+            }}
+          />
         ))}
       </div>
 
