@@ -26,7 +26,12 @@ export default function AutomationPage() {
     try {
       const [s, list] = await Promise.all([api.automationStatus(), api.candidates(tab, 100)])
       setStatus(s)
-      setItems(list)
+      // 新条目排前(旧规则筛遗留不再压底)
+      setItems(
+        (list as AutomationCandidate[]).sort((a, b) =>
+          (b.created_at || '').localeCompare(a.created_at || ''),
+        ),
+      )
       return s
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e))
@@ -173,8 +178,37 @@ export default function AutomationPage() {
         </div>
       )}
 
+      {/* 发送通道状态:Cookie 未就绪时显眼提醒 */}
+      {status?.sender && !status.sender.cookie_cached && (
+        <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-700">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+          <span>
+            发送通道未就绪:B站登录态失效(需要重新扫码登录)。你现在批准的回复会在队列里等待,
+            登录恢复后按节奏自动发(间隔约 3 分钟、每日上限、发送时段内);不想等的话,点开条目用「去B站回复」手动回。
+          </span>
+        </div>
+      )}
+
       {/* 列表 */}
       <div className="space-y-2">
+        {tab === 'pending_review' && items.some((c) => c.screened_by !== 'llm') && (
+          <button
+            onClick={async () => {
+              const n = items.filter((c) => c.screened_by !== 'llm').length
+              if (!window.confirm(`一键拒绝 ${n} 条旧规则筛的遗留条目?(LLM 精筛的条目不受影响)`)) return
+              try {
+                const res = await api.bulkRejectRules()
+                setNotice(`已清掉 ${res.rejected} 条旧规则筛条目`)
+                await refresh()
+              } catch (e) {
+                setNotice(e instanceof Error ? e.message : String(e))
+              }
+            }}
+            className="w-full rounded-xl border border-dashed border-stone-300 bg-stone-50 py-2 text-xs text-stone-500 hover:border-red-300 hover:text-red-500"
+          >
+            清掉旧规则筛的遗留条目({items.filter((c) => c.screened_by !== 'llm').length} 条,一键拒绝)
+          </button>
+        )}
         {items.length === 0 && (
           <p className="py-12 text-center text-sm text-stone-400">这个状态下没有条目</p>
         )}
@@ -243,14 +277,25 @@ function Drawer({
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
             <section>
               <div className="text-xs text-stone-400 mb-1">原视频</div>
-              <a
-                href={c.video_url}
-                target="_blank"
-                rel="noreferrer"
-                className="text-sm text-(--brand) hover:underline"
-              >
-                {c.video_title}
-              </a>
+              <div className="flex items-center gap-3">
+                <a
+                  href={c.video_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sm text-(--brand) hover:underline"
+                >
+                  {c.video_title}
+                </a>
+                <a
+                  href={`${c.video_url}#reply${c.comment_id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="打开这条评论在B站的位置,自己手动回复"
+                  className="shrink-0 rounded-lg border border-stone-200 px-2 py-0.5 text-xs text-stone-500 hover:border-(--brand) hover:text-(--brand)"
+                >
+                  去B站回复 ↗
+                </a>
+              </div>
             </section>
             <section>
               <div className="text-xs text-stone-400 mb-1">
@@ -278,7 +323,7 @@ function Drawer({
                     }}
                     className="text-xs text-(--brand) hover:underline"
                   >
-                    让 AI 重新起草
+                    {c.draft ? '让 AI 重新起草' : '让 AI 起草'}
                   </button>
                 )}
               </div>

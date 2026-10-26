@@ -270,6 +270,15 @@ class AutomationStore:
         out = [it for it in self._state["items"] if it["status"] == status]
         return out[-limit:]
 
+    def bulk_reject_rules_screened(self) -> int:
+        """拒绝全部「非 LLM 精筛」的待审条目(旧规则筛遗留),返回数量。"""
+        n = 0
+        for it in list(self._state["items"]):
+            if it.get("status") == "pending_review" and it.get("screened_by") != "llm":
+                if self.decide(it["id"], "reject"):
+                    n += 1
+        return n
+
     def decide(self, item_id: str, action: str, draft: str = "") -> Optional[dict[str, Any]]:
         it = self.find(item_id)
         if not it or it["status"] != "pending_review":

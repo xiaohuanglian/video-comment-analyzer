@@ -523,3 +523,18 @@ class TestSpamNick:
         }]
         picked, _ = auto.build_candidates(rows, {"v9": {"title": "t", "video_url": "u"}}, {"max_new_candidates_per_cycle": 5}, set())
         assert len(picked) == 1 and picked[0]["lane"] == "help"
+
+
+class TestBulkReject:
+    def test_bulk_reject_only_rules_screened_pending(self, store):
+        old1 = _item("r1"); old1["screened_by"] = "rules"; old1["status"] = "pending_review"
+        old2 = _item("r2"); old2["screened_by"] = ""; old2["status"] = "pending_review"
+        new1 = _item("n1"); new1["screened_by"] = "llm"; new1["status"] = "pending_review"
+        approved_old = _item("a1"); approved_old["screened_by"] = "rules"; approved_old["status"] = "approved"
+        for it in (old1, old2, new1, approved_old):
+            store._state["items"].append(it)
+        n = store.bulk_reject_rules_screened()
+        assert n == 2  # 只清 rules 的 pending
+        assert old1["status"] == "rejected" and old2["status"] == "rejected"
+        assert new1["status"] == "pending_review"
+        assert approved_old["status"] == "approved"
