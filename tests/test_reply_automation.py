@@ -789,3 +789,16 @@ class TestPersonaScreening:
     def test_keywords_default_v2(self):
         assert "AI工具" in auto.DEFAULT_CONFIG["keywords"]
         assert "AI赚钱" not in auto.DEFAULT_CONFIG["keywords"]  # 求带重灾区不入采集
+
+
+class TestCollectCommand:
+    def test_sub_comment_flag_follows_global_config(self):
+        cmd = auto.build_collect_command({"keywords": ["AI工具"], "max_notes_per_keyword": 5, "max_comments_per_video": 50})
+        joined = " ".join(cmd)
+        # config/base_config.ENABLE_GET_SUB_COMMENTS=True(P1-4)→ 命令必须传 true
+        assert "--get_sub_comment true" in joined, joined
+        assert "--keywords AI工具" in joined
+
+    def test_keywords_joined(self):
+        cmd = auto.build_collect_command({"keywords": ["AI工具", "一人公司"]})
+        assert "AI工具,一人公司" in cmd
