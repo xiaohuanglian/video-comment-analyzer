@@ -259,7 +259,7 @@ export const api = {
       method: 'POST',
     }),
   bulkApproveLlm: () =>
-    req<{ ok: boolean; approved: number; skipped_no_draft: number }>(
+    req<{ ok: boolean; approved: number; skipped_no_draft: number; skipped_similar: number }>(
       '/automation/candidates/bulk-approve',
       { method: 'POST' },
     ),

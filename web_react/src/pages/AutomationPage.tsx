@@ -216,9 +216,10 @@ export default function AutomationPage() {
               if (!window.confirm(`批量批准 ${n} 条 LLM 精筛条目(以当前草稿入队,之后自动发送)?`)) return
               try {
                 const res = await api.bulkApproveLlm()
-                setNotice(
-                  `已批准 ${res.approved} 条${res.skipped_no_draft ? `,${res.skipped_no_draft} 条无草稿跳过` : ''}`,
-                )
+                const parts = [`已批准 ${res.approved} 条`]
+                if (res.skipped_similar) parts.push(`${res.skipped_similar} 条因与近期内容过于相似被拦(需改写)`)
+                if (res.skipped_no_draft) parts.push(`${res.skipped_no_draft} 条无草稿跳过`)
+                setNotice(parts.join(','))
                 await refresh()
               } catch (e) {
                 setNotice(e instanceof Error ? e.message : String(e))

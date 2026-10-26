@@ -85,7 +85,10 @@ async def candidates(status: str = "pending_review", limit: int = 60) -> list[di
 @router.post("/candidates/{item_id}/approve")
 async def approve(item_id: str, body: CandidateDecision) -> dict[str, Any]:
     store = _store()
-    item = store.decide(item_id, "approve", draft=body.draft)
+    try:
+        item = store.decide(item_id, "approve", draft=body.draft)
+    except ValueError as exc:  # 相似度闸拦截
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not item:
         raise HTTPException(status_code=400, detail="条目不存在、已处理或草稿为空")
     # 批准后立刻告知阻塞项，避免「批了却没反应」的无声状态
@@ -146,8 +149,8 @@ class ScreenRequest(BaseModel):
 async def bulk_approve() -> dict[str, Any]:
     """批量批准全部 LLM 精筛且已有草稿的待审条目(规则筛遗留与无草稿的不动)。"""
     store = _store()
-    approved, skipped = store.bulk_approve_llm_screened()
-    return {"ok": True, "approved": approved, "skipped_no_draft": skipped}
+    approved, skipped, skipped_similar = store.bulk_approve_llm_screened()
+    return {"ok": True, "approved": approved, "skipped_no_draft": skipped, "skipped_similar": skipped_similar}
 
 
 @router.post("/candidates/bulk-reject")
