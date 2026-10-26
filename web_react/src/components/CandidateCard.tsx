@@ -62,6 +62,14 @@ export default function CandidateCard({
         {c.tier === 'A' && (
           <span className="rounded bg-orange-50 px-1.5 py-0.5 text-orange-500">新鲜</span>
         )}
+        {!!c.sub_reply_count && (
+          <span
+            className="rounded bg-sky-50 px-1.5 py-0.5 text-sky-600"
+            title="楼中楼已有回复,精筛会判断是否已被答好"
+          >
+            💬 {c.sub_reply_count}
+          </span>
+        )}
         <span className="truncate">{c.video_title}</span>
         <span className="ml-auto shrink-0">👍 {c.like_count}</span>
       </div>

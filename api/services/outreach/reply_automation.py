@@ -475,7 +475,7 @@ def build_candidates(
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """从采集行里筛出候选。返回 (候选列表, 漏斗统计)。"""
     now = now or datetime.now()
-    funnel = {"comments": 0, "excluded": 0, "stale": 0, "dedup": 0, "candidates": 0, "replied_user": 0}
+    funnel = {"comments": 0, "excluded": 0, "stale": 0, "dedup": 0, "candidates": 0, "replied_user": 0, "sub_context": 0}
     quota_left = max(1, int(config.get("max_new_candidates_per_cycle", 8)))
     video_today: dict[str, str] = {}
     today = now.strftime("%Y-%m-%d")
@@ -486,6 +486,25 @@ def build_candidates(
     replied_users: dict[str, float] = {
         str(k): float(v) for k, v in (config.get("_replied_users") or {}).items()
     }
+    # 楼中楼(parent != 0)不作为候选:只做语境供精筛判「问题是否已被答好」
+    sub_by_parent: dict[str, list[dict[str, Any]]] = {}
+    for row in comment_rows:
+        pid = str(row.get("parent_comment_id") or "0")
+        if pid and pid != "0":
+            sub_by_parent.setdefault(pid, []).append(row)
+
+    def _thread_texts(root_id: str, depth: int = 0) -> list[str]:
+        """收拢 root_id 楼下(含孙子楼)的子评论文本,最多 8 条、每条 120 字。"""
+        texts: list[str] = []
+        for sub in sub_by_parent.get(root_id, []):
+            if len(texts) >= 8:
+                break
+            t = str(sub.get("content") or "").strip()
+            if t:
+                texts.append(t[:120])
+            if depth < 2:  # 展开到第三层
+                texts.extend(x for x in _thread_texts(str(sub.get("comment_id") or ""), depth + 1) if len(texts) < 8)
+        return texts[:8]
 
     picked: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -499,6 +518,9 @@ def build_candidates(
         if cid in processed_ids:
             funnel["dedup"] += 1
             continue
+        if str(row.get("parent_comment_id") or "0") not in ("0", ""):
+            funnel["sub_context"] += 1
+            continue  # 楼中楼:上面已收进语境表,不当候选
         nickname = str(row.get("nickname") or "")
         if _RE_SPAM_NICK.search(nickname):
             funnel["excluded"] += 1
@@ -532,6 +554,7 @@ def build_candidates(
         if quota_left <= 0:
             break
         video = video_map.get(vid, {})
+        sub_replies = _thread_texts(cid)
         picked.append(
             {
                 "id": f"c_{cid}",
@@ -551,6 +574,8 @@ def build_candidates(
                 "intent": "",
                 "match_reason": signal,
                 "screened_by": "rules",
+                "sub_replies": sub_replies,
+                "sub_reply_count": len(sub_replies),
                 "draft": "",
                 "lint_warnings": [],
                 "draft_source": "",
@@ -595,8 +620,10 @@ LLM_SCREEN_PROMPT = """你是B站评论区「值得回复的人」的精筛助�
 - help:具体问题×真实被困×我们能给全答案,三者越齐分越高
 - engage:观点有内容×能自然接话,能延续对话的吐槽/预测/体验分享高分,纯情绪低分
 
-输入给你评论原文和所在视频标题。只输出一个 JSON 对象,不要输出其他文字:
-{{"lane": "help|engage|skip", "intent": "信号类型", "worth": 0-10, "reason": "一句话理由,给人工审核看,说清为什么值得或不值得"}}
+已答判定(already_answered):输入可能带「评论区已有回复」(楼中楼摘录)。若 UP 或热心人已在评论区把该问题答得靠谱完整,再答一遍像机器人刷存在感 → already_answered=true,一律 lane=skip,reason 里写明「已被答」。若已有回复只是不痛不痒/答非所问,才继续评分。
+
+输入给你评论原文、所在视频标题、(若有)楼中楼摘录。只输出一个 JSON 对象,不要输出其他文字:
+{{"lane": "help|engage|skip", "intent": "信号类型", "worth": 0-10, "already_answered": true|false, "reason": "一句话理由,给人工审核看,说清为什么值得或不值得"}}
 """
 
 
@@ -648,10 +675,13 @@ async def llm_screen_candidates(
     kept: list[dict[str, Any]] = []
     first = True
     for item in picked:
-        user_msg = json.dumps(
-            {"视频标题": item.get("video_title", ""), "评论原文": item.get("comment_text", "")},
-            ensure_ascii=False,
-        )
+        user_payload: dict[str, Any] = {
+            "视频标题": item.get("video_title", ""),
+            "评论原文": item.get("comment_text", ""),
+        }
+        if item.get("sub_replies"):
+            user_payload["评论区已有回复"] = item["sub_replies"]
+        user_msg = json.dumps(user_payload, ensure_ascii=False)
         try:
             reply = await complete_fn(
                 [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_msg}],
@@ -682,6 +712,8 @@ async def llm_screen_candidates(
         except (TypeError, ValueError):
             worth = 0
         lane = str(data.get("lane") or "skip").strip().lower()
+        if str(data.get("already_answered", "")).strip().lower() in ("true", "是", "1"):
+            lane = "skip"  # 已被答好:再答像机器人,一律拦下
         if lane not in ("help", "engage"):
             lane = "skip"
         item["lane"] = lane
@@ -767,17 +799,17 @@ def _system_prompt_for(item: dict[str, Any]) -> str:
 
 
 def _llm_user_message(item: dict[str, Any]) -> str:
-    return "起草评论区回复：\n" + json.dumps(
-        {
-            "回复类型": "帮助型(给全答案)" if item.get("lane", "help") == "help" else "互动型(自然接话)",
-            "对方评论": item["comment_text"],
-            "视频标题": item["video_title"],
-            "信号": item.get("intent") or item["signal"],
-            "入选理由": item.get("match_reason", ""),
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
+    payload = {
+        "回复类型": "帮助型(给全答案)" if item.get("lane", "help") == "help" else "互动型(自然接话)",
+        "对方评论": item["comment_text"],
+        "视频标题": item["video_title"],
+        "信号": item.get("intent") or item["signal"],
+        "入选理由": item.get("match_reason", ""),
+    }
+    if item.get("sub_replies"):
+        payload["评论区已有回复(楼中楼)"] = item["sub_replies"]
+        payload["已有回复处理"] = "若已有人答对一部分,给增量或更完整版,不重复原话"
+    return "起草评论区回复：\n" + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
 async def draft_with_llm(item: dict[str, Any]) -> str:

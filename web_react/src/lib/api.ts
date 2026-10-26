@@ -17,6 +17,8 @@ export interface AutomationCandidate {
   lane?: 'help' | 'engage' | string
   match_reason?: string
   screened_by?: string
+  sub_replies?: string[]
+  sub_reply_count?: number
   draft: string
   lint_warnings: string[]
   draft_source: string
