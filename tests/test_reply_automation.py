@@ -505,7 +505,7 @@ class TestLaneModel:
     def test_engage_draft_uses_engage_prompt(self):
         item = _screen_item("1", "AI还是塑料感")
         item["lane"] = "engage"
-        assert "自然接话" in auto._system_prompt_for(item)
+        assert "人味规则" in auto._system_prompt_for(item)  # 2026-10-26 人味化重写后的标志段
         assert "把答案直接给全" not in auto._system_prompt_for(item)
         assert "把答案直接给全" in auto._system_prompt_for(_screen_item("2", "怎么做"))
 
@@ -835,3 +835,68 @@ class TestTailQuestionLint:
     def test_engage_prompt_bans_tail_question(self):
         assert "禁结尾开放反问" in auto.BILI_ENGAGE_SYSTEM_PROMPT
         assert "让对话能继续" not in auto.BILI_ENGAGE_SYSTEM_PROMPT  # 旧指令已删
+
+
+# ---------------------------------------------------------------------------
+# XY 原子知识库 + 人味 lint v2(2026-10-26 集成风物执守·XY 操盘系统)
+# ---------------------------------------------------------------------------
+
+class TestKnowledgeBase:
+    def test_search_relevant_atoms(self):
+        from api.services import knowledge as kb
+        if kb.count() == 0:
+            pytest.skip("本地无 atoms.jsonl(仅内部数据)")
+        hits = kb.search("客户嫌贵不回消息", k=3)
+        assert hits and all(h["id"] for h in hits)
+        assert any("嫌贵" in h["knowledge"] or "价格" in h["knowledge"] or "异议" in h["knowledge"] for h in hits)
+
+    def test_context_for_cites_source(self):
+        from api.services import knowledge as kb
+        if kb.count() == 0:
+            pytest.skip("本地无 atoms.jsonl")
+        ctx = kb.context_for("朋友圈怎么发")
+        assert "私域操盘知识库" in ctx and "[XY-" in ctx or "[" in ctx
+
+    def test_draft_user_message_has_structure_hint(self):
+        # 结构变体:同批条目骨架提示互不相同
+        ids = ["c_a1", "c_a2", "c_a3", "c_a4", "c_a5"]
+        hints = set()
+        for i in ids:
+            item = {"comment_text": "x", "video_title": "t", "id": i, "signal": "s", "lane": "engage"}
+            msg = auto._llm_user_message(item)
+            import json as _json
+            payload = _json.loads(msg.split("起草评论区回复：\n")[1])
+            hints.add(payload["本条写法"])
+        assert len(hints) >= 2, f"结构提示应该打散,实际 {hints}"
+
+
+class TestHumanFlavorLintV2:
+    def test_cliche_open_caught(self):
+        from api.services.outreach.reply_style import check_reply_style
+        ws = check_reply_style("太真实了,我也有同感,后来我直接换了工具。")
+        assert any("套话开场" in w for w in ws)
+
+    def test_punchline_tail_caught(self):
+        from api.services.outreach.reply_style import check_reply_style
+        ws = check_reply_style("我重跑过一遍,画面好了不少,但片子还是不行。说到底,工具从来不是关键。")
+        assert any("金句收尾" in w for w in ws), ws
+
+    def test_translation_tone_caught(self):
+        from api.services.outreach.reply_style import check_reply_style
+        ws = check_reply_style("我先对素材进行排查,再进行优化,就好了。")
+        assert any("翻译腔" in w for w in ws)
+
+    def test_broadcast_tone_caught(self):
+        from api.services.outreach.reply_style import check_reply_style
+        ws = check_reply_style("亲,这个问题的答案是肯定的,可以用工具解决。")
+        assert any("群发味" in w for w in ws)
+
+    def test_connective_pileup_caught(self):
+        from api.services.outreach.reply_style import check_reply_style
+        ws = check_reply_style("然而事实并非如此。值得注意的是,工具在变。更重要的是,人在变。")
+        assert any("连接词堆叠" in w for w in ws)
+
+    def test_clean_human_draft_stays_clean(self):
+        from api.services.outreach.reply_style import check_reply_style
+        ws = check_reply_style("确实,我之前也这么试过,后来直接把分辨率降一半先抽构图,能用的高清重跑,废卡少了一多半。")
+        assert not any(k in w for w in ws for k in ("套话", "金句", "翻译腔", "群发味", "连接词")), ws

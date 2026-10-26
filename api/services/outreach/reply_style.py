@@ -89,6 +89,24 @@ _RE_TAIL_OPEN_QUESTION = re.compile(
     r"你们说|评论区.{0,6}(聊聊|讨论)|欢迎.{0,6}(讨论|分享))"
 )
 
+# 金句收尾(观点可留,收束句像文案;粗检,warning 级)
+_RE_TAIL_PUNCHLINE = re.compile(
+    r"(本质上|归根结底|真正的?.{0,12}(是|在于)|从来不是|缺的不是|差的不是|"
+    r"补不了|拼的是|才是(关键|根本|核心|真相)|说到底)"
+)
+
+# 套话开场(模型高频共情模板)
+_RE_CLICHE_OPEN = re.compile(r"^(太真实了|太对了|说到心坎|深有同感|感同身受|简直说到)")
+
+# 翻译腔(进行X/句首作为基于关于)
+_RE_TRANSLATION_TONE = re.compile(r"进行(一|了|一次)?(分析|处理|优化|排查|部署|沟通)|^(作为|基于|关于)[^，。]{0,18}(，|:|：)")
+
+# 群发味称呼
+_RE_BROADCAST_TONE = re.compile(r"亲[，,!！]|家人们")
+
+# 固定连接词(堆叠才报)
+_RE_CONNECTIVES = re.compile(r"然而|事实上|值得注意的是|更重要的是|与此同时|不得不说")
+
 
 def _tail_sentence(text: str) -> str:
     """取末句:先去尾部标点,再按句读切取最后一段(末尾分隔符不会再产生空段)。"""
@@ -151,6 +169,22 @@ def check_reply_style(text: str) -> List[str]:
     tail = _tail_sentence(text)
     if _RE_TAIL_OPEN_QUESTION.search(tail):
         warnings.append(f"结尾开放反问「{tail[:24]}…」(AI味最强特征;删掉末句或换陈述,具体到对方处境的提问除外)")
+    elif _RE_TAIL_PUNCHLINE.search(tail):
+        warnings.append(f"金句收尾「{tail[:24]}…」(观点可留,收束句删掉平淡收)")
+
+    # 套话开场
+    if _RE_CLICHE_OPEN.search(text.strip()[:12]):
+        warnings.append("套话开场(太真实了/深有同感式高频模板,换成:确实/是这样的)")
+
+    # 翻译腔/群发味
+    if _RE_TRANSLATION_TONE.search(text):
+        warnings.append("翻译腔(进行X/句首作为基于;这句你嘴上会怎么说就怎么写)")
+    if _RE_BROADCAST_TONE.search(text):
+        warnings.append("群发味称呼(亲/家人们)")
+
+    # 固定连接词堆叠(≥2次)
+    if len(_RE_CONNECTIVES.findall(text)) >= 2:
+        warnings.append("固定连接词堆叠(然而/事实上/值得注意的是;删掉一半,读者自己感觉得到话锋)")
 
     return warnings
 

@@ -8,12 +8,14 @@ export default function CandidateCard({
   onClick,
   onApprove,
   onReject,
+  onHumanTouch,
 }: {
   c: AutomationCandidate
   compact?: boolean
   onClick?: () => void
   onApprove?: (c: AutomationCandidate) => Promise<void> | void
   onReject?: (c: AutomationCandidate) => Promise<void> | void
+  onHumanTouch?: (c: AutomationCandidate) => Promise<void> | void
 }) {
   const hasDraft = !!(c.draft || '').trim()
   return (
@@ -140,6 +142,15 @@ export default function CandidateCard({
           >
             去B站回 ↗
           </a>
+          {onHumanTouch && hasDraft && (
+            <button
+              onClick={() => void onHumanTouch(c)}
+              title="AI 味检测:逐句扫机器痕迹,出报告"
+              className="flex items-center gap-1 rounded-lg border border-stone-200 px-2.5 py-1 text-xs text-stone-400 hover:border-violet-300 hover:text-violet-500"
+            >
+              AI味
+            </button>
+          )}
           {onReject && (
             <button
               onClick={() => void onReject(c)}

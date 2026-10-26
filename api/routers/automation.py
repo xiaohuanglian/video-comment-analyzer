@@ -230,3 +230,42 @@ async def cookie_refresh() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)[:200])
     return {"ok": True, "message": f"Cookie 已刷新（{len(cookie)} 字符）"}
+
+
+class HumanTouchRequest(BaseModel):
+    pass
+
+
+@router.post("/candidates/{item_id}/human-touch")
+async def human_touch(item_id: str) -> dict[str, Any]:
+    """AI 味检测:对草稿逐句扫机器痕迹(姿态/结构/用词/内容/群发味),出报告不改稿。
+
+    检测维度参考风物执守·XY 操盘系统 xy-human-touch 的公开思路(自研实现)。
+    """
+    store = _store()
+    item = store.find(item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="条目不存在")
+    draft = (item.get("draft") or "").strip()
+    if not draft:
+        raise HTTPException(status_code=400, detail="该条目没有草稿")
+
+    system = """你是B站评论回复的 AI 味质检员。对草稿逐句扫描,找出像机器写的痕迹,按原文顺序报告。命中才报,干净就明说干净。每处一行:级别(🔴严重/⚠️轻度)+ 引原句(≤20字)+ 问题 + 一句修改方向。最后给一行总评。不重写全文。
+
+检测维度:
+1 姿态:替读者编错想法再否定;「不是X而是Y」翻案连用;每段收金句;升维收尾(本质上/归根结底);全篇没有一处不确定或踩坑自白(太权威=太假)
+2 结构:钩子+痛点+承诺式开场;匀速排比/三点式万能结构;句句等长;结尾祝福或求互动;堵死所有反驳(有人会说…但是…)
+3 用词:固定连接词堆叠(然而/事实上/值得注意的是);翻译腔(进行X/作为/基于);大词无数字(赋能/闭环/底层逻辑);编造的精确细节(没量过的数字)
+4 内容:正确的废话(没有一步明天能照做);无细节的「我有个朋友」故事;承诺句(跟着做你也能/月入X)
+5 群发味:亲/家人们;全员同款腔;一眼群发的热情"""
+    user = f"对方评论:{item.get('comment_text','')}\n\n待检草稿:\n{draft}"
+    try:
+        from api.services.llm import complete
+
+        report = await complete(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            temperature=0.2, timeout=90, feature="human_touch",
+        ) or "(检测无返回)"
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"检测调用失败:{e}") from e
+    return {"ok": True, "item_id": item_id, "report": report.strip()}

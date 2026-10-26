@@ -19,6 +19,7 @@ export default function AutomationPage() {
   const [status, setStatus] = useState<AutomationStatus | null>(null)
   const [selected, setSelected] = useState<AutomationCandidate | null>(null)
   const [notice, setNotice] = useState('')
+  const [humanTouchReport, setHumanTouchReport] = useState('')
   const [screening, setScreening] = useState(false)
   const [screenResult, setScreenResult] = useState('')
 
@@ -255,9 +256,30 @@ export default function AutomationPage() {
                 setNotice(e instanceof Error ? e.message : String(e))
               }
             }}
+            onHumanTouch={async (cc) => {
+              try {
+                setNotice('AI 味检测中…')
+                const res = await api.candidateHumanTouch(cc.id)
+                setHumanTouchReport(res.report)
+              } catch (e) {
+                setNotice(e instanceof Error ? e.message : String(e))
+              }
+            }}
           />
         ))}
       </div>
+
+      {humanTouchReport && (
+        <div className="fixed bottom-4 right-4 z-50 max-h-[60vh] w-[440px] overflow-auto rounded-2xl border border-violet-200 bg-white p-4 shadow-xl">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-violet-700">AI 味检测报告</h3>
+            <button onClick={() => setHumanTouchReport('')} className="text-xs text-stone-400 hover:text-stone-600">
+              关闭
+            </button>
+          </div>
+          <pre className="whitespace-pre-wrap text-xs leading-relaxed text-stone-700">{humanTouchReport}</pre>
+        </div>
+      )}
 
       {/* 抽屉式审批 */}
       <Drawer
