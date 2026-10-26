@@ -133,6 +133,16 @@ class SendRequest(BaseModel):
     text: str
 
 
+def _knowledge_context(text: str) -> str:
+    """私域操盘知识库检索(风物执守·XY 原子,本地 data/knowledge/xyskill/,CC BY-NC 仅内部用)。"""
+    try:
+        from api.services import knowledge as kb
+
+        return kb.context_for(text, k=5)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _load_history() -> list[dict[str, Any]]:
     if not HISTORY_FILE.exists():
         return []
@@ -202,7 +212,8 @@ async def send(body: SendRequest) -> dict[str, Any]:
             + _project_context()
             + "\n\n"
             + _audience_context()
-            + _automation_context(),
+            + _automation_context()
+            + ("\n\n" + _knowledge_context(text) if _knowledge_context(text) else ""),
         }
     ]
     for m in history[-40:]:

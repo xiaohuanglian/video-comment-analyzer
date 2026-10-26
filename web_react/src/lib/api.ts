@@ -263,6 +263,11 @@ export const api = {
     req<{ ok: boolean; rejected: number }>('/automation/candidates/bulk-reject', {
       method: 'POST',
     }),
+  candidateHumanTouch: (id: string) =>
+    req<{ ok: boolean; item_id: string; report: string }>(
+      `/automation/candidates/${id}/human-touch`,
+      { method: 'POST' },
+    ),
   bulkApproveLlm: () =>
     req<{ ok: boolean; approved: number; skipped_no_draft: number; skipped_similar: number }>(
       '/automation/candidates/bulk-approve',
