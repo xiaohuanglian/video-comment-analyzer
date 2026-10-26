@@ -39,7 +39,7 @@ BILI_PROFILE_DIR = PROJECT_ROOT / "browser_data" / "cdp_bili_user_data_dir"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": False,
-    "keywords": ["AI视频", "AI教程", "AI实测", "可灵", "提示词", "AI修图"],
+    "keywords": ["AI工具", "AI实测", "AI工作流", "AI编程", "数字人", "一人公司", "独立开发", "超级个体", "AI副业"],
     "collect_interval_hours": 6,
     "max_notes_per_keyword": 20,  # B 站搜索按页 20 条，代码里低于 20 会被抬到 20
     "max_comments_per_video": 100,
@@ -69,8 +69,8 @@ _RE_ACCESS = re.compile(
     r"用上|怎么用gpt|怎么用claude|如何用gpt|注册|翻墙|科学上网|镜像|账号|会员|充值|买.{0,4}号|"
     r"支付|报销|订阅|低价pro|直充|封了|封号|中转"
 )
-# 变现类（无标准答案）
-_RE_MONETIZE = re.compile(r"变现|赚钱|副业|盈利|接单|商单|怎么赚|搞钱|风口|回本")
+# 变现类排除已删(2026-10-27 定位转向):想用AI赚钱的实干者是核心受众;
+# 卖课拉人头的行为由 _RE_SPAM 排除,焦虑/求带/实干之分交 LLM 精筛 persona 分层
 # 个案报错/调试（需个案验证，规则排除）
 _RE_DEBUG = re.compile(
     r"报错|错误|崩了|闪退|无法|检测不到|安装失败|装不上|黑屏|白屏|内存不足|跑不动|"
@@ -93,10 +93,11 @@ _RE_EXCLAIM = re.compile(
 
 # 反问/抒情/赞叹(纯修辞,无观点内容;「还要什么自行车」等习语常见于实质观点中,不再拦)
 _RE_RHETORIC = re.compile(r"没人(夸|说|提|注意)|我从没觉得|多愁善感|破防|泪目|哭死")
-# A 档：看得到学不会（问工具/怎么做）
+# A 档：看得到学不会（问工具/怎么做;含商业动作:获客/接单/定价）
 _RE_HOWTO = re.compile(
     r"什么(软件|工具|app|模型|程序|网站)|哪个(软件|工具|app|平台)|"
-    r"怎么(做|弄|用|生成|实现|做到|衔接|设置|入门|开始|学)|如何(做|用|实现|生成|入门)|"
+    r"怎么(做|弄|用|生成|实现|做到|衔接|设置|入门|开始|学|获客|接单|定价|找客户|引流|成交|变现|赚钱)|"
+    r"如何(做|用|实现|生成|入门|获客|接单|定价)|"
     r"用什么|求(教|指导|推荐)|怎么做同款|怎么才能"
 )
 # B 档：想动手缺路径（新手自述，需带提问感）
@@ -107,12 +108,13 @@ _RE_SEEKING = re.compile(
     r"想学|想做|想试|想用|想了解|想知道|好奇|请教|请问|求教|求助|打算|想上手|想入|"
     r"能不能|可不可以|有没有办法|怎么才能|能实现|能做"
 )
-# C 档：AI 相关实体（观点/讨论评论的召回判据；边界防误伤 said/hair 等）
+# C 档：AI×商业相关实体（观点/讨论评论的召回判据;2026-10-27 扩商业词）
 _RE_AI_ENTITY = re.compile(
     r"(?<![a-zA-Z])[aA][iI](?![a-zA-Z])|人工智能|大模型|llm|智能体|agent|生成式|"
     r"gpt|claude|gemini|opus|astra|deepseek|sora|veo|"
     r"可灵|即梦|seedance|千问|qwen|豆包|智谱|nano banana|"
-    r"提示词|数字人|ai视频|ai动画|ai修图|ai绘图|ai画|ai配音|ai生成",
+    r"提示词|数字人|ai视频|ai动画|ai修图|ai绘图|ai画|ai配音|ai生成|"
+    r"副业|创业|做生意|生意|变现|搞钱|赚钱|接单|获客|一人公司|超级个体|独立开发",
     re.IGNORECASE,
 )
 
@@ -129,7 +131,6 @@ def classify_comment(text: str) -> tuple[str, str]:
     for pat, label in (
         (_RE_SPAM, "垃圾广告"),
         (_RE_ACCESS, "使用渠道类"),
-        (_RE_MONETIZE, "变现类"),
         (_RE_DEBUG, "个案报错"),
         (_RE_RESOURCE_BEG, "求UP私有资源"),
         (_RE_DIRECTOR, "导演式提问"),
@@ -574,6 +575,7 @@ def build_candidates(
                 "intent": "",
                 "match_reason": signal,
                 "screened_by": "rules",
+                "persona": "",
                 "sub_replies": sub_replies,
                 "sub_reply_count": len(sub_replies),
                 "draft": "",
@@ -608,22 +610,31 @@ LLM_SCREEN_PROMPT = """你是B站评论区「值得回复的人」的精筛助�
 目标受众:{audience}
 
 值得回复的人分两类(lane):
-- help(帮助型):被困在我们能答的域里——AI 内容创作(视频/动画/图片/配音)的做法、路径、工具选型。特征:具体问题、真实被困、我们能给全答案。备考/学术研究/生活问题等离域求助不是 help。
-- engage(互动型):对 AI 话题发表真实观点/看法/体验的评论——惊叹、怀疑、预测、吐槽、经验分享、讨论。特征:有内容可接话,我们自然回应能延续对话、攒账号信用。看热闹式纯情绪("太强了""泪目")没内容可接,不是 engage。
+- help(帮助型):被困在我们能答的域里——用 AI 做生意/副业的实战问题:选品、获客、定价、接单、工具选型、工作流搭建,以及 AI 内容创作的做法路径。特征:具体问题、真实在动手或真准备动手、我们能给全答案。备考/学术/生活琐事等离域求助不是 help。
+- engage(互动型):对 AI 或 AI 商业机会发表真实观点/看法/体验的评论——惊叹、怀疑、预测、吐槽、经验分享、讨论。特征:有内容可接话,我们自然回应能延续对话、攒账号信用。看热闹式纯情绪("太强了""泪目")没内容可接,不是 engage。
 
-一律不选(skip):纯水(666/哈哈哈/打卡)、AI生成水评、纯礼貌夸up、引战抬杠、和我们域无关的求助、购买渠道/账号充值/变现赚钱/个案报错调试、求UP主私有资源。
+一律不选(skip):纯水(666/哈哈哈/打卡)、AI生成水评、纯礼貌夸up、引战抬杠、和我们域无关的求助、购买渠道/账号充值/个案报错调试、求UP主私有资源。**纯焦虑想暴富但零行动意愿**("好焦虑""求暴富""风口不敢上")不是实干者,skip;**卖课同行/拉人头营销话术**("带你赚""上车""私我")一律 skip。
+
+对方画像(persona,六选一,决定后续回复怎么说话):
+- novice_doer 新手实干者:已在动手或真准备动手,卡在具体问题上,需要完整答案和路径
+- expert_doer 老手实干者:懂行,谈参数/细节/选型,对等交流给增量信息
+- thinker 观点讨论者:发表看法/预测/吐槽,不是求助,接话延续讨论
+- watcher 观望焦虑者:看得心动但犹豫、怕被割韭菜,需要稳住+一个能上手的第一步
+- beggar 求带党:"求带""怎么加入""带带我",只想被牵着走不想自己动手 → lane=skip
+- seller 卖课同行/营销号:拉人头、卖课、引流话术 → lane=skip
 
 评论信号分型(选最贴近的一个,填进 intent):
 求工具/求推荐 | 求做法/路径 | 痛点吐槽求解决 | 对比纠结 | 观点/预测 | 经验分享 | 吐槽/怀疑 | 讨论闲聊 | 求UP主专属 | 离域求助
 
 打分 worth(0-10 整数):
-- help:具体问题×真实被困×我们能给全答案,三者越齐分越高
+- help:具体问题×真实动手×我们能给全答案,三者越齐分越高
 - engage:观点有内容×能自然接话,能延续对话的吐槽/预测/体验分享高分,纯情绪低分
+- watcher 型 engage 值得回(可转化),但值得≠被收割:他们值得一句稳住人心、能上手的真话
 
 已答判定(already_answered):输入可能带「评论区已有回复」(楼中楼摘录)。若 UP 或热心人已在评论区把该问题答得靠谱完整,再答一遍像机器人刷存在感 → already_answered=true,一律 lane=skip,reason 里写明「已被答」。若已有回复只是不痛不痒/答非所问,才继续评分。
 
 输入给你评论原文、所在视频标题、(若有)楼中楼摘录。只输出一个 JSON 对象,不要输出其他文字:
-{{"lane": "help|engage|skip", "intent": "信号类型", "worth": 0-10, "already_answered": true|false, "reason": "一句话理由,给人工审核看,说清为什么值得或不值得"}}
+{{"lane": "help|engage|skip", "persona": "novice_doer|expert_doer|thinker|watcher|beggar|seller", "intent": "信号类型", "worth": 0-10, "already_answered": true|false, "reason": "一句话理由,给人工审核看,说清为什么值得或不值得"}}
 """
 
 
@@ -716,7 +727,13 @@ async def llm_screen_candidates(
             lane = "skip"  # 已被答好:再答像机器人,一律拦下
         if lane not in ("help", "engage"):
             lane = "skip"
+        persona = str(data.get("persona") or "").strip().lower()
+        if persona not in ("novice_doer", "expert_doer", "thinker", "watcher", "beggar", "seller"):
+            persona = "novice_doer" if lane == "help" else "thinker"
+        if persona in ("beggar", "seller"):
+            lane = "skip"  # 求带党/卖课同行:永不互动
         item["lane"] = lane
+        item["persona"] = persona
         item["worth"] = worth
         item["intent"] = str(data.get("intent") or "")[:20]
         item["screened_by"] = "llm"
@@ -759,11 +776,11 @@ async def _refine_candidates(
 # ---------------------------------------------------------------------------
 
 BILI_AUTO_SYSTEM_PROMPT = """为B站评论区一位具体用户起草公开回复（只输出正文，40-160中文字）。
-对方是被AI内容吸引、想自己动手做但缺路径的用户。回复的目标：把答案直接给全，给对方带来便利。
+你是用 AI 做生意的实战创业者:答案来自自己做过的,涉及没做过的就明说不知道。回复的目标：把答案直接给全,给对方带来真价值。
 
 写法：
 - 开头直接回应他问的事，步骤、工具、参数给全；不指路、不让对方自己去翻去找
-- 平等口吻，像朋友帮忙，不像老师教学生；东西难找就归因于入口设计，不说对方
+- 平等口吻，像同路人分享经验，不像老师教学生；东西难找就归因于入口设计，不说对方
 - 白话打底，写完事情就停，不追加"希望有帮助"式尾巴
 
 硬禁令：
@@ -771,10 +788,11 @@ BILI_AUTO_SYSTEM_PROMPT = """为B站评论区一位具体用户起草公开回�
 - 不用破折号；冒号只能用来引直接原话
 - 禁"不是…而是…"翻案句式；禁居高临下（其实很简单/再找找看/别急着放弃）
 - 禁黑话（赋能/闭环/底层逻辑/码住/建议收藏/值得关注）
-- 不编造不确定的事实；没有十足把握就不提自己的主页或作品"""
+- 不编造不确定的事实；没有十足把握就不提自己的主页或作品
+- 禁"跟我学""带你赚"式卖课腔;禁贩卖焦虑"""
 
 BILI_ENGAGE_SYSTEM_PROMPT = """为B站评论区一位具体用户起草公开回复（只输出正文，30-120中文字）。
-对方发表了对 AI 的看法/体验/吐槽，不是在求助。目标：自然接话，像评论区里一个懂行的路人，延续对话、攒账号信用。
+你也是在做 AI 生意的人,对方发表了对 AI 或 AI 商业机会的看法/体验/吐槽,不是在求助。目标：像同行一样自然接话，延续对话、攒账号信用。
 
 写法：
 - 先接住对方的具体观点再回应：认可哪点、补充一点，或有不一致就温和说出来
@@ -787,7 +805,16 @@ BILI_ENGAGE_SYSTEM_PROMPT = """为B站评论区一位具体用户起草公开回
 - 不用破折号；冒号只能用来引直接原话
 - 禁"不是…而是…"翻案句式；禁居高临下（其实很简单/再找找看/别急着放弃）
 - 禁黑话（赋能/闭环/底层逻辑/码住/建议收藏/值得关注）
-- 不编造事实；没把握的经验不说"""
+- 不编造事实；没把握的经验不说
+- 禁"跟我学""带你赚"式卖课腔;禁贩卖焦虑"""
+
+# persona → 起草策略(识别对方是什么样的人,说针对性的话;beggar/seller 不入起草)
+_PERSONA_TACTICS = {
+    "novice_doer": "对方是新手实干者:给全答案+完整路径,步骤化,专业词配大白话",
+    "expert_doer": "对方是老手实干者:对等交流,给增量信息和实战细节,不解释基础概念,不居高临下",
+    "thinker": "对方是观点讨论者:自然接话,延续对方的观点,带一句自己的实际经验",
+    "watcher": "对方是观望焦虑者:先稳住人心(不贩卖焦虑也不灌鸡汤),再给一个今天就能上手的第一步,把心动变成行动,绝不推销",
+}
 
 
 def _system_prompt_for(item: dict[str, Any]) -> str:
@@ -806,6 +833,10 @@ def _llm_user_message(item: dict[str, Any]) -> str:
         "信号": item.get("intent") or item["signal"],
         "入选理由": item.get("match_reason", ""),
     }
+    persona = str(item.get("persona") or "")
+    if persona and persona in _PERSONA_TACTICS:
+        payload["对方画像"] = persona
+        payload["回复策略"] = _PERSONA_TACTICS[persona]
     if item.get("sub_replies"):
         payload["评论区已有回复(楼中楼)"] = item["sub_replies"]
         payload["已有回复处理"] = "若已有人答对一部分,给增量或更完整版,不重复原话"

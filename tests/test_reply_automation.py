@@ -41,10 +41,15 @@ class TestClassifyComment:
             assert status == "excluded", text
             assert label in ("使用渠道类",), text
 
-    def test_monetize_excluded(self):
+    def test_monetize_no_longer_excluded(self):
+        # 2026-10-27 定位转向:想赚钱的实干者是核心受众,不再规则排除
         status, label = auto.classify_comment("这种AI视频怎么做变现啊，能赚钱吗")
-        assert status == "excluded"
-        assert label == "变现类"
+        assert status == "target_a", label  # "怎么做"命中 HOWTO,进 A 档
+
+    def test_business_entity_recalled_as_target_c(self):
+        # 商业词不带AI也能被 C 档召回(AI×商业讨论)
+        status, label = auto.classify_comment("一人公司才是普通人在AI时代翻身的正路,别老想着打工")
+        assert status == "target_c", label
 
     def test_debug_excluded(self):
         status, label = auto.classify_comment("工作流里的加载器一直报错说无法检测模型，找不到原因")
@@ -735,3 +740,52 @@ class TestSubCommentContext:
                 "sub_replies": ["有人答了一半"], "signal": "s"}
         msg = auto._llm_user_message(item)
         assert "楼中楼" in msg and "不重复原话" in msg
+
+
+# ---------------------------------------------------------------------------
+# 定位转向:六档 persona 分层(2026-10-27)
+# ---------------------------------------------------------------------------
+
+class TestPersonaScreening:
+    @pytest.mark.asyncio
+    async def test_persona_parsed_and_passed_through(self):
+        async def fake_complete(messages, **kwargs):
+            return ('{"lane":"help","persona":"novice_doer","intent":"求做法/路径",'
+                    '"worth":8,"already_answered":false,"reason":"具体卡点"}')
+        item = {"id": "c_p1", "comment_text": "问怎么接单", "video_title": "t", "signal": "s"}
+        kept, _ = await auto.llm_screen_candidates([item], complete_fn=fake_complete)
+        assert kept[0]["persona"] == "novice_doer"
+
+    @pytest.mark.asyncio
+    async def test_beggar_and_seller_forced_skip(self):
+        async def fake_complete(messages, **kwargs):
+            # 模型给了 lane=help 但 persona 是求带党 → 强制 skip
+            return ('{"lane":"help","persona":"beggar","intent":"求带",'
+                    '"worth":7,"already_answered":false,"reason":"求带"}')
+        item = {"id": "c_p2", "comment_text": "带带我", "video_title": "t", "signal": "s"}
+        kept, _ = await auto.llm_screen_candidates([item], complete_fn=fake_complete)
+        assert kept == []
+
+    @pytest.mark.asyncio
+    async def test_unknown_persona_falls_back_by_lane(self):
+        async def fake_complete(messages, **kwargs):
+            return ('{"lane":"engage","persona":"whatever","intent":"观点/预测",'
+                    '"worth":6,"already_answered":false,"reason":"有观点"}')
+        item = {"id": "c_p3", "comment_text": "观点", "video_title": "t", "signal": "s"}
+        kept, _ = await auto.llm_screen_candidates([item], complete_fn=fake_complete)
+        assert kept[0]["persona"] == "thinker"  # engage 兜底为 thinker
+
+    def test_draft_user_message_carries_persona_tactic(self):
+        item = {"comment_text": "怎么做", "video_title": "t", "intent": "求做法",
+                "persona": "watcher", "signal": "s"}
+        msg = auto._llm_user_message(item)
+        assert "对方画像" in msg and "watcher" in msg
+        assert "稳住" in msg and "第一步" in msg  # watcher 专属策略注入
+
+    def test_seller_tactic_absent_from_draft(self):
+        # beggar/seller 不入起草,不应出现在策略表
+        assert "beggar" not in auto._PERSONA_TACTICS and "seller" not in auto._PERSONA_TACTICS
+
+    def test_keywords_default_v2(self):
+        assert "AI工具" in auto.DEFAULT_CONFIG["keywords"]
+        assert "AI赚钱" not in auto.DEFAULT_CONFIG["keywords"]  # 求带重灾区不入采集
