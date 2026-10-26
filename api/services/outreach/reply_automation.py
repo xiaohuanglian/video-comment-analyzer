@@ -279,6 +279,19 @@ class AutomationStore:
                     n += 1
         return n
 
+    def bulk_approve_llm_screened(self) -> tuple[int, int]:
+        """批量批准全部 LLM 精筛且已有草稿的待审条目。返回 (批准数, 跳过数[无草稿])。"""
+        approved = skipped = 0
+        for it in list(self._state["items"]):
+            if it.get("status") != "pending_review" or it.get("screened_by") != "llm":
+                continue
+            if not (it.get("draft") or "").strip():
+                skipped += 1
+                continue
+            if self.decide(it["id"], "approve"):
+                approved += 1
+        return approved, skipped
+
     def decide(self, item_id: str, action: str, draft: str = "") -> Optional[dict[str, Any]]:
         it = self.find(item_id)
         if not it or it["status"] != "pending_review":
@@ -1020,6 +1033,45 @@ def _find_chromium_executable() -> Optional[str]:
     return candidates[0][1]
 
 
+async def login_bili_qrcode(wait_seconds: int = 180) -> dict[str, Any]:
+    """打开可见的 B 站档案浏览器让用户扫码登录;成功后刷新 Cookie 落盘。
+
+    与 refresh_bili_cookie 同用 BILI_PROFILE_DIR 持久档案:扫码后登录态留在档案里,
+    后续 headless 刷新都能读到。超时/未扫码抛错。
+    """
+    import time as _time
+
+    from playwright.async_api import async_playwright
+
+    launch_kwargs: dict[str, Any] = {
+        "user_data_dir": str(BILI_PROFILE_DIR),
+        "headless": False,  # 必须可见:用户要扫二维码
+        "args": ["--no-first-run", "--no-default-browser-check"],
+    }
+    executable = _find_chromium_executable()
+    if executable:
+        launch_kwargs["executable_path"] = executable
+    async with async_playwright() as p:
+        context = await p.chromium.launch_persistent_context(**launch_kwargs)
+        try:
+            page = context.pages[0] if context.pages else await context.new_page()
+            await page.goto("https://www.bilibili.com", wait_until="domcontentloaded", timeout=30000)
+            deadline = _time.monotonic() + max(60, int(wait_seconds))
+            logged_in = False
+            while _time.monotonic() < deadline:
+                cookies = await context.cookies("https://www.bilibili.com")
+                if any(c.get("name") == "bili_jct" and c.get("value") for c in cookies):
+                    logged_in = True
+                    break
+                await asyncio.sleep(2)
+        finally:
+            await context.close()
+    if not logged_in:
+        raise RuntimeError("等待扫码超时,登录未完成(可重试)")
+    cookie = await refresh_bili_cookie()  # 复用:headless 读档案+落盘+账号信息
+    return {"ok": True, "account": cached_account_info()}
+
+
 async def refresh_bili_cookie() -> str:
     """启动 cdp_bili 档案浏览器抓一次 Cookie（含 bili_jct 才算有效），顺带记录登录账号信息（防扫错号）。"""
     from playwright.async_api import async_playwright
@@ -1093,6 +1145,9 @@ def cached_account_info() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 async def _sender_tick(store: AutomationStore) -> str:
+    # 登录窗口开启期间暂停发送:档案浏览器被占用,headless 刷新会撞锁
+    if (store._state["sender"].get("login_flow") or {}).get("running"):
+        return "扫码登录窗口开启中,发送暂停"
     ok, reason = store.can_send_now()
     if not ok:
         return reason or "等待中"

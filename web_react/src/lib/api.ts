@@ -45,7 +45,8 @@ export interface AutomationStatus {
     can_send: boolean
     wait_reason: string
     cookie_cached: boolean
-    account?: Record<string, unknown>
+    account?: { uname?: string; mid?: number; level?: number }
+    login_flow?: { running: boolean; message: string }
     [k: string]: unknown
   }
 }
@@ -257,6 +258,13 @@ export const api = {
     req<{ ok: boolean; rejected: number }>('/automation/candidates/bulk-reject', {
       method: 'POST',
     }),
+  bulkApproveLlm: () =>
+    req<{ ok: boolean; approved: number; skipped_no_draft: number }>(
+      '/automation/candidates/bulk-approve',
+      { method: 'POST' },
+    ),
+  biliLogin: () =>
+    req<{ ok: boolean; message: string }>('/automation/bili-login', { method: 'POST' }),
   retract: (id: string) =>
     req<{ ok: boolean }>(`/automation/candidates/${id}/retract`, { method: 'POST' }),
   redraft: (id: string) =>

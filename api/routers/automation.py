@@ -69,6 +69,7 @@ async def status() -> dict[str, Any]:
             "wait_reason": wait_reason,
             "cookie_cached": bool(auto._cached_cookie()),
             "account": auto.cached_account_info(),
+            "login_flow": store._state["sender"].get("login_flow") or {"running": False, "message": ""},
         },
     }
 
@@ -141,6 +142,14 @@ class ScreenRequest(BaseModel):
     auto_draft: bool = True
 
 
+@router.post("/candidates/bulk-approve")
+async def bulk_approve() -> dict[str, Any]:
+    """批量批准全部 LLM 精筛且已有草稿的待审条目(规则筛遗留与无草稿的不动)。"""
+    store = _store()
+    approved, skipped = store.bulk_approve_llm_screened()
+    return {"ok": True, "approved": approved, "skipped_no_draft": skipped}
+
+
 @router.post("/candidates/bulk-reject")
 async def bulk_reject() -> dict[str, Any]:
     """一键拒绝全部旧规则筛的待审条目(仅限 screened_by != llm 的遗留项)。"""
@@ -185,6 +194,30 @@ async def update_config(body: ConfigUpdate) -> dict[str, Any]:
             partial[key] = value
     cfg = store.update_config(partial)
     return {"ok": True, "config": cfg}
+
+
+@router.post("/bili-login")
+async def bili_login() -> dict[str, Any]:
+    """打开可见浏览器扫码恢复 B 站登录(后台运行,状态见 /status 的 sender.login_flow)。"""
+    store = _store()
+    flow = store._state["sender"].get("login_flow") or {}
+    if flow.get("running"):
+        raise HTTPException(status_code=409, detail="登录窗口已开启,请先完成或等它超时")
+
+    async def _run() -> None:
+        store._state["sender"]["login_flow"] = {"running": True, "message": "登录窗口已打开,请在弹出的浏览器里扫码"}
+        store.save()
+        try:
+            await auto.login_bili_qrcode()
+            store._state["sender"]["login_flow"] = {"running": False, "message": "登录成功,Cookie 已生效"}
+            store._state["sender"]["last_error"] = ""
+            store.save()
+        except Exception as exc:  # noqa: BLE001
+            store._state["sender"]["login_flow"] = {"running": False, "message": f"登录未完成:{str(exc)[:120]}"}
+            store.save()
+
+    asyncio.create_task(_run())
+    return {"ok": True, "message": "登录窗口已打开,请在弹出的浏览器里扫码(3 分钟内完成)"}
 
 
 @router.post("/cookie-refresh")

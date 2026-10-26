@@ -538,3 +538,27 @@ class TestBulkReject:
         assert old1["status"] == "rejected" and old2["status"] == "rejected"
         assert new1["status"] == "pending_review"
         assert approved_old["status"] == "approved"
+
+
+class TestBulkApprove:
+    def test_bulk_approve_only_llm_with_draft(self, store):
+        good = _item("g1", draft="答案直接给全的草稿一。")
+        good["screened_by"] = "llm"; good["status"] = "pending_review"
+        no_draft = _item("g2", draft="")
+        no_draft["screened_by"] = "llm"; no_draft["status"] = "pending_review"
+        rules = _item("g3", draft="规则筛的有草稿。")
+        rules["screened_by"] = "rules"; rules["status"] = "pending_review"
+        for it in (good, no_draft, rules):
+            store._state["items"].append(it)
+        approved, skipped = store.bulk_approve_llm_screened()
+        assert approved == 1 and skipped == 1
+        assert good["status"] == "approved"
+        assert no_draft["status"] == "pending_review"  # 无草稿不动
+        assert rules["status"] == "pending_review"      # 规则筛不动
+
+    def test_sender_tick_pauses_while_login_window_open(self, store):
+        store._state["config"]["enabled"] = True
+        store._state["sender"]["login_flow"] = {"running": True, "message": "等待扫码"}
+        import asyncio as _a
+        msg = _a.run(auto._sender_tick(store))
+        assert "扫码登录窗口开启中" in msg
