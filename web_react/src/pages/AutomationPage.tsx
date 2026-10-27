@@ -300,11 +300,11 @@ export default function AutomationPage() {
             }}
             onHumanTouch={async (cc) => {
               try {
-                setNotice('AI 味检测中…')
+                setHumanTouchReport(`检测中(约10-30秒,LLM逐句扫描)…\n对象:${cc.comment_text.slice(0, 40)}`)
                 const res = await api.candidateHumanTouch(cc.id)
                 setHumanTouchReport(res.report)
               } catch (e) {
-                setNotice(e instanceof Error ? e.message : String(e))
+                setHumanTouchReport(`检测失败:${e instanceof Error ? e.message : String(e)}`)
               }
             }}
           />
@@ -332,6 +332,10 @@ export default function AutomationPage() {
           if (msg) setNotice(msg)
           void refresh()
         }}
+        onDrafted={(item) => {
+          setSelected(item)
+          void refresh()
+        }}
       />
     </div>
   )
@@ -341,13 +345,16 @@ function Drawer({
   c,
   onClose,
   onDone,
+  onDrafted,
 }: {
   c: AutomationCandidate | null
   onClose: () => void
   onDone: (msg?: string) => void
+  onDrafted?: (item: AutomationCandidate) => void
 }) {
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
+  const [draftError, setDraftError] = useState('')
 
   useEffect(() => {
     setDraft(c?.draft ?? '')
@@ -420,18 +427,24 @@ function Drawer({
                   <button
                     onClick={async () => {
                       setBusy(true)
+                      setDraftError('')
                       try {
                         const res = await api.redraft(c.id)
                         setDraft(res.item.draft)
+                        onDrafted?.(res.item)
+                      } catch (e) {
+                        setDraftError(e instanceof Error ? e.message : String(e))
                       } finally {
                         setBusy(false)
                       }
                     }}
-                    className="text-xs text-(--brand) hover:underline"
+                    disabled={busy}
+                    className="text-xs text-(--brand) hover:underline disabled:cursor-wait disabled:text-stone-400"
                   >
-                    {c.draft ? '让 AI 重新起草' : '让 AI 起草'}
+                    {busy ? 'AI 起草中…(含去AI味复检,约1分钟,别关)' : c.draft ? '让 AI 重新起草' : '让 AI 起草'}
                   </button>
                 )}
+                {draftError && <span className="text-xs text-red-500">{draftError}</span>}
               </div>
               <textarea
                 value={draft}
