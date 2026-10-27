@@ -143,6 +143,7 @@ async def draft_manual(item_id: str, body: CandidateDecision) -> dict[str, Any]:
 class ScreenRequest(BaseModel):
     max_candidates: int = 50
     auto_draft: bool = True
+    source: str = "bulk"  # bulk=手动批量目录(data/comments) | cycle=自动采集目录(data/automation/comments)
 
 
 @router.post("/candidates/bulk-approve")
@@ -169,8 +170,12 @@ async def screen_collected(body: ScreenRequest) -> dict[str, Any]:
         raise HTTPException(status_code=409, detail="已有筛选/采集任务在运行")
 
     async def _run() -> None:
+        from api.services.outreach.reply_automation import COMMENT_DIR
+
+        source_dir = COMMENT_DIR if body.source == "cycle" else None
         await auto.screen_collected(
-            store, max_candidates=body.max_candidates, auto_draft=body.auto_draft
+            store, max_candidates=body.max_candidates, auto_draft=body.auto_draft,
+            source_dir=source_dir,
         )
 
     asyncio.create_task(_run())
