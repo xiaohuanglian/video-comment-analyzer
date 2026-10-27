@@ -56,6 +56,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "auto_draft": True,
     "llm_screen": True,
     "llm_screen_threshold": 6,
+    "opinion_like_bypass": 50,
     "user_cooldown_days": 14,
 }
 
@@ -235,6 +236,7 @@ class AutomationStore:
             "collect_timeout_minutes", "freshness_a_hours", "freshness_b_hours",
             "max_new_candidates_per_cycle", "max_per_video_per_day", "daily_send_limit",
             "send_interval_seconds", "send_jitter_seconds", "llm_screen_threshold", "user_cooldown_days",
+            "opinion_like_bypass",
         ):
             if key in partial:
                 try:
@@ -533,6 +535,12 @@ def build_candidates(
                 continue  # 冷却期内已回过的人,不重复回复
         text = str(row.get("content") or "").strip()
         status, signal = classify_comment(text)
+        if status == "excluded" and signal == "无提问":
+            # 高赞观点旁路(2026-10-27):语料库本身来自AI关键词采集,视频语境即AI域;
+            # 评论没写"AI"两个字≠不在谈AI(实测546条≥50赞实质观点被实体词门槛埋掉)。
+            # 赞数过线的实质观点放行给 LLM 精筛,水评仍由感叹/AI水评等规则拦。
+            if _lk(row) >= int(config.get("opinion_like_bypass", 50)) and len(text) >= 30:
+                status, signal = "target_c", "高赞观点(社区验证过实质)"
         if status == "excluded":
             funnel["excluded"] += 1
             continue
@@ -1067,7 +1075,7 @@ async def screen_collected(
             return {"ok": False, "error": "两个采集目录都没有数据,先去「评论采集」面板爬一批"}
         cfg = dict(store.config)
         # 粗筛放大 3 倍(封顶 36)给 LLM 精筛挑选,最终仍按 max_candidates 截断
-        cfg["max_new_candidates_per_cycle"] = max(1, min(int(max_candidates) * 3, 36))
+        cfg["max_new_candidates_per_cycle"] = max(1, min(int(max_candidates) * 3, 150))
         today = datetime.now().strftime("%Y-%m-%d")
         cfg["_items_today"] = [
             it for it in store.items if str(it.get("created_at", "")).startswith(today)
