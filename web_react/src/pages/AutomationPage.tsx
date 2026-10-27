@@ -40,24 +40,39 @@ export default function AutomationPage() {
     }
   }, [tab])
 
+  // 后台筛选/采集在跑时,自动进入轮询态(从别的页面回来也能续上,不用重新点)
+  useEffect(() => {
+    if (!status?.cycle?.running) return
+    setScreening(true)
+  }, [status?.cycle?.running])
+
   useEffect(() => {
     void refresh()
     const t = setInterval(refresh, screening ? 2000 : 15000)
     return () => clearInterval(t)
   }, [refresh, screening])
 
-  // 筛选:启动后轮询直到 cycle.running 结束,然后展示结果摘要
+  // 筛选:触发后台任务;轮询由下方 useEffect 驱动,点完即可离开页面
   const runScreen = async () => {
     if (screening) return
-    setScreening(true)
     setScreenResult('')
     setNotice('')
     try {
       await api.screenCollected(50, true)
-      // 等后台跑完(最多 8 分钟)
-      const deadline = Date.now() + 8 * 60 * 1000
-      for (;;) {
-        await new Promise((r) => setTimeout(r, 2000))
+      setScreening(true)
+    } catch (e) {
+      setScreenResult(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  // 轮询:筛选中每 2.5s 查状态,结束后展示摘要并刷新列表(超时 10 分钟兜底)
+  useEffect(() => {
+    if (!screening) return
+    let alive = true
+    const startedAt = Date.now()
+    const tick = async () => {
+      if (!alive) return
+      try {
         const s = await api.automationStatus()
         setStatus(s)
         if (!s.cycle.running) {
@@ -81,20 +96,25 @@ export default function AutomationPage() {
               setScreenResult('完成,但摘要解析失败,请看待批准列表')
             }
           }
-          break
+          setScreening(false)
+          await refresh()
+          return
         }
-        if (Date.now() > deadline) {
-          setScreenResult('等待超时,后台仍在跑,稍后自行刷新看待批准')
-          break
-        }
+      } catch {
+        /* 网络抖动,下轮再查 */
       }
-      await refresh()
-    } catch (e) {
-      setScreenResult(e instanceof Error ? e.message : String(e))
-    } finally {
-      setScreening(false)
+      if (Date.now() - startedAt > 10 * 60 * 1000) {
+        setScreenResult('等待超时,后台仍在跑,稍后自行刷新看待批准')
+        setScreening(false)
+        return
+      }
+      setTimeout(tick, 2500)
     }
-  }
+    tick()
+    return () => {
+      alive = false
+    }
+  }, [screening]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-6 space-y-4">
@@ -123,7 +143,7 @@ export default function AutomationPage() {
             className="flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs hover:border-(--brand) disabled:opacity-50"
           >
             {screening ? <Loader2 size={13} className="animate-spin" /> : <Filter size={13} />}
-            {screening ? '筛选中(扫描存量评论+AI起草)…' : '从已采集数据筛选目标'}
+            {screening ? '筛选中…后台在跑,可以离开这页,完成后自动刷新' : '从已采集数据筛选目标(两个采集目录全量)'}
           </button>
           <button
             onClick={() => void refresh()}

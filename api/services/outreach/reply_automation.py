@@ -1047,9 +1047,24 @@ async def screen_collected(
     store._state["cycle"]["last_error"] = ""
     store.save()
     try:
-        rows, video_map = read_collected(source_dir or BULK_COMMENT_DIR)
+        if source_dir is not None:
+            rows, video_map = read_collected(source_dir)
+        else:
+            # 默认双目录合并(手动批量 data/comments + 自动周期 data/automation/comments),comment_id 去重
+            rows_a, vm_a, _ = read_collected(BULK_COMMENT_DIR)
+            rows_b, vm_b, _ = read_collected(COMMENT_DIR)
+            seen: set[str] = set()
+            rows = []
+            for r in rows_a + rows_b:
+                cid = str(r.get("comment_id") or "")
+                if cid:
+                    if cid in seen:
+                        continue
+                    seen.add(cid)
+                rows.append(r)
+            video_map = {**vm_a, **vm_b}
         if not rows:
-            return {"ok": False, "error": f"{(source_dir or BULK_COMMENT_DIR)} 下没有采集数据,先用「评论采集」面板爬一批"}
+            return {"ok": False, "error": "两个采集目录都没有数据,先去「评论采集」面板爬一批"}
         cfg = dict(store.config)
         # 粗筛放大 3 倍(封顶 36)给 LLM 精筛挑选,最终仍按 max_candidates 截断
         cfg["max_new_candidates_per_cycle"] = max(1, min(int(max_candidates) * 3, 36))
