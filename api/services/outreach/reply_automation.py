@@ -86,6 +86,8 @@ _RE_RESOURCE_BEG = re.compile(
 _RE_DIRECTOR = re.compile(r"您的|你的|你(这|那)个|up你|楼主你|老师你|k神|ksr桑")
 # AI 水评（B 站流行的 AI 生成总结式评论）
 _RE_AI_WATER = re.compile(r"值得琢磨|值得深思|这道选择题|也挺直观|从某种角度|某种意义|确实也")
+# AI 生成评论的装饰符签名(首尾包边口号体/✨;2026-10-27 实测三类全中)
+_RE_AI_DECO = re.compile(r"^[\u2756\u2740\u2726\u273f\u2746\u25c8\u2605\u2606].{4,}[\u2756\u2740\u2726\u273f\u2746\u25c8\u2605\u2606]$|\u2728|\ud83d\udcab")
 # 感叹/纯情绪（无提问内容）
 _RE_EXCLAIM = re.compile(
     r"^(好的|谢谢|感谢|厉害|绝了|哇|牛|冲|收藏了|mark|马克|支持|好看|太|确实|哈哈|笑死|"
@@ -137,6 +139,7 @@ def classify_comment(text: str) -> tuple[str, str]:
         (_RE_DIRECTOR, "导演式提问"),
         (_RE_RHETORIC, "反问/抒情"),
         (_RE_AI_WATER, "AI水评"),
+        (_RE_AI_DECO, "AI装饰符"),
         (_RE_EXCLAIM, "纯感叹"),
     ):
         if pat.search(text):
@@ -639,10 +642,12 @@ LLM_SCREEN_PROMPT = """你是B站评论区「值得回复的人」的精筛助�
 - engage:观点有内容×能自然接话,能延续对话的吐槽/预测/体验分享高分,纯情绪低分
 - watcher 型 engage 值得回(可转化),但值得≠被收割:他们值得一句稳住人心、能上手的真话
 
+真人鉴定(is_ai_comment):B站大量AI/Agent生成的评论,回它=机器对机器,浪费名额。AI评论特征:装饰符包裹(❀✦❖)、标签式开头("现身说法版:""这条把账算得最清楚:")、复述视频内容给结构化评价、完美"不是X是Y"翻案且无个人痕迹、精确数字考据腔、放任何视频下都成立的通用口号。真人特征:个人处境(我大一/我辞职了/家里人…)、情绪残留(语气词/错字/粗暴)、具体经历、B站原生梗和表情、@朋友闲聊。疑似AI生成 → is_ai_comment=true,一律 lane=skip,reason 写明证据。
+
 已答判定(already_answered):输入可能带「评论区已有回复」(楼中楼摘录)。若 UP 或热心人已在评论区把该问题答得靠谱完整,再答一遍像机器人刷存在感 → already_answered=true,一律 lane=skip,reason 里写明「已被答」。若已有回复只是不痛不痒/答非所问,才继续评分。
 
 输入给你评论原文、所在视频标题、(若有)楼中楼摘录。只输出一个 JSON 对象,不要输出其他文字:
-{{"lane": "help|engage|skip", "persona": "novice_doer|expert_doer|thinker|watcher|beggar|seller", "intent": "信号类型", "worth": 0-10, "already_answered": true|false, "reason": "一句话理由,给人工审核看,说清为什么值得或不值得"}}
+{{"lane": "help|engage|skip", "persona": "novice_doer|expert_doer|thinker|watcher|beggar|seller", "intent": "信号类型", "worth": 0-10, "is_ai_comment": true|false, "already_answered": true|false, "reason": "一句话理由,给人工审核看,说清为什么值得或不值得"}}
 """
 
 
@@ -731,6 +736,9 @@ async def llm_screen_candidates(
         except (TypeError, ValueError):
             worth = 0
         lane = str(data.get("lane") or "skip").strip().lower()
+        if str(data.get("is_ai_comment", "")).strip().lower() in ("true", "是", "1"):
+            lane = "skip"  # 疑似AI生成评论:回它是机器对机器,一律拦下
+            item["match_reason"] = "疑似AI生成评论,不互动"
         if str(data.get("already_answered", "")).strip().lower() in ("true", "是", "1"):
             lane = "skip"  # 已被答好:再答像机器人,一律拦下
         if lane not in ("help", "engage"):

@@ -1067,3 +1067,30 @@ class TestOpinionLikeBypass:
             [row], {"v1": {"title": "t", "video_url": "u"}},
             {"max_new_candidates_per_cycle": 5, "opinion_like_bypass": 50}, set())
         assert picked == []
+
+
+class TestAiCommentDefense:
+    """用户发现:筛出的候选里混着 Agent 生成的评论(装饰符口号/复述体/完美翻案)。"""
+
+    def test_deco_wrapped_caught_by_rule(self):
+        for t in ("❖感觉AI正在成为新的生产力入口❖", "❀AI不是偷懒，而是换一种效率方式❀",
+                  "✦感觉AI会让学习不再只是看资料，而是互动理解✦"):
+            status, label = auto.classify_comment(t)
+            assert status == "excluded" and label == "AI装饰符", (t, status, label)
+
+    def test_sparkle_caught(self):
+        status, label = auto.classify_comment("大二开始做副业,一周300多,大部分人熬不住✨")
+        assert status == "excluded" and label == "AI装饰符"
+
+    @pytest.mark.asyncio
+    async def test_screen_skips_ai_comment(self):
+        async def fake_complete(messages, **kwargs):
+            return ('{"lane":"engage","persona":"thinker","intent":"观点/预测",'
+                    '"worth":9,"is_ai_comment":true,"already_answered":false,'
+                    '"reason":"复述视频内容+完美翻案句,无个人痕迹"}')
+        item = {"id": "c_ai1", "comment_text": "这条线确实顺", "video_title": "t", "signal": "s"}
+        kept, _ = await auto.llm_screen_candidates([item], complete_fn=fake_complete)
+        assert kept == []  # 哪怕 worth=9:疑似AI评论一律拦
+
+    def test_screen_prompt_has_botcheck(self):
+        assert "真人鉴定" in auto.LLM_SCREEN_PROMPT and "is_ai_comment" in auto.LLM_SCREEN_PROMPT
