@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from api.services.llm import complete
 from api.services.outreach.reply_automation import (
     BULK_COMMENT_DIR,
+    COMMENT_DIR,
     classify_comment,
     read_collected,
 )
@@ -54,29 +55,53 @@ class AnalyzeRequest(BaseModel):
 
 
 def _load_rows(date: Optional[str]) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], str]:
+    """按日期读两个采集目录(手动批量 data/comments + 自动周期 data/automation/comments),
+    comment_id 去重合并;无日期则全量合并。"""
+    dirs = (BULK_COMMENT_DIR, COMMENT_DIR)
     if date:
         rows: list[dict[str, Any]] = []
         video_map: dict[str, dict[str, Any]] = {}
-        c = BULK_COMMENT_DIR / f"comments_{date}.jsonl"
-        v = BULK_COMMENT_DIR / f"contents_{date}.jsonl"
-        if c.exists():
-            for line in c.read_text(encoding="utf-8").splitlines():
-                if line.strip():
+        seen: set[str] = set()
+        for d in dirs:
+            c = d / f"comments_{date}.jsonl"
+            if c.exists():
+                for line in c.read_text(encoding="utf-8").splitlines():
+                    if not line.strip():
+                        continue
                     try:
-                        rows.append(json.loads(line))
+                        row = json.loads(line)
                     except json.JSONDecodeError:
-                        pass
-        if v.exists():
-            for line in v.read_text(encoding="utf-8").splitlines():
-                if line.strip():
+                        continue
+                    cid = str(row.get("comment_id") or "")
+                    if cid:
+                        if cid in seen:
+                            continue
+                        seen.add(cid)
+                    rows.append(row)
+            v = d / f"contents_{date}.jsonl"
+            if v.exists():
+                for line in v.read_text(encoding="utf-8").splitlines():
+                    if not line.strip():
+                        continue
                     try:
                         item = json.loads(line)
-                        video_map[str(item.get("video_id"))] = item
                     except json.JSONDecodeError:
-                        pass
+                        continue
+                    video_map.setdefault(str(item.get("video_id")), item)
         return rows, video_map, date
-    rows, video_map = read_collected(BULK_COMMENT_DIR)
-    return rows, video_map, "全量"
+    rows_a, vm_a, _ = read_collected(BULK_COMMENT_DIR)
+    rows_b, vm_b, _ = read_collected(COMMENT_DIR)
+    seen = set()
+    merged: list[dict[str, Any]] = []
+    for r in rows_a + rows_b:
+        cid = str(r.get("comment_id") or "")
+        if cid:
+            if cid in seen:
+                continue
+            seen.add(cid)
+        merged.append(r)
+    vm = {**vm_a, **vm_b}
+    return merged, vm, "全量"
 
 
 def _build_summary(rows: list[dict[str, Any]], video_map: dict[str, dict[str, Any]], req: AnalyzeRequest) -> str:
