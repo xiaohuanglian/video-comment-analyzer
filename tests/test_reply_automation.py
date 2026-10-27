@@ -1039,3 +1039,31 @@ class TestEngagementRefresh:
         item = store.find("c_e1")
         assert item["reply_like_count"] == 3 and item["reply_rcount"] == 2
         assert item["reply_sub_preview"] == ["李四:学到了"]
+
+
+class TestOpinionLikeBypass:
+    """高赞观点旁路:实体词门槛埋掉的实质观点放行给 LLM(2026-10-27,实测546条被埋)。"""
+
+    def test_high_like_opinion_passes(self):
+        # 👍7700 实测案例:谈AI冲击影视工业但没写"AI"两个字
+        row = _crow("9001", "不需要演员档期 不需要搭景布景 不需要化妆师 不需要看天气 冲击实在太大了", uid="u9", likes=7700)
+        picked, funnel = auto.build_candidates(
+            [row], {"v1": {"title": "t", "video_url": "u"}},
+            {"max_new_candidates_per_cycle": 5, "opinion_like_bypass": 50}, set())
+        assert len(picked) == 1 and picked[0]["lane"] == "engage"
+        assert picked[0]["signal"] == "高赞观点(社区验证过实质)"
+
+    def test_low_like_opinion_still_excluded(self):
+        row = _crow("9002", "这个观点我觉得很有意思值得讨论一下行业变化和工具演进的趋势走向", uid="u9", likes=3)
+        picked, _ = auto.build_candidates(
+            [row], {"v1": {"title": "t", "video_url": "u"}},
+            {"max_new_candidates_per_cycle": 5, "opinion_like_bypass": 50}, set())
+        assert picked == []
+
+    def test_water_still_excluded_even_high_like(self):
+        # 长度门槛抬到30字:纯吹捧跑不满30字进不了旁路(实质观点通常更长)
+        row = _crow("9003", "太绝了这波操作简直绝绝子", uid="u9", likes=9999)
+        picked, _ = auto.build_candidates(
+            [row], {"v1": {"title": "t", "video_url": "u"}},
+            {"max_new_candidates_per_cycle": 5, "opinion_like_bypass": 50}, set())
+        assert picked == []
