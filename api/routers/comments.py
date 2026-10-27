@@ -89,8 +89,8 @@ def _load_rows(date: Optional[str]) -> tuple[list[dict[str, Any]], dict[str, dic
                         continue
                     video_map.setdefault(str(item.get("video_id")), item)
         return rows, video_map, date
-    rows_a, vm_a, _ = read_collected(BULK_COMMENT_DIR)
-    rows_b, vm_b, _ = read_collected(COMMENT_DIR)
+    rows_a, vm_a = read_collected(BULK_COMMENT_DIR)
+    rows_b, vm_b = read_collected(COMMENT_DIR)
     seen = set()
     merged: list[dict[str, Any]] = []
     for r in rows_a + rows_b:

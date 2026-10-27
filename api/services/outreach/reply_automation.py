@@ -1051,8 +1051,8 @@ async def screen_collected(
             rows, video_map = read_collected(source_dir)
         else:
             # 默认双目录合并(手动批量 data/comments + 自动周期 data/automation/comments),comment_id 去重
-            rows_a, vm_a, _ = read_collected(BULK_COMMENT_DIR)
-            rows_b, vm_b, _ = read_collected(COMMENT_DIR)
+            rows_a, vm_a = read_collected(BULK_COMMENT_DIR)
+            rows_b, vm_b = read_collected(COMMENT_DIR)
             seen: set[str] = set()
             rows = []
             for r in rows_a + rows_b:
@@ -1092,7 +1092,7 @@ async def screen_collected(
         added = store.add_items(picked)
         summary = {
             "ok": True,
-            "source": str(source_dir or BULK_COMMENT_DIR),
+            "source": str(source_dir) if source_dir else "双目录合并(bulk+cycle)",
             "videos": len(video_map),
             "comments": len(rows),
             "funnel": funnel,
