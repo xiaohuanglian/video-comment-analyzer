@@ -1346,6 +1346,76 @@ def cached_account_info() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# 已发回复的互动回采(点赞/被回复数——用户要看到自己回复的真实反馈)
+# ---------------------------------------------------------------------------
+
+_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+
+
+def _fetch_reply_engagement(cookie: str, oid: str, root: str, rpid: str) -> Optional[dict[str, Any]]:
+    """查已发回复在B站的实时状态:like/rcount/是否被删/楼中楼预览。"""
+    import httpx
+
+    try:
+        resp = httpx.get(
+            "https://api.bilibili.com/x/v2/reply/reply",
+            params={"type": 1, "oid": oid, "root": root, "pn": 1, "ps": 49},
+            headers={"Cookie": cookie, "User-Agent": _UA, "Referer": "https://www.bilibili.com/"},
+            timeout=15.0,
+            trust_env=False,
+        )
+        d = resp.json()
+        if d.get("code") != 0:
+            return {"missing": True, "like": 0, "rcount": 0, "note": f"接口code={d.get('code')}", "subs": []}
+        for r in (d.get("data") or {}).get("replies") or []:
+            if str(r.get("rpid")) == str(rpid):
+                subs = [
+                    f"{(s.get('member') or {}).get('uname', '?')}:{(s.get('content') or {}).get('message', '')[:60]}"
+                    for s in (r.get("replies") or [])[:3]
+                ]
+                return {
+                    "missing": False,
+                    "like": int(r.get("like") or 0),
+                    "rcount": int(r.get("rcount") or 0),
+                    "subs": subs,
+                }
+        return {"missing": True, "like": 0, "rcount": 0, "note": "楼内未找到(可能被删/折叠)", "subs": []}
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def refresh_sent_engagement(store: "AutomationStore") -> dict[str, Any]:
+    """回采全部已发回复的互动:点赞/被回复数/楼中楼预览,写入条目并持久化。"""
+    cookie = _cached_cookie()
+    sent = [it for it in store._state["items"] if it.get("status") == "sent" and it.get("reply_id")]
+    updated = 0
+    with_activity: list[dict[str, Any]] = []
+    for it in sent:
+        if not cookie:
+            break
+        info = await asyncio.to_thread(
+            _fetch_reply_engagement, cookie, str(it.get("video_id") or ""), str(it.get("comment_id") or ""), str(it.get("reply_id") or "")
+        )
+        if info is None:
+            continue
+        it["reply_like_count"] = info["like"]
+        it["reply_rcount"] = info["rcount"]
+        it["engagement_at"] = datetime.now().isoformat(timespec="seconds")
+        if info.get("missing"):
+            it["engagement_note"] = str(info.get("note") or "")[:60]
+        else:
+            it.pop("engagement_note", None)
+        it["reply_sub_preview"] = info["subs"]
+        updated += 1
+        if info["like"] > 0 or info["rcount"] > 0:
+            with_activity.append({"id": it["id"], "like": info["like"], "rcount": info["rcount"], "subs": info["subs"]})
+        await asyncio.sleep(0.8)  # 温柔节拍,不枛阅读接口
+    if updated:
+        store.save()
+    return {"ok": True, "updated": updated, "with_activity": with_activity}
+
+
+# ---------------------------------------------------------------------------
 # 发送循环
 # ---------------------------------------------------------------------------
 

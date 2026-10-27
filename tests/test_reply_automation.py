@@ -985,3 +985,57 @@ class TestTailHedgeLint:
 
     def test_structure_variants_expanded(self):
         assert len(auto._ENGAGE_STRUCTURES) >= 6 and len(auto._HELP_STRUCTURES) >= 4
+
+
+class TestEngagementRefresh:
+    def test_fetch_reply_engagement_parses(self):
+        from api.services.outreach import reply_automation as ra
+
+        class FakeResp:
+            def json(self):
+                return {"code": 0, "data": {"replies": [
+                    {"rpid": 111, "like": 2, "rcount": 1, "replies": [
+                        {"member": {"uname": "张三"}, "content": {"message": "谢谢,我去试试"}}]},
+                    {"rpid": 222, "like": 0, "rcount": 0},
+                ]}}
+
+        import api.services.outreach.reply_automation as mod
+        orig_get = None
+        try:
+            import httpx
+            orig_get = httpx.get
+            httpx.get = lambda *a, **k: FakeResp()
+            info = mod._fetch_reply_engagement("cookie", "oid", "root", "111")
+            assert info["like"] == 2 and info["rcount"] == 1
+            assert "张三" in info["subs"][0]
+            miss = mod._fetch_reply_engagement("cookie", "oid", "root", "999")
+            assert miss["missing"] is True
+        finally:
+            if orig_get is not None:
+                httpx.get = orig_get
+
+    @pytest.mark.asyncio
+    async def test_refresh_sent_engagement_updates_items(self, store):
+        it = _item("e1", draft="答案给全的草稿。")
+        it["status"] = "sent"
+        it["reply_id"] = "888"
+        it["video_id"] = "v1"
+        it["comment_id"] = "c999"
+        store._state["items"].append(it)
+
+        from api.services.outreach import reply_automation as mod
+        orig = mod._fetch_reply_engagement
+        orig_cookie = mod._cached_cookie
+        mod._cached_cookie = lambda: "cookie"
+        def fake_fetch(cookie, oid, root, rpid):  # 同步函数(真身经 asyncio.to_thread 调用)
+            return {"missing": False, "like": 3, "rcount": 2, "subs": ["李四:学到了"]}
+        mod._fetch_reply_engagement = fake_fetch
+        try:
+            res = await mod.refresh_sent_engagement(store)
+        finally:
+            mod._fetch_reply_engagement = orig
+            mod._cached_cookie = orig_cookie
+        assert res["updated"] == 1 and res["with_activity"][0]["like"] == 3
+        item = store.find("c_e1")
+        assert item["reply_like_count"] == 3 and item["reply_rcount"] == 2
+        assert item["reply_sub_preview"] == ["李四:学到了"]
