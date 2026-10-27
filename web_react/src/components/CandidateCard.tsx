@@ -83,6 +83,14 @@ export default function CandidateCard({
         {c.tier === 'A' && (
           <span className="rounded bg-orange-50 px-1.5 py-0.5 text-orange-500">新鲜</span>
         )}
+        {c.status === 'sent' && c.reply_like_count !== undefined && (
+          <span
+            className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-600"
+            title={c.engagement_note || `B站实时互动(更新于 ${c.engagement_at?.slice(5, 16) ?? ''})`}
+          >
+            回👍{c.reply_like_count} · 被回{c.reply_rcount}
+          </span>
+        )}
         {!!c.sub_reply_count && (
           <span
             className="rounded bg-sky-50 px-1.5 py-0.5 text-sky-600"

@@ -231,6 +231,28 @@ export default function AutomationPage() {
             批量批准 LLM 精筛条目({items.filter((c) => c.screened_by === 'llm' && (c.draft || '').trim()).length} 条有草稿)
           </button>
         )}
+        {tab === 'sent' && items.length > 0 && (
+          <button
+            onClick={async () => {
+              try {
+                setNotice('正在回采B站实时互动…')
+                const res = await api.refreshEngagement()
+                const act = res.with_activity
+                setNotice(
+                  act.length
+                    ? `已更新 ${res.updated} 条;有互动的 ${act.length} 条:${act.map((a) => `👍${a.like}/回${a.rcount}`).join('、')}`
+                    : `已更新 ${res.updated} 条,暂无人理睬(继续等,B站互动是慢热型)`,
+                )
+                await refresh()
+              } catch (e) {
+                setNotice(e instanceof Error ? e.message : String(e))
+              }
+            }}
+            className="w-full rounded-xl border border-dashed border-emerald-300 bg-emerald-50/60 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
+          >
+            刷新互动数据(回采B站:我方回复的赞/被回复)
+          </button>
+        )}
         {items.length === 0 && (
           <p className="py-12 text-center text-sm text-stone-400">这个状态下没有条目</p>
         )}

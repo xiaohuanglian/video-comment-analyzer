@@ -20,6 +20,11 @@ export interface AutomationCandidate {
   persona?: string
   sub_replies?: string[]
   sub_reply_count?: number
+  reply_like_count?: number
+  reply_rcount?: number
+  engagement_at?: string
+  engagement_note?: string
+  reply_sub_preview?: string[]
   draft: string
   lint_warnings: string[]
   draft_source: string
@@ -263,6 +268,11 @@ export const api = {
     req<{ ok: boolean; rejected: number }>('/automation/candidates/bulk-reject', {
       method: 'POST',
     }),
+  refreshEngagement: () =>
+    req<{ ok: boolean; updated: number; with_activity: { id: string; like: number; rcount: number; subs: string[] }[] }>(
+      '/automation/candidates/refresh-engagement',
+      { method: 'POST' },
+    ),
   candidateHumanTouch: (id: string) =>
     req<{ ok: boolean; item_id: string; report: string }>(
       `/automation/candidates/${id}/human-touch`,

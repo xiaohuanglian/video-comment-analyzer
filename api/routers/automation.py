@@ -269,3 +269,11 @@ async def human_touch(item_id: str) -> dict[str, Any]:
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"检测调用失败:{e}") from e
     return {"ok": True, "item_id": item_id, "report": report.strip()}
+
+
+@router.post("/candidates/refresh-engagement")
+async def refresh_engagement() -> dict[str, Any]:
+    """回采已发回复在B站的实时互动(点赞/被回复数/楼中楼预览),写入条目。"""
+    store = _store()
+    result = await auto.refresh_sent_engagement(store)
+    return result
