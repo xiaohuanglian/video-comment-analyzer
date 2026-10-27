@@ -957,3 +957,31 @@ class TestAutoDeAIFlavor:
         rewrite_msgs = calls[1]
         assert "必须修复的问题" in rewrite_msgs[1]["content"]
         assert "修改自己的草稿" in rewrite_msgs[0]["content"]
+
+
+class TestTailHedgeLint:
+    """用户 2026-10-26 再报:「这块我也还在试」成了每条的固定签名——一律拦。"""
+
+    def test_user_cases_caught(self):
+        from api.services.outreach.reply_style import check_reply_style
+        for tail in ("这块我也还在试。", "这块我自己也还在确认。", "这方面我到现在也还在摸索。", "但也没法完全稳住。"):
+            ws = check_reply_style("我先把参考图固定住,生成的会稳一些。" + tail)
+            assert any("模板化不确定尾巴" in w for w in ws), tail
+
+    def test_past_experience_not_caught(self):
+        from api.services.outreach.reply_style import check_reply_style
+        # 过去式经验是真人表达,不误伤
+        ws = check_reply_style("我之前也这么试过,后来固定了参考图就稳了。")
+        assert not any("模板化不确定尾巴" in w for w in ws), ws
+
+    def test_hedge_is_rewrite_class(self):
+        ws = ["模板化不确定尾巴「这块我也还在试…」(被高频复制的签名式收尾;删掉这句,或换成具体事实)"]
+        assert auto._ai_flavor_issues(ws) == ws  # 命中重写触发类
+
+    def test_prompts_ban_hedge(self):
+        assert "程式化露怯" in auto.BILI_ENGAGE_SYSTEM_PROMPT
+        assert "程式化露怯" in auto.BILI_AUTO_SYSTEM_PROMPT
+        assert "可以偶尔露出不确定" not in auto.BILI_ENGAGE_SYSTEM_PROMPT  # 旧许可已删
+
+    def test_structure_variants_expanded(self):
+        assert len(auto._ENGAGE_STRUCTURES) >= 6 and len(auto._HELP_STRUCTURES) >= 4

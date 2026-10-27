@@ -107,6 +107,13 @@ _RE_BROADCAST_TONE = re.compile(r"亲[，,!！]|家人们")
 # 编造感精确数字:小数点参数真人开口极少说(0.2秒/12.5%),整数约数(3到5秒)正常
 _RE_FAKE_PRECISION = re.compile(r"\d+\.\d+\s*(秒|分钟|小时|%|倍|张|条|次|个点)")
 
+# 模板化不确定尾巴(被模型当固定签名复制:"这块我也还在试/确认/摸索",批量看最重 AI 感)
+# 只打「现在进行时+位于末句」的模式;过去式经验("我之前也这么试过")不误伤
+_RE_TAIL_HEDGE = re.compile(
+    r"(这块|这个|这方面|这条)[^。]{0,8}还在(试|确认|摸索|调整|找|踩|验)|"
+    r"我也还在|我到现在(也|还)|(没|不)(法|能)?(完全|彻底)(跑通|搞定|稳|摸透|想明白)"
+)
+
 # 固定连接词(堆叠才报)
 _RE_CONNECTIVES = re.compile(r"然而|事实上|值得注意的是|更重要的是|与此同时|不得不说")
 
@@ -193,6 +200,10 @@ def check_reply_style(text: str) -> List[str]:
     m = _RE_FAKE_PRECISION.search(text)
     if m:
         warnings.append(f"编造感精确数字「{m.group(0)}」(没量过的不写小数点,改成约数:留一点空隙/快了近半)")
+
+    # 模板化不确定尾巴:末句命中即拦(重写类;过去式经验不误伤)
+    if _RE_TAIL_HEDGE.search(tail):
+        warnings.append(f"模板化不确定尾巴「{tail[:24]}…」(被高频复制的签名式收尾;删掉这句,或换成具体事实)")
 
     return warnings
 
