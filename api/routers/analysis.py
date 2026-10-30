@@ -1509,6 +1509,8 @@ class ContentPlanRequest(BaseModel):
     use_mock: Optional[bool] = None
     max_topics: int = Field(default=12, ge=1, le=50)
     draft_topics: int = Field(default=5, ge=0, le=20)
+    with_hot: bool = Field(default=False, description="附加外部热点信号")
+    hot_boost: bool = Field(default=False, description="按「需求×热度」重排（需 with_hot）")
 
 
 @router.post("/runs/{run_id}/content/generate")
@@ -1528,6 +1530,8 @@ async def post_generate_content(run_id: str, body: ContentPlanRequest) -> Dict[s
         api_key=body.api_key or "",
         max_topics=body.max_topics,
         draft_topics=body.draft_topics,
+        with_hot=body.with_hot,
+        hot_boost=body.hot_boost,
     )
     payload = doc.model_dump()
     save_content_plan(run_id, payload)

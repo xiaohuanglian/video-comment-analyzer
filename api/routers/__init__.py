@@ -13,6 +13,7 @@ from .youvibe import router as youvibe_router
 from .comments import router as comments_router
 from .strategy import router as strategy_router
 from .wechat import router as wechat_router
+from .hot_radar import router as hot_radar_router
 from .costs import router as costs_router
 
 __all__ = [
@@ -30,6 +31,7 @@ __all__ = [
     "youvibe_router",
     "comments_router",
     "strategy_router",
+    "hot_radar_router",
     "wechat_router",
     "costs_router",
 ]
