@@ -22,6 +22,10 @@ from .field import *
 from .help import *
 
 
+# 抖音 Argus 网关占位头值；网关当前只校验"存在"，不校验内容。
+DOUYIN_ARGUS_HEADER_VALUE = "1"
+
+
 class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
 
     def __init__(
@@ -38,6 +42,12 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         self.timeout = timeout
         self._pacer = CrawlPacer(platform="dy")
         self.headers = headers
+        # 抖音边缘网关 ArgusSecurityPlugin 做业务前置校验：缺 x-tt-argus 头 → 403
+        # "Uifid Not Found"；有 uifid 但缺该头 → "Signature Not Found"。同步上游修复。
+        self.headers.setdefault("x-tt-argus", DOUYIN_ARGUS_HEADER_VALUE)
+        uifid = (cookie_dict or {}).get("UIFID") or (cookie_dict or {}).get("UIFID_TEMP", "")
+        if uifid:
+            self.headers.setdefault("uifid", uifid)
         self._host = "https://www.douyin.com"
         self.cookie_urls = [
             "https://douyin.com",
@@ -197,7 +207,14 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         :param aweme_id:
         :return:
         """
-        params = {"aweme_id": aweme_id}
+        # detail 接口要求 uifid 与 s_v_web_id 成套出现，缺一则 403 "Uifid Not Found"
+        s_v_web_id = (self.cookie_dict or {}).get("s_v_web_id", "")
+        params = {
+            "aweme_id": aweme_id,
+            "uifid": (self.cookie_dict or {}).get("UIFID") or (self.cookie_dict or {}).get("UIFID_TEMP", ""),
+            "verifyFp": s_v_web_id,
+            "fp": s_v_web_id,
+        }
         headers = copy.copy(self.headers)
         del headers["Origin"]
         res = await self.get("/aweme/v1/web/aweme/detail/", params, headers)
