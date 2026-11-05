@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { MonitorPlay, Loader2, Play, Download, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react'
+import { MonitorPlay, Loader2, Play, Download, CheckCircle2, AlertCircle, RefreshCw, FileText } from 'lucide-react'
 import clsx from 'clsx'
-import { api, type YouTubeJob, type YouTubeSummary, type YouTubeTarget } from '../lib/api'
+import { api, type CommentReport, type YouTubeJob, type YouTubeSummary, type YouTubeTarget } from '../lib/api'
 
 const SORTS = [
   { key: 'newest', label: '按时间（能采满）' },
@@ -18,6 +18,9 @@ export default function YouTubePanel() {
   const [summary, setSummary] = useState<YouTubeSummary | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [reportBusy, setReportBusy] = useState(false)
+  const [report, setReport] = useState<CommentReport | null>(null)
+  const [reportError, setReportError] = useState('')
 
   const refresh = useCallback(async () => {
     try {
@@ -85,6 +88,21 @@ export default function YouTubePanel() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setBusy(false)
+    }
+  }
+
+  const generateReport = async () => {
+    if (reportBusy) return
+    setReportBusy(true)
+    setReportError('')
+    try {
+      const r = await api.youtubeReport({ channels: selected })
+      setReport(r)
+      window.dispatchEvent(new CustomEvent('vca:reports-updated'))
+    } catch (e) {
+      setReportError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setReportBusy(false)
     }
   }
 
@@ -185,14 +203,25 @@ export default function YouTubePanel() {
             </option>
           ))}
         </select>
+        <span className="ml-auto" />
         <button
           type="button"
           onClick={start}
           disabled={busy}
-          className="ml-auto inline-flex items-center gap-1.5 rounded-xl bg-(--brand) px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
+          className="inline-flex items-center gap-1.5 rounded-xl bg-(--brand) px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
         >
           {busy ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
           {busy ? '采集中…' : '开始采集'}
+        </button>
+        <button
+          type="button"
+          onClick={generateReport}
+          disabled={reportBusy || (summary?.total_comments ?? 0) === 0}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-stone-300 px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-40"
+          title="用已采评论生成一份对标报告，写进下方历史报告"
+        >
+          {reportBusy ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+          {reportBusy ? '生成报告…' : '生成对标报告'}
         </button>
       </div>
 
@@ -236,6 +265,46 @@ export default function YouTubePanel() {
         </div>
       )}
 
+
+      {(report || reportError) && (
+        <div className="rounded-xl border border-stone-200 bg-white px-3 py-2.5">
+          {reportError ? (
+            <p className="text-xs text-red-600">{reportError}</p>
+          ) : (
+            report && (
+              <>
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <FileText size={13} className="text-(--brand)" />
+                  <span className="font-medium text-stone-700">对标报告已生成</span>
+                  <span className="text-stone-400">
+                    {report.total_comments.toLocaleString()} 条 / {report.total_videos} 视频
+                  </span>
+                  <span className="ml-auto text-stone-400">已加入下方「历史报告」</span>
+                </div>
+                {report.audience && (
+                  <p className="mt-1.5 text-xs leading-relaxed text-stone-600">{report.audience}</p>
+                )}
+                {report.pain_themes.length > 0 && (
+                  <ul className="mt-1.5 space-y-1">
+                    {report.pain_themes.slice(0, 4).map((t, i) => (
+                      <li key={i} className="text-xs text-stone-600">
+                        <span className="mr-1 rounded bg-stone-100 px-1 py-0.5 text-stone-500">{t.heat}</span>
+                        {t.theme}
+                        {t.evidence && <span className="ml-1 text-stone-400">「{t.evidence}」</span>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {report.topic_hints.length > 0 && (
+                  <p className="mt-1.5 text-xs text-stone-600">
+                    选题：{report.topic_hints.slice(0, 3).map((t) => t.title).join(' / ')}
+                  </p>
+                )}
+              </>
+            )
+          )}
+        </div>
+      )}
       {/* 已采数据 */}
       {summary && summary.channels.length > 0 && (
         <div className="overflow-hidden rounded-xl border border-stone-200">

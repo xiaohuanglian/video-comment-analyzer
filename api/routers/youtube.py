@@ -86,3 +86,38 @@ async def download(channel: str = Query(..., min_length=1)) -> Response:
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{path.parent.name}.csv"'},
     )
+
+
+class ReportRequest(BaseModel):
+    channels: List[str] = Field(default_factory=list)
+    keywords: str = ""
+    max_videos: int = Field(default=8, ge=1, le=20)
+    sample_per_video: int = Field(default=8, ge=3, le=30)
+
+
+@router.post("/report")
+async def build_report(req: ReportRequest) -> Dict[str, Any]:
+    """用已采的 YouTube 评论出一份对标报告（存进 reports.json，历史里可见）。"""
+    from api.services.youtube import report as report_service
+
+    available = [c.name for c in comments.list_channels()]
+    wanted = req.channels or available
+    rows: List[Dict[str, Any]] = []
+    for channel in wanted:
+        rows.extend(comments.read_csv(comments.channel_csv_path(channel)).values())
+    if not rows:
+        raise HTTPException(status_code=400, detail="这些频道还没有采到评论，先跑采集")
+
+    scope = "YouTube 对标 " + ("、".join(wanted[:4]) + ("…" if len(wanted) > 4 else ""))
+    try:
+        return await report_service.analyze(
+            rows,
+            scope=scope,
+            keywords=req.keywords,
+            max_videos=req.max_videos,
+            sample_per_video=req.sample_per_video,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"报告生成失败：{exc}") from exc

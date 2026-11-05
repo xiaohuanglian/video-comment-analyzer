@@ -36,6 +36,13 @@ export default function ReportPanel() {
     refreshList()
   }, [refreshList])
 
+  // YouTube 采集面板生成报告后广播刷新
+  useEffect(() => {
+    const handler = () => refreshList()
+    window.addEventListener('vca:reports-updated', handler)
+    return () => window.removeEventListener('vca:reports-updated', handler)
+  }, [refreshList])
+
   const run = async (fusion: boolean) => {
     setBusy(true)
     setError('')
