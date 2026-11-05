@@ -214,3 +214,28 @@ def test_content_newlines_are_collapsed():
     payload = {"comments": [{"id": "c", "parent": "root", "text": "line1\n\n  line2 \nline3", "timestamp": 1}]}
     out = comments.fetch_video_comments({"id": "v", "url": "u"}, extract_fn=_fake_extract(payload))
     assert out["rows"][0]["content"] == "line1 line2 line3"
+
+
+def test_limits_derive_from_total_comments():
+    """只给总条数时，主评论数必须跟随，否则实际只会拿到「主评论数+少量回复」。"""
+    captured = {}
+
+    def fake(url, *, max_comments, max_parents, max_replies, sort):
+        captured.update(max_comments=max_comments, max_parents=max_parents, max_replies=max_replies)
+        return {"comments": []}
+
+    comments.fetch_video_comments({"id": "v", "url": "u"}, max_comments=500, extract_fn=fake)
+    assert captured == {"max_comments": 500, "max_parents": 500, "max_replies": 50}
+
+
+def test_explicit_limits_win_over_derivation():
+    captured = {}
+
+    def fake(url, *, max_comments, max_parents, max_replies, sort):
+        captured.update(parents=max_parents, replies=max_replies)
+        return {"comments": []}
+
+    comments.fetch_video_comments(
+        {"id": "v", "url": "u"}, max_comments=800, max_parents=300, max_replies=20, extract_fn=fake
+    )
+    assert captured == {"parents": 300, "replies": 20}

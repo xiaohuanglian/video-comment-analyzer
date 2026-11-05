@@ -31,8 +31,8 @@ class CollectRequest(BaseModel):
     limit: int = Field(default=3, ge=1, le=20)
     channels: List[str] = Field(default_factory=list)
     max_comments: int = Field(default=comments.DEFAULT_MAX_COMMENTS, ge=20, le=3000)
-    max_parents: int = Field(default=comments.DEFAULT_MAX_PARENTS, ge=5, le=500)
-    max_replies: int = Field(default=comments.DEFAULT_MAX_REPLIES, ge=0, le=100)
+    max_parents: Optional[int] = Field(default=None, ge=5, le=2000)
+    max_replies: Optional[int] = Field(default=None, ge=0, le=500)
     sort: str = Field(default="top", pattern="^(top|newest)$")
 
 

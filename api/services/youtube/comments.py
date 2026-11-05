@@ -49,9 +49,12 @@ COLUMNS = [
     "platform",
 ]
 
-DEFAULT_MAX_COMMENTS = 200
-DEFAULT_MAX_PARENTS = 60
-DEFAULT_MAX_REPLIES = 10
+DEFAULT_MAX_COMMENTS = 500
+# yt-dlp 里真正生效的闸是「主评论数」，不是总条数：
+# 只设总条数而主评论数很小，实际只会拿到「主评论数 + 少量回复」（实测 150 → 155 条）。
+# None 表示自动推导：主评论 = 总条数，回复 = 总条数的 1/10（至少 10）。
+DEFAULT_MAX_PARENTS: Optional[int] = None
+DEFAULT_MAX_REPLIES: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------
@@ -220,24 +223,36 @@ def _comment_row(
     }
 
 
+def _resolve_limits(
+    max_comments: int,
+    max_parents: Optional[int],
+    max_replies: Optional[int],
+) -> tuple[int, int]:
+    """把「只给总条数」翻译成 yt-dlp 真正吃的三元组。"""
+    parents = max_comments if max_parents is None else max_parents
+    replies = max(10, max_comments // 10) if max_replies is None else max_replies
+    return parents, replies
+
+
 def fetch_video_comments(
     video: Dict[str, Any],
     *,
     channel: str = "",
     max_comments: int = DEFAULT_MAX_COMMENTS,
-    max_parents: int = DEFAULT_MAX_PARENTS,
-    max_replies: int = DEFAULT_MAX_REPLIES,
+    max_parents: Optional[int] = None,
+    max_replies: Optional[int] = None,
     sort: str = "top",
     extract_fn: Optional[Callable[..., Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """采一条视频。返回 {video, rows, error}，失败不抛（批量采不该被一条拖垮）。"""
     extract = extract_fn or _extract
+    parents, replies = _resolve_limits(max_comments, max_parents, max_replies)
     try:
         info = extract(
             video["url"],
             max_comments=max_comments,
-            max_parents=max_parents,
-            max_replies=max_replies,
+            max_parents=parents,
+            max_replies=replies,
             sort=sort,
         )
     except Exception as exc:  # noqa: BLE001
@@ -304,8 +319,8 @@ def collect_channel(
     limit: int = 3,
     order: str = "views",
     max_comments: int = DEFAULT_MAX_COMMENTS,
-    max_parents: int = DEFAULT_MAX_PARENTS,
-    max_replies: int = DEFAULT_MAX_REPLIES,
+    max_parents: Optional[int] = None,
+    max_replies: Optional[int] = None,
     sort: str = "top",
     sleep_seconds: float = 1.5,
     extract_fn: Optional[Callable[..., Dict[str, Any]]] = None,
@@ -360,8 +375,8 @@ def collect_all(
     limit: int = 3,
     order: str = "views",
     max_comments: int = DEFAULT_MAX_COMMENTS,
-    max_parents: int = DEFAULT_MAX_PARENTS,
-    max_replies: int = DEFAULT_MAX_REPLIES,
+    max_parents: Optional[int] = None,
+    max_replies: Optional[int] = None,
     sort: str = "top",
     sleep_seconds: float = 1.5,
     channels: Optional[Sequence[str]] = None,

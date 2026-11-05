@@ -35,8 +35,8 @@ def start_collect(
     limit: int = 3,
     channels: Optional[list[str]] = None,
     max_comments: int = comments.DEFAULT_MAX_COMMENTS,
-    max_parents: int = comments.DEFAULT_MAX_PARENTS,
-    max_replies: int = comments.DEFAULT_MAX_REPLIES,
+    max_parents: Optional[int] = None,
+    max_replies: Optional[int] = None,
     sort: str = "top",
     collect_fn: Optional[Callable[..., Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:

@@ -43,9 +43,10 @@ def main() -> int:
     parser.add_argument("--video", action="append", default=[], help="指定视频 URL 或 ID，可多次")
     parser.add_argument("--limit", type=int, default=3, help="每个频道取播放量前 N 条视频（默认 3）")
     parser.add_argument("--order", choices=["views", "recent"], default="views")
-    parser.add_argument("--max-comments", type=int, default=comments.DEFAULT_MAX_COMMENTS)
-    parser.add_argument("--max-parents", type=int, default=comments.DEFAULT_MAX_PARENTS)
-    parser.add_argument("--max-replies", type=int, default=comments.DEFAULT_MAX_REPLIES)
+    parser.add_argument("--max-comments", type=int, default=comments.DEFAULT_MAX_COMMENTS,
+                        help="每条视频最多采多少条（主评论上限自动跟随）")
+    parser.add_argument("--max-parents", type=int, default=None, help="主评论上限，默认等于 --max-comments")
+    parser.add_argument("--max-replies", type=int, default=None, help="回复上限，默认总条数的 1/10")
     parser.add_argument("--sort", choices=["top", "newest"], default="top")
     parser.add_argument("--sleep", type=float, default=1.5, help="视频之间休眠秒数，防风控")
     args = parser.parse_args()
