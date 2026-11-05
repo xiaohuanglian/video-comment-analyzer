@@ -8,32 +8,26 @@
 #   1. 本文件只记录存量，新增模块不许再进来 —— 要么接线、要么不复用就别写。
 #   2. 已接线的模块必须从这里删掉（测试会检查失效条目）。
 #   3. 每条后面写清「为什么还留着」，方便将来一次性清理。
+#
+# 2026-11-06 第一次收缩：20 → 8。
+#   - 删除 6 个被 theme_clustering 取代的 insight/theme_* 旧实现（279 行）
+#   - 接线 6 个进 tools/style_run.py 离线链路：ingest / parse / distill /
+#     report / gate / skill_build（gate 同时接进 report，must_state 强制入报告开头）
 
-# ---- 风格学习包（4006 行里 3350 行在这里）----
-# style 包没有 router、没有前端页面、没有 CLI 入口，整包目前只能被测试调用。
-# 待决策：补 /api/style/* 上线，或降级为离线脚本。
-api.services.style.argument        # 论证链抽取，仅 tests/test_style_pipeline.py 调用
-api.services.style.asr             # whisper.cpp 兜底转写，仅测试调用
-api.services.style.browser         # 浏览器适配层，仅测试调用
-api.services.style.distill         # 风格卡提炼，仅被同包内的悬空模块引用
-api.services.style.douyin          # 抖音采集适配，仅测试调用
-api.services.style.evaluate        # 盲评打分，仅测试调用
-api.services.style.gate            # H 规则防自欺门禁，report 也没调用它
-api.services.style.ingest          # 素材入库，仅被同包内的悬空模块引用
-api.services.style.parse           # 作品/字幕解析，仅被同包内的悬空模块引用
-api.services.style.report          # bottom 对照报告，仅测试调用
-api.services.style.skill_build     # SKILL 生成，仅测试调用
-api.services.style.translate       # 逐条翻译，仅测试调用
-api.services.style.visual          # 视觉层，仅测试调用
+# ---- 需要 LLM 或外部二进制、尚未定入口 ----
+# 都是风格学习的中后段能力，单测覆盖了离线路径，但还没有稳定入口跑真数据。
+# 下一步：决定是补进 tools/style_run.py 的子命令，还是删。
+api.services.style.argument        # 论证链抽取（需 LLM）
+api.services.style.asr             # whisper.cpp 兜底转写（需本机二进制）
+api.services.style.evaluate        # 生成盲评打分（需 LLM）
+api.services.style.translate       # 逐条字幕翻译（需 LLM）
+api.services.style.visual          # 视觉层（需抽帧 + LLM）
 
-# ---- 主题归并旧实现 ----
-# 现行链路是 theme_job → theme_clustering；这 6 个是被取代的旧版本，可择机删除。
-api.services.insight.theme_cross_video_merge
-api.services.insight.theme_hierarchy
-api.services.insight.theme_labeling
-api.services.insight.theme_local_clustering
-api.services.insight.theme_quality
-api.services.insight.theme_signal_preprocess
+# ---- 疑似重复实现 ----
+# 实际抖音采集走 media_platform/douyin/（从 main.py 可达），这份是风格学习早期的
+# 适配层，与前者功能重叠；browser.py 是它专用的浏览器适配。
+api.services.style.browser
+api.services.style.douyin
 
 # ---- 其他 ----
-api.services.dataset_repository    # 数据集仓库抽象，未被任何路由/脚本引用
+api.services.dataset_repository    # 数据集仓库抽象，22 行，未被任何路由/脚本引用
