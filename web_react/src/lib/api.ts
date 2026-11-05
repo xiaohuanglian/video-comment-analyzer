@@ -207,6 +207,128 @@ export interface Draft {
   body: string
   tags: string[]
   shots: string[]
+  /** 发布前质检单（生成时自动附带，改稿后可调 /writer/check 复检） */
+  quality?: ContentQuality
+}
+
+export type QualitySeverity = 'high' | 'medium' | 'low'
+
+export interface QualityIssue {
+  code: string
+  severity: QualitySeverity
+  message: string
+  excerpt: string
+  suggestion: string
+}
+
+export interface LlmReview {
+  verdict?: string
+  scroll_risk?: { excerpt?: string; why?: string; fix?: string }[]
+  weak_parts?: { excerpt?: string; missing?: string }[]
+  keep?: string[]
+}
+
+/** 发布前质检单：纯代码判定，给分数与可溯源命中片段，不拦截发布 */
+export interface ContentQuality {
+  version: string
+  platform: string
+  platform_label: string
+  score: number
+  blocking: boolean
+  checks: string[]
+  issues: QualityIssue[]
+  metrics: Record<string, number | boolean>
+  llm_review?: LlmReview | null
+}
+
+/** 稿件体检：一批稿件的质检汇总（飞轮的学习环节） */
+export interface QualitySummary {
+  count: number
+  avg_score: number
+  blocking: number
+  blocking_rate: number
+  buckets: Record<string, number>
+  by_platform: Record<string, { count: number; avg_score: number }>
+  top_issues: { code: string; label: string; count: number }[]
+  trend: number[]
+  generated_at?: number
+}
+
+/** 表现数据（人手动回填）。null = 还没拿到，0 = 确实是 0，两者不能混 */
+export interface PublishMetrics {
+  views: number | null
+  likes: number | null
+  comments: number | null
+  saves: number | null
+  shares: number | null
+  follows: number | null
+}
+
+/** 一条已发布作品（本工作台不发布，只登记人自己发的） */
+export interface PublishRecord {
+  id: string
+  created_at: number
+  updated_at: number
+  published_at: string
+  platform: string
+  title: string
+  url: string
+  draft_id: string
+  topic_id: string
+  topic_title: string
+  quality_score: number | null
+  quality_blocking: boolean | null
+  quality_codes: string[]
+  metrics: PublishMetrics
+  notes: string
+}
+
+export interface PublishBrief {
+  id: string
+  title: string
+  platform: string
+  published_at: string
+  quality_score: number | null
+  views: number
+  interaction_rate: number
+  url: string
+}
+
+export interface PublishBucket {
+  key: string
+  label: string
+  count: number
+  avg_views: number
+  avg_interaction_rate: number
+}
+
+/** 质检分 vs 实际表现的对账 */
+export interface PublishAnalysis {
+  total_records: number
+  with_metrics: number
+  pending_backfill: number
+  buckets: Record<string, PublishBucket>
+  by_platform: Record<string, { count: number; avg_views: number; avg_interaction_rate: number }>
+  correlation: {
+    n: number
+    ready: boolean
+    needed: number
+    pearson_log_views: number | null
+    note: string
+  }
+  top_views: PublishBrief[]
+  bottom_views: PublishBrief[]
+  top_interaction: PublishBrief[]
+}
+
+export interface UnregisteredDraft {
+  id: string
+  title: string
+  format: string
+  topic_title: string
+  ts: number
+  quality_score: number | null
+  quality_blocking: boolean | null
 }
 
 export interface ReportSummary {
@@ -251,6 +373,129 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`${res.status} ${res.statusText}: ${text.slice(0, 200)}`)
   }
   return res.json() as Promise<T>
+}
+
+// ---------------------------------------------------------------------------
+// 创作中台（creator-buddy 方法论 + 标题工坊 + 交付物）
+// ---------------------------------------------------------------------------
+
+export interface StudioSkill {
+  id: string
+  name: string
+  description: string
+  platform: string
+  platform_label: string
+  stage: string
+  rel_path: string
+  tags: string[]
+}
+
+export interface StudioTitleItem {
+  text: string
+  method: string
+  hook: string
+  score: number
+  length: number
+  breakdown: Record<string, number>
+  notes: string[]
+  risk: { level: 'low' | 'medium' | 'high'; flags: string[]; blocking: string[] }
+  duplicate_of: string | null
+  disqualified: boolean
+  disqualify_reason: string
+}
+
+export interface StudioTitlePack {
+  platform: string
+  platform_label: string
+  count: number
+  valid_count: number
+  items: StudioTitleItem[]
+  methods_covered: string[]
+  method_count: number
+  diversity_ok: boolean
+  recommendations: Record<string, { text: string; method: string; score: number }>
+}
+
+export interface StudioDraft {
+  text: string
+  platform: string
+  rounds: { round: number; chars: number; blocking: string[]; issue_count: number }[]
+  passed: boolean
+  remaining_blocking: string[]
+  issues: { code: string; excerpt: string }[]
+  chars: number
+}
+
+export interface StudioDeliverable {
+  format: string
+  html?: string
+  pages?: number
+  shots?: {
+    index: number
+    start_s: number
+    duration_s: number
+    role: string
+    text: string
+    visual: string
+  }[]
+  total_duration_label?: string
+  prompt?: string
+  note?: string
+  error?: string
+}
+
+export interface StudioRun {
+  id: string
+  created_at: string
+  format: string
+  format_label: string
+  topic: string
+  style_slug: string
+  skill_id: string
+  title: string
+  titles: StudioTitlePack | null
+  titles_error: string
+  draft: StudioDraft
+  deliverable: StudioDeliverable
+}
+
+export interface StudioContext {
+  audience: string
+  forbidden_claims: string
+  persona: string
+  tone: string
+  styles: { slug: string; chars: number }[]
+  formats: Record<string, { label: string; quality: string; deliver: string }>
+  platforms: Record<string, string>
+}
+export interface YouTubeTarget {
+  channel: string
+  source: string
+  video_count: number
+  selected: { id: string; title: string; views: number; url: string }[]
+}
+
+export interface YouTubeJob {
+  id: string
+  status: 'running' | 'done' | 'error'
+  started_at: string
+  finished_at: string
+  params: { limit: number; channels: string[]; max_comments: number; sort: string }
+  progress: { done: number; total: number; current: string; rows: number }
+  result: Record<string, unknown> | null
+  error: string
+}
+
+export interface YouTubeSummary {
+  total_comments: number
+  out_dir: string
+  channels: {
+    channel: string
+    comments: number
+    videos: number
+    csv: string
+    top_liked: { content: string; like_count: number }[]
+  }[]
 }
 
 export const api = {
@@ -379,12 +624,309 @@ export const api = {
       body: JSON.stringify({ topic_title, topic_context, format, style }),
     }),
   writerHumanize: (text: string) =>
-    req<{ body: string; changes: string[] }>('/writer/humanize', {
+    req<{ body: string; changes: string[]; quality?: ContentQuality }>('/writer/humanize', {
       method: 'POST',
       body: JSON.stringify({ text }),
     }),
+  writerCheck: (title: string, body: string, format: string) =>
+    req<ContentQuality>('/writer/check', {
+      method: 'POST',
+      body: JSON.stringify({ title, body, format }),
+    }),
+  writerCritic: (title: string, body: string, format: string) =>
+    req<LlmReview>('/writer/critic', {
+      method: 'POST',
+      body: JSON.stringify({ title, body, format }),
+    }),
+  writerQualitySummary: (limit = 50) =>
+    req<QualitySummary>(`/writer/quality/summary?limit=${limit}`),
+
+  publishRecords: () => req<PublishRecord[]>('/publish/records'),
+  publishDrafts: () => req<UnregisteredDraft[]>('/publish/drafts'),
+  publishAnalysis: () => req<PublishAnalysis>('/publish/analysis'),
+  publishCreate: (body: Record<string, unknown>) =>
+    req<PublishRecord>('/publish/records', { method: 'POST', body: JSON.stringify(body) }),
+  publishUpdate: (id: string, body: Record<string, unknown>) =>
+    req<PublishRecord>(`/publish/records/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  publishDelete: (id: string) => req(`/publish/records/${id}`, { method: 'DELETE' }),
   writerDelete: (id: string) => req(`/writer/${id}`, { method: 'DELETE' }),
 
   automationConfigUpdate: (patch: Record<string, unknown>) =>
     req('/automation/config', { method: 'POST', body: JSON.stringify(patch) }),
+  studioSkills: (platform = '', stage = '', q = '') =>
+    req<{ items: StudioSkill[]; stages: { stage: string; count: number }[]; stats: { total: number; by_platform: Record<string, number> } }>(
+      `/studio/skills?platform=${encodeURIComponent(platform)}&stage=${encodeURIComponent(stage)}&q=${encodeURIComponent(q)}`,
+    ),
+  studioContext: () => req<StudioContext>('/studio/context'),
+  studioTitles: (payload: {
+    topic: string
+    body?: string
+    platform: string
+    count?: number
+  }) =>
+    req<StudioTitlePack>('/studio/titles', { method: 'POST', body: JSON.stringify(payload) }),
+  studioReviewTitles: (payload: {
+    candidates: { text: string; method?: string }[]
+    topic?: string
+    body?: string
+    platform: string
+  }) =>
+    req<StudioTitlePack>('/studio/titles/review', { method: 'POST', body: JSON.stringify(payload) }),
+  studioCheckTitle: (payload: { text: string; platform: string; body?: string }) =>
+    req<{
+      ok: boolean
+      length: number
+      limit: number
+      score: number
+      risk: { level: string; flags: string[]; blocking: string[] }
+      notes: string[]
+    }>('/studio/titles/check', { method: 'POST', body: JSON.stringify(payload) }),
+  studioDeliver: (payload: {
+    format: 'wechat' | 'xhs' | 'storyboard' | 'cover'
+    title?: string
+    body?: string
+    tags?: string[]
+    style?: string
+  }) => req<StudioDeliverable>('/studio/deliver', { method: 'POST', body: JSON.stringify(payload) }),
+  studioCoverCheck: (path: string, platform = 'wechat') =>
+    req<Record<string, unknown>>('/studio/cover/check', {
+      method: 'POST',
+      body: JSON.stringify({ path, platform }),
+    }),
+  studioPipeline: (payload: {
+    topic: string
+    format: 'wechat' | 'xhs' | 'video'
+    style_slug?: string
+    material?: string
+    title?: string
+    count?: number
+    with_titles?: boolean
+    deliverable?: string
+    skill_id?: string
+  }) => req<StudioRun>('/studio/pipeline', { method: 'POST', body: JSON.stringify(payload) }),
+  studioRuns: (limit = 20) => req<StudioRun[]>(`/studio/runs?limit=${limit}`),
+  // 三源选题：评论痛点 / 洗稿台 / 事件（api/routers/topics.py 新增接口）
+  // 轻量数据指纹：选题中心用它判断「数据有没有变」，不变就不重拉、不重算
+  topicVersion: () =>
+    req<{
+      version: string
+      topics: { count: number }
+      corpus: { files: number; signature: string }
+    }>('/topics/version'),
+  topicDemand: (mode: 'llm' | 'rules' = 'llm', limit = 8) =>
+    req<TopicDemandResult>(`/topics/demand?mode=${mode}&limit=${limit}`),
+  topicFromDemand: (payload: TopicDemandInput) =>
+    req<TopicWriteResult>('/topics/from-demand', { method: 'POST', body: JSON.stringify(payload) }),
+  topicFromEvent: (payload: {
+    material: string
+    personal_style?: string
+    application_domain?: string
+    create_topics?: boolean
+  }) =>
+    req<TopicFromEventResult>('/topics/from-event', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  /** manual_text：拿不到字幕时直接粘贴的参考正文/口播稿（≤20000 字），传了就不必给 links */
+  topicRewritePlan: (payload: {
+    topic_title?: string
+    links: string[]
+    personal_style?: string
+    manual_text?: string
+  }) =>
+    req<RewritePlan>('/topics/rewrite/plan', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  topicRewriteDraft: (payload: {
+    plan: RewritePlan | Record<string, unknown>
+    links: string[]
+    personal_style?: string
+  }) =>
+    req<TopicRewriteDraftResult>('/topics/rewrite/draft', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  /** 一键直出：内部先出方案再成稿，方案只留痕不挡路（约 2-3 分钟） */
+  /** manual_text 同 topicRewritePlan：没有链接也能出稿 */
+  topicRewriteOnce: (payload: {
+    topic_title?: string
+    links: string[]
+    personal_style?: string
+    manual_text?: string
+  }) =>
+    req<TopicRewriteOnceResult>('/topics/rewrite/once', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  topicPatchStatus: (id: string, status: TopicStatus) =>
+    req<Topic>(`/topics/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  topicStats: () => req<TopicStats>('/topics/stats'),
+  youtubeTargets: (limit = 3) => req<{ targets: YouTubeTarget[] }>(`/youtube/comments/targets?limit=${limit}`),
+  youtubeCollect: (payload: {
+    limit?: number
+    channels?: string[]
+    max_comments?: number
+    sort?: 'top' | 'newest'
+  }) => req<YouTubeJob>('/youtube/comments/collect', { method: 'POST', body: JSON.stringify(payload) }),
+  youtubeJob: (id: string) => req<YouTubeJob>(`/youtube/comments/jobs/${id}`),
+  youtubeJobs: (limit = 10) => req<YouTubeJob[]>(`/youtube/comments/jobs?limit=${limit}`),
+  youtubeSummary: () => req<YouTubeSummary>('/youtube/comments/summary'),
+  youtubeReport: (payload: { channels?: string[]; keywords?: string }) =>
+    req<CommentReport>('/youtube/comments/report', { method: 'POST', body: JSON.stringify(payload) }),
+}
+
+// ---------------------------------------------------------------------------
+// 三源选题的类型（评论驱动 / 洗稿驱动 / 事件驱动）
+//   数字全部由后端用真实评论统计，模型只负责分组与起名。
+// ---------------------------------------------------------------------------
+
+export type TopicStatus = 'planned' | 'drafting' | 'drafted' | 'published' | 'dropped'
+
+/** 一条证据评论（原文，不加工） */
+export interface DemandEvidence {
+  text: string
+  likes: number
+  video_title: string
+}
+
+/** 一个「一群人反复没被满足的需求」簇 */
+export interface DemandCluster {
+  theme: string
+  need: string
+  problem_type: string
+  users: number
+  videos: number
+  comments: number
+  likes: number
+  score: number
+  /** 只有 mode=llm 分组时才有 */
+  why_worth_writing?: string
+  video_titles: string[]
+  evidence: DemandEvidence[]
+  signals?: Record<string, number>
+  phrases?: string[]
+  source?: string
+}
+
+export interface DemandCorpus {
+  comments: number
+  videos: number
+  /** 求资料/求网盘这类已被剔除的条数 */
+  resource_asks: number
+  candidates: number
+  /** 这份结果基于哪一版评论语料；与 /topics/version 的 corpus.signature 比对即可判断是否过期 */
+  signature?: string
+}
+
+export interface TopicDemandResult {
+  mode: 'llm' | 'rules' | 'empty'
+  corpus: DemandCorpus
+  /** mode=rules 且带此字段 = 模型分组失败已降级 */
+  fallback_reason?: string
+  clusters: DemandCluster[]
+}
+
+/** 入库请求：需求数字与证据原样带过去，方便日后复核 */
+export interface TopicDemandInput {
+  theme: string
+  need?: string
+  problem_type?: string
+  application_domain?: string
+  why_worth_writing?: string
+  users: number
+  videos: number
+  comments: number
+  likes: number
+  evidence: DemandEvidence[]
+}
+
+export interface TopicWriteResult {
+  inserted: number
+  skipped: string[]
+  total: number
+  topic?: Topic
+}
+
+/** 事件卡里的一条事实（claim 可回溯到原文摘录 evidence） */
+export interface EventFact {
+  claim: string
+  evidence: string
+}
+
+export interface EventAngle {
+  title: string
+  problem_type: string
+  why: string
+}
+
+export interface EventCard {
+  facts: EventFact[]
+  stance: string
+  why_now: string
+  audience: string
+  angles: EventAngle[]
+  format: string
+  /** 事实对不上原文的地方，要用小字提醒人 */
+  grounding_problems: string[]
+}
+
+export interface TopicFromEventResult {
+  card: EventCard
+  topics: Topic[]
+  inserted: number
+  skipped: string[]
+}
+
+export interface RewriteSource {
+  url: string
+  platform: string
+  title: string
+  chars: number
+  error: string
+}
+
+/** 洗稿第一步：拆解参考 + 差异化方案（还没落库，等人拍板） */
+export interface RewritePlan {
+  topic_title: string
+  reference_digest: string[]
+  keep: string[]
+  drop: string[]
+  your_angle: string
+  differentiation: string[]
+  outline: string[]
+  originality_risk: string
+  go_no_go: string
+  sources: RewriteSource[]
+}
+
+export interface RewriteDraft {
+  title: string
+  titles: string[]
+  body: string
+  self_check: string
+}
+
+export interface TopicRewriteDraftResult {
+  draft: RewriteDraft
+  topic: Topic
+  inserted: number
+  draft_record: Record<string, unknown> | null
+}
+
+export interface TopicStats {
+  total: number
+  by_source: Record<string, number>
+  by_status: Record<string, number>
+  missing_origin: number
+}
+
+/** 一键直出：一次调用跑完方案 + 成稿；方案照样返回，供事后回溯 */
+export interface TopicRewriteOnceResult {
+  draft: RewriteDraft
+  plan: RewritePlan
+  topic: Topic
+  draft_record: Record<string, unknown> | null
+  /** 非空就提示人看一眼（后端目前放的是 go/no-go 结论原文） */
+  warning: string
 }
