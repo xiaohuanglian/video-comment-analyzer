@@ -9,25 +9,25 @@
 #   2. 已接线的模块必须从这里删掉（测试会检查失效条目）。
 #   3. 每条后面写清「为什么还留着」，方便将来一次性清理。
 #
-# 2026-11-06 第一次收缩：20 → 8。
-#   - 删除 6 个被 theme_clustering 取代的 insight/theme_* 旧实现（279 行）
-#   - 接线 6 个进 tools/style_run.py 离线链路：ingest / parse / distill /
-#     report / gate / skill_build（gate 同时接进 report，must_state 强制入报告开头）
+# 2026-11-06 收缩记录：20 → 8 → 6。
+#   20→8：删除 6 个被 theme_clustering 取代的 insight/theme_* 旧实现（279 行）；
+#         接线 6 个进 tools/style_run.py：ingest / parse / distill / report /
+#         gate / skill_build（gate 同时接进 report，must_state 强制入报告开头）。
+#   8→6：translate 与 asr 接成 CLI 子命令（translate / transcribe）。
+#         实测 liamottley 一条视频 490 条字幕：真实网关译出 490/490、0 缺失，
+#         重跑自动跳过；费用记入 data/costs/ledger.jsonl（feature=style.translate）。
 
-# ---- 需要 LLM 或外部二进制、尚未定入口 ----
-# ---- 功能可用、只是没入口（2026-11-06 用假 LLM + 真实样本实测过）----
-# 实测口径：data/creators/liamottley/raw 的真实字幕（490 条）喂进去
-#   translate_cues  → 40/40 条译出，complete=True
+# ---- 功能可用、只是没入口 ----
+# 2026-11-06 实测（真实字幕 490 条 + 假 LLM）：
 #   extract_chain   → 抽出动作 + coverage 0.439
 #   objective_check → LCS 打分正常（0.667）
-#   asr: whisper-cli 已装（/opt/homebrew/bin/whisper-cli）且模型就绪
-#   visual: ffmpeg 已装
-# 结论：不是「没用」，是「没接线」。下一步补子命令或删，二选一。
-api.services.style.argument        # 论证链抽取
-api.services.style.asr             # whisper 兜底转写（二进制已就绪）
-api.services.style.evaluate        # 生成盲评打分
-api.services.style.translate       # 逐条字幕翻译
-api.services.style.visual          # 视觉层（需抽帧 + LLM 看图）
+#   visual: ffmpeg 已装，需抽帧 + LLM 看图
+# 已接线的不再列在这里：translate / asr 已接入 tools/style_run.py
+# （translate 写回 raw 的 zh 字段，可重跑只补缺的；transcribe 用 whisper 补字幕）。
+# 剩这三个要不要接，等真需求。
+api.services.style.argument        # 论证链抽取（等有真实论证链需求再接）
+api.services.style.evaluate        # 生成盲评打分（需先有成稿才用得上）
+api.services.style.visual          # 视觉层（抽帧成本高）
 
 # ---- 疑似重复实现 ----
 # 实际抖音采集走 media_platform/douyin/（从 main.py 可达），这份是风格学习早期的
