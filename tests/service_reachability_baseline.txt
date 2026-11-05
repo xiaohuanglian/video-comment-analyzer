@@ -15,13 +15,19 @@
 #     report / gate / skill_build（gate 同时接进 report，must_state 强制入报告开头）
 
 # ---- 需要 LLM 或外部二进制、尚未定入口 ----
-# 都是风格学习的中后段能力，单测覆盖了离线路径，但还没有稳定入口跑真数据。
-# 下一步：决定是补进 tools/style_run.py 的子命令，还是删。
-api.services.style.argument        # 论证链抽取（需 LLM）
-api.services.style.asr             # whisper.cpp 兜底转写（需本机二进制）
-api.services.style.evaluate        # 生成盲评打分（需 LLM）
-api.services.style.translate       # 逐条字幕翻译（需 LLM）
-api.services.style.visual          # 视觉层（需抽帧 + LLM）
+# ---- 功能可用、只是没入口（2026-11-06 用假 LLM + 真实样本实测过）----
+# 实测口径：data/creators/liamottley/raw 的真实字幕（490 条）喂进去
+#   translate_cues  → 40/40 条译出，complete=True
+#   extract_chain   → 抽出动作 + coverage 0.439
+#   objective_check → LCS 打分正常（0.667）
+#   asr: whisper-cli 已装（/opt/homebrew/bin/whisper-cli）且模型就绪
+#   visual: ffmpeg 已装
+# 结论：不是「没用」，是「没接线」。下一步补子命令或删，二选一。
+api.services.style.argument        # 论证链抽取
+api.services.style.asr             # whisper 兜底转写（二进制已就绪）
+api.services.style.evaluate        # 生成盲评打分
+api.services.style.translate       # 逐条字幕翻译
+api.services.style.visual          # 视觉层（需抽帧 + LLM 看图）
 
 # ---- 疑似重复实现 ----
 # 实际抖音采集走 media_platform/douyin/（从 main.py 可达），这份是风格学习早期的
