@@ -207,3 +207,10 @@ def test_channel_csv_path_sanitizes_name(tmp_path, monkeypatch):
     path = comments.channel_csv_path("a/b c")
     assert path.parent.name == "a-b-c"
     assert path.name == "all.csv"
+
+
+def test_content_newlines_are_collapsed():
+    """CSV 里保留换行会让「记录数」按物理行算错，采集时统一压成空格。"""
+    payload = {"comments": [{"id": "c", "parent": "root", "text": "line1\n\n  line2 \nline3", "timestamp": 1}]}
+    out = comments.fetch_video_comments({"id": "v", "url": "u"}, extract_fn=_fake_extract(payload))
+    assert out["rows"][0]["content"] == "line1 line2 line3"

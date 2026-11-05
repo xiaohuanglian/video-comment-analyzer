@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -204,7 +205,8 @@ def _comment_row(
         "parent_comment_id": "" if parent == "root" else str(parent),
         "create_time": int(timestamp * 1000) if timestamp else "",
         "video_id": video.get("id") or "",
-        "content": (comment.get("text") or "").replace("\r\n", "\n"),
+        # 评论里的换行会让 CSV 的「记录数」被按物理行算错，统一压成空格
+        "content": re.sub(r"\s*\n+\s*", " ", (comment.get("text") or "")).strip(),
         "user_id": comment.get("author_id") or "",
         "nickname": comment.get("author") or "",
         "sub_comment_count": int(comment.get("reply_count") or 0),
