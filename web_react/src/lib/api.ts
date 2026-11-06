@@ -912,6 +912,8 @@ export interface TopicRewriteDraftResult {
   topic: Topic
   inserted: number
   draft_record: Record<string, unknown> | null
+  /** 撞了库里同名选题：成稿已存草稿箱，但没动旧选题的状态 */
+  duplicate_warning?: string
 }
 
 export interface TopicStats {
@@ -929,4 +931,6 @@ export interface TopicRewriteOnceResult {
   draft_record: Record<string, unknown> | null
   /** 非空就提示人看一眼（后端目前放的是 go/no-go 结论原文） */
   warning: string
+  /** 撞了库里同名选题：成稿已存草稿箱，但没动旧选题的状态 */
+  duplicate_warning?: string
 }
