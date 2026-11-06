@@ -712,9 +712,12 @@ export const api = {
       version: string
       topics: { count: number }
       corpus: { files: number; signature: string }
+      youtube_corpus: { files: number; signature: string }
     }>('/topics/version'),
-  topicDemand: (mode: 'llm' | 'rules' = 'llm', limit = 8) =>
-    req<TopicDemandResult>(`/topics/demand?mode=${mode}&limit=${limit}`),
+  topicDemand: (mode: 'llm' | 'rules' = 'llm', limit = 8, source: 'bili' | 'youtube' = 'bili') =>
+    req<TopicDemandResult>(
+      `/topics/demand?mode=${mode}&limit=${limit}&source=${source}`,
+    ),
   topicFromDemand: (payload: TopicDemandInput) =>
     req<TopicWriteResult>('/topics/from-demand', { method: 'POST', body: JSON.stringify(payload) }),
   topicFromEvent: (payload: {
@@ -821,6 +824,8 @@ export interface DemandCorpus {
 
 export interface TopicDemandResult {
   mode: 'llm' | 'rules' | 'empty'
+  /** 语料来源：bili = 自己受众的 B 站评论；youtube = 对标频道英文评论 */
+  source?: 'bili' | 'youtube'
   corpus: DemandCorpus
   /** mode=rules 且带此字段 = 模型分组失败已降级 */
   fallback_reason?: string
