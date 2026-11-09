@@ -1,4 +1,5 @@
 import CollectPanel from '../components/CollectPanel'
+import LocalDataPanel from '../components/LocalDataPanel'
 import YouTubePanel from '../components/YouTubePanel'
 import ReportPanel from '../components/ReportPanel'
 
@@ -12,6 +13,7 @@ export default function CollectPage() {
         </p>
       </header>
       <CollectPanel />
+      <LocalDataPanel />
       <YouTubePanel />
       <ReportPanel />
     </div>

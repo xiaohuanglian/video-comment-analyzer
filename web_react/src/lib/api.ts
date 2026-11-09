@@ -103,6 +103,21 @@ export interface CrawlerStartPayload {
   headless?: boolean
 }
 
+/** 本地已采数据盘点(采集页「本地已采数据」概览) */
+export interface LocalDataBatch {
+  date: string
+  source: 'manual' | 'automation'
+  platform: string
+  contents: number
+  comments: number
+  titles: string[]
+}
+
+export interface LocalDataSummary {
+  platforms: Record<string, { comments: number; contents: number; batches: number }>
+  batches: LocalDataBatch[]
+}
+
 export interface Topic {
   id: string
   ts: number
@@ -568,6 +583,7 @@ export const api = {
   crawlerStatusFresh: () => req<CrawlerStatus>('/crawler/status?refresh_progress=true'),
   crawlerLogs: (limit = 30) =>
     req<{ logs: CrawlerLog[] }>(`/crawler/logs?limit=${limit}`),
+  crawlerLocalData: () => req<LocalDataSummary>('/crawler/local-data'),
 
   topicsList: () => req<Topic[]>('/topics/list'),
   topicBoard: () => req<TopicBoard>('/topics/board'),

@@ -49,3 +49,13 @@ async def get_logs(limit: int = 100):
     """Get recent logs"""
     logs = crawler_manager.logs[-limit:] if limit > 0 else crawler_manager.logs
     return {"logs": [log.model_dump() for log in logs]}
+from ..services.collect_inventory import local_data_inventory
+
+
+@router.get("/local-data")
+async def get_local_data():
+    """本地已采数据盘点:各平台采回了多少笔记/评论,按批次列出。
+
+    采集页的「本地已采数据」概览用,回答"我到底采回了什么"。
+    """
+    return local_data_inventory()

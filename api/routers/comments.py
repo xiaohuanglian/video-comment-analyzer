@@ -27,7 +27,7 @@ router = APIRouter(prefix="/comments", tags=["comments"])
 REPORT_DIR = Path(__file__).resolve().parents[2] / "data" / "analysis"
 REPORTS_FILE = REPORT_DIR / "reports.json"  # 历史报告存档(追加,不覆盖)
 
-ANALYZE_PROMPT = """你是评论区数据分析专家。给你一批 B 站评论的统计摘要和高赞评论摘录,你要产出一份运营洞察报告。
+ANALYZE_PROMPT = """你是评论区数据分析专家。给你一批评论(B 站视频或小红书笔记的评论,以数据为准)的统计摘要和高赞评论摘录,你要产出一份运营洞察报告。
 
 若提供了【既往报告结论】,本次分析必须在其基础上融合演进:
 - 仍然成立的痛点:延续并补充新证据
@@ -65,7 +65,9 @@ def _load_rows(date: Optional[str]) -> tuple[list[dict[str, Any]], dict[str, dic
         for d in dirs:
             c = d / f"comments_{date}.jsonl"
             if c.exists():
-                for line in c.read_text(encoding="utf-8").splitlines():
+                # split("\n") 而非 splitlines():评论正文里的 U+2028 会被
+                # splitlines 切开,把完整 JSON 行撕成两半导致解析失败丢数据
+                for line in c.read_text(encoding="utf-8").split("\n"):
                     if not line.strip():
                         continue
                     try:
@@ -77,17 +79,24 @@ def _load_rows(date: Optional[str]) -> tuple[list[dict[str, Any]], dict[str, dic
                         if cid in seen:
                             continue
                         seen.add(cid)
+                    # xhs 行(note_id)归一成 video_id 形状,否则按日期分析时
+                    # 全部评论会堆到同一个"未知视频"下(2026-11-09 批次即 xhs)
+                    if not row.get("video_id"):
+                        row["video_id"] = row.get("note_id") or row.get("aweme_id") or ""
                     rows.append(row)
             v = d / f"contents_{date}.jsonl"
             if v.exists():
-                for line in v.read_text(encoding="utf-8").splitlines():
+                for line in v.read_text(encoding="utf-8").split("\n"):
                     if not line.strip():
                         continue
                     try:
                         item = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    video_map.setdefault(str(item.get("video_id")), item)
+                    # xhs 笔记行没有 video_id,用 note_id 当 key 才能和评论对上
+                    video_map.setdefault(
+                        str(item.get("video_id") or item.get("note_id") or ""), item
+                    )
         return rows, video_map, date
     rows_a, vm_a = read_collected(BULK_COMMENT_DIR)
     rows_b, vm_b = read_collected(COMMENT_DIR)
@@ -117,11 +126,11 @@ def _build_summary(rows: list[dict[str, Any]], video_map: dict[str, dict[str, An
             target_count += 1
 
     lines = [
-        f"评论总数:{len(rows)},涉及视频:{len(by_vid)} 个",
+        f"评论总数:{len(rows)},涉及视频/笔记:{len(by_vid)} 个",
         f"信号分布(目标 {target_count} 条):"
         + "; ".join(f"{k} {v}" for k, v in signals.most_common(10)),
         "",
-        "重点视频及其高赞评论:",
+        "重点视频/笔记及其高赞评论:",
     ]
     for vid, n in by_vid.most_common(req.max_videos):
         v = video_map.get(vid, {})

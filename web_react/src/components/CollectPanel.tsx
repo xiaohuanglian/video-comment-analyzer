@@ -12,6 +12,10 @@ const PLATFORMS = [
   { key: 'zhihu', label: '知乎' },
 ]
 
+const PLATFORM_LABELS: Record<string, string> = Object.fromEntries(
+  PLATFORMS.map((p) => [p.key, p.label]),
+)
+
 /** 各平台的采集口径说明(搜索语义和登录方式不同,别共用一句话) */
 const PLATFORM_HINTS: Record<string, string> = {
   bili: '按 B 站搜索综合排序取前 N 个视频(热度高的排前面),评论默认全量采',
@@ -53,6 +57,7 @@ export default function CollectPanel() {
   const [notice, setNotice] = useState('')
   const [now, setNow] = useState(Date.now())
   const logBoxRef = useRef<HTMLPreElement>(null)
+  const wasRunning = useRef(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -60,6 +65,12 @@ export default function CollectPanel() {
       setStatus(s)
       setLogs(l.logs ?? [])
       setNow(Date.now())
+      // 任务结束(运行→空闲)时广播:「本地已采数据」面板据此自动刷新(新数据已落盘)
+      const nowRunning = s?.status === 'running' || s?.status === 'stopping'
+      if (wasRunning.current && !nowRunning) {
+        window.dispatchEvent(new Event('vca:local-data-updated'))
+      }
+      wasRunning.current = nowRunning
     } catch {
       /* 后端未启动时静默 */
     }
@@ -227,6 +238,11 @@ export default function CollectPanel() {
           <div className="flex items-center gap-4 text-sm">
             <span className="flex items-center gap-1.5 font-medium text-stone-700">
               {running && <Activity size={14} className="animate-pulse text-sky-600" />}
+              {status?.platform && (
+                <span className="rounded-full bg-stone-200 px-2 py-0.5 text-xs text-stone-600">
+                  {PLATFORM_LABELS[status.platform] ?? status.platform}
+                </span>
+              )}
               已采评论 <span className="text-lg text-(--brand)">{crawled}</span> 条
             </span>
             {status.started_at && (
