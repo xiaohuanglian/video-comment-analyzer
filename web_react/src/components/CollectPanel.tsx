@@ -6,11 +6,17 @@ import { api, type CrawlerStatus, type CrawlerLog } from '../lib/api'
 const PLATFORMS = [
   { key: 'bili', label: 'B 站' },
   { key: 'dy', label: '抖音' },
-  { key: 'xhs', label: '小红书(冻结中)' },
+  { key: 'xhs', label: '小红书' },
   { key: 'ks', label: '快手' },
   { key: 'wb', label: '微博' },
   { key: 'zhihu', label: '知乎' },
 ]
+
+/** 各平台的采集口径说明(搜索语义和登录方式不同,别共用一句话) */
+const PLATFORM_HINTS: Record<string, string> = {
+  bili: '按 B 站搜索综合排序取前 N 个视频(热度高的排前面),评论默认全量采',
+  xhs: '按关键词搜笔记(每词实取约 20 篇),登录态复用本机浏览器档案;采回的数据在「回复自动化-小红书」筛选消费',
+}
 
 function elapsedSince(iso: string): string {
   const sec = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000))
@@ -24,6 +30,11 @@ function readableLog(message: string): string {
   // 抓 store.xxx 入库动作,浓缩成「评论 +123456」
   const m = message.match(/video comment: (\d+), content: (.{0,24})/)
   if (m) return `入库评论 ${m[1]}:${m[2]}…`
+  // 小红书入库动作(store.xhs 的 dict 格式与 B 站不同)
+  const x = message.match(/xhs note comment:\{'comment_id': '[^']+'.*?'content': '(.{0,24})/)
+  if (x) return `入库评论 ${x[1]}…`
+  const xn = message.match(/xhs note: \{'note_id': '[^']+'.*?'title': '(.{0,30})/)
+  if (xn) return `入库笔记《${xn[1]}…》`
   const v = message.match(/Bilibili video: (\d+).*?title: (.{0,30})/)
   if (v) return `入库视频《${v[2]}…》`
   // 去掉 logger 前缀噪声
@@ -112,7 +123,7 @@ export default function CollectPanel() {
         <h2 className="text-sm font-semibold text-stone-700">
           评论采集
           <span className="ml-2 text-xs font-normal text-stone-400">
-            按 B 站搜索综合排序取前 N 个视频(热度高的排前面),评论默认全量采
+            {PLATFORM_HINTS[platform] ?? '按关键词搜索取前 N 个帖子,评论默认全量采'}
           </span>
         </h2>
         <span
