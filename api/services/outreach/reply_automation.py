@@ -1362,6 +1362,17 @@ async def screen_collected(
         store.save()
 
 
+def _collect_env(platform: str, xhs_cookie: str = "") -> dict[str, str]:
+    """采集子进程环境。bili：自开浏览器(qrcode)；xhs：必须连已开的 9222 登录浏览器——
+    若让子进程另开浏览器会抢同一 cdp 档案目录，kill_stale_browsers 还会把正在运行的
+    登录浏览器当残留杀掉，发送通道随之失效。"""
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    env["CDP_CONNECT_EXISTING"] = "0" if platform == "bili" else "1"
+    if platform == "xhs" and xhs_cookie:
+        env["VC_CRAWLER_COOKIES"] = xhs_cookie
+    return env
+
+
 async def run_cycle(store: AutomationStore, mode_override: str = "") -> dict[str, Any]:
     """跑一个完整周期：采集 → 读取 → 筛选 → 起草 → 入队。
 
@@ -1377,10 +1388,8 @@ async def run_cycle(store: AutomationStore, mode_override: str = "") -> dict[str
         if mode_override in ("list", "search"):
             cmd_config["collect_mode"] = mode_override
         cmd = build_collect_command(cmd_config, store.platform)
-        env = {**os.environ, "CDP_CONNECT_EXISTING": "0", "PYTHONUNBUFFERED": "1"}
-        if store.platform == "xhs":
-            # 小红书读侧登录态：从本机已登录的 CDP 浏览器取 Cookie 注入子进程
-            env["VC_CRAWLER_COOKIES"] = await _xhs_crawl_cookie()
+        xhs_cookie = await _xhs_crawl_cookie() if store.platform == "xhs" else ""
+        env = _collect_env(store.platform, xhs_cookie)
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=str(PROJECT_ROOT),

@@ -1423,3 +1423,13 @@ class TestStoreRegistry:
         assert auto.store_path_for("xhs").name == "xhs_reply.json"
         assert auto.comment_dir_for("xhs").name == "comments_xhs"
         assert auto.comment_dir_for("bili").name == "comments"
+
+    def test_collect_env_by_platform(self):
+        # xhs 必须连已开的 9222 登录浏览器(CDP_CONNECT_EXISTING=1)：
+        # 子进程另开浏览器会抢同一 cdp 档案并误杀登录浏览器
+        bili_env = auto._collect_env("bili")
+        xhs_env = auto._collect_env("xhs", "web_session=abc")
+        assert bili_env["CDP_CONNECT_EXISTING"] == "0"
+        assert "VC_CRAWLER_COOKIES" not in bili_env
+        assert xhs_env["CDP_CONNECT_EXISTING"] == "1"
+        assert xhs_env["VC_CRAWLER_COOKIES"] == "web_session=abc"
