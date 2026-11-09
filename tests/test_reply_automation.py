@@ -1174,6 +1174,25 @@ class TestXhsReadCollected:
         expected = int(datetime.strptime("2026-11-19 10:00:00", "%Y-%m-%d %H:%M:%S").timestamp())
         assert rows[0]["create_time"] == expected
 
+    def test_unicode_line_separator_does_not_tear_records(self, tmp_path):
+        """真实案例(2026-11-09 首批实采)：笔记正文含 U+2028 行分隔符，
+        splitlines() 会把完整 JSON 行撕成两半导致整篇笔记丢失。必须按 \\n 切。"""
+        row = {
+            "comment_id": "c1", "note_id": "n1", "content": "正文带行分隔符 试试",
+            "nickname": "u", "create_time": int(datetime.now().timestamp()) - 60,
+            "parent_comment_id": 0,
+        }
+        # json.dumps(ensure_ascii=False) 不会转义 U+2028 —— 与采集器写盘行为一致
+        (tmp_path / "contents_2026-11-09.jsonl").write_text(
+            json.dumps({"note_id": "n1", "title": "标题", "desc": "第一行 第二行",
+                        "note_url": XHS_NOTE_URL}, ensure_ascii=False) + "\n",
+            encoding="utf-8")
+        (tmp_path / "comments_2026-11-09.jsonl").write_text(
+            json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+        rows, video_map = auto.read_collected(tmp_path, platform="xhs")
+        assert len(rows) == 1 and rows[0]["comment_id"] == "c1"
+        assert "n1" in video_map and video_map["n1"]["title"] == "标题"
+
     def test_platforms_do_not_cross_contaminate(self, tmp_path):
         self._write(
             tmp_path,

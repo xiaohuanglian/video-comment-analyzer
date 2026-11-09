@@ -1159,7 +1159,8 @@ def build_collect_command(config: dict[str, Any], platform: str = "bili") -> lis
             "--get_sub_comment", sub_comment,
             "--save_data_option", "jsonl",
             "--save_data_path", str(comment_dir_for("xhs").relative_to(PROJECT_ROOT)),
-            "--split_by_video", "false",
+            # 注意不传 --split_by_video：默认 True 才会平铺落盘 contents_/comments_*.jsonl，
+            # 传 false 反而走 {platform}/{file_type}/search_* 嵌套布局，read_collected 找不到
             "--headless", "false",
         ]
         if use_list:
@@ -1243,7 +1244,10 @@ def read_collected(
         return rows, video_map
     for path in sorted(comment_dir.glob("contents_*.jsonl")):
         try:
-            for line in path.read_text(encoding="utf-8").splitlines():
+            # 注意用 split("\n") 而非 splitlines()：笔记/评论正文可能含 U+2028 等
+            # Unicode 行分隔符（splitlines 会切它，文件迭代不会），splitlines 会把
+            # 完整 JSON 行撕成两半导致解析失败丢数据
+            for line in path.read_text(encoding="utf-8").split("\n"):
                 if line.strip():
                     v = json.loads(line)
                     if platform == "xhs":
@@ -1257,7 +1261,7 @@ def read_collected(
             continue
     for path in sorted(comment_dir.glob("comments_*.jsonl")):
         try:
-            for line in path.read_text(encoding="utf-8").splitlines():
+            for line in path.read_text(encoding="utf-8").split("\n"):
                 if line.strip():
                     row = json.loads(line)
                     if platform == "xhs":
