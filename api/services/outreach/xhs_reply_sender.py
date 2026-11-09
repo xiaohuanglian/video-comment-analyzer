@@ -69,6 +69,30 @@ async def _pick_context(browser: Browser) -> BrowserContext:
     if contexts:
         return contexts[0]
     return await browser.new_context()
+async def fetch_xhs_cookie() -> str:
+    """从本机 CDP 浏览器提取小红书 Cookie（"k=v; …" 格式）。
+
+    供采集子进程 ``--lt cookie`` 使用：读侧登录态与发送侧共用同一个
+    已登录浏览器档案，不再单独维护一份 Cookie。未登录/连不上时抛
+    :class:`ReplySendError`，由调用方给出可执行提示。
+    """
+    browser = await _connect_browser()
+    try:
+        context = await _pick_context(browser)
+        cookies = await context.cookies(["https://www.xiaohongshu.com"])
+        pairs = [f"{c.get('name')}={c.get('value')}" for c in cookies if c.get("name") and c.get("value")]
+        cookie_str = "; ".join(pairs)
+        if "web_session" not in cookie_str:
+            raise ReplySendError(
+                "浏览器里没有小红书登录 Cookie（缺 web_session）。"
+                "请先在受控浏览器窗口登录小红书，再启动采集"
+            )
+        return cookie_str
+    finally:
+        try:
+            await browser.close()
+        except Exception:
+            pass
 
 
 async def _check_login(page: "Page") -> None:

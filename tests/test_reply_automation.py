@@ -1094,3 +1094,313 @@ class TestAiCommentDefense:
 
     def test_screen_prompt_has_botcheck(self):
         assert "真人鉴定" in auto.LLM_SCREEN_PROMPT and "is_ai_comment" in auto.LLM_SCREEN_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# 小红书通道（2026-11 截流工作台）：平台参数化 / 出站硬校验 / 停损
+# ---------------------------------------------------------------------------
+
+XHS_NOTE_URL = "https://www.xiaohongshu.com/explore/abc123?xsec_token=T&xsec_source=pc_search"
+
+
+class TestXhsCollectCommand:
+    def test_detail_mode_when_note_urls_configured(self):
+        cmd = auto.build_collect_command(
+            {"keywords": ["AI工具"], "note_urls": [XHS_NOTE_URL], "collect_mode": "auto",
+             "max_notes_per_keyword": 10, "max_comments_per_video": 60},
+            platform="xhs",
+        )
+        joined = " ".join(cmd)
+        assert "--platform xhs" in joined
+        assert "--lt cookie" in joined
+        assert "--type detail" in joined
+        assert XHS_NOTE_URL in joined  # 走竞品清单(detail),读请求最少
+        assert "comments_xhs" in joined  # 独立落盘目录,不与 bili 混写
+
+    def test_search_mode_when_no_urls(self):
+        cmd = auto.build_collect_command(
+            {"keywords": ["AI工具", "AI副业"], "collect_mode": "auto"}, platform="xhs"
+        )
+        joined = " ".join(cmd)
+        assert "--type search" in joined and "--keywords AI工具,AI副业" in joined
+
+    def test_mode_search_forces_keyword_scan_even_with_list(self):
+        cmd = auto.build_collect_command(
+            {"keywords": ["AI工具"], "note_urls": [XHS_NOTE_URL], "collect_mode": "search"}, platform="xhs"
+        )
+        joined = " ".join(cmd)
+        assert "--type search" in joined and XHS_NOTE_URL not in joined
+
+    def test_bili_command_unchanged(self):
+        cmd = auto.build_collect_command({"keywords": ["AI工具"]})
+        joined = " ".join(cmd)
+        assert "--platform bili" in joined and "--lt qrcode" in joined
+        assert "comments_xhs" not in joined
+
+
+class TestXhsReadCollected:
+    def _write(self, tmp_path, comments, contents):
+        (tmp_path / "comments_2026-11-20.jsonl").write_text(
+            "\n".join(json.dumps(c, ensure_ascii=False) for c in comments), encoding="utf-8")
+        (tmp_path / "contents_2026-11-20.jsonl").write_text(
+            "\n".join(json.dumps(v, ensure_ascii=False) for v in contents), encoding="utf-8")
+
+    def test_xhs_rows_normalized_for_screening(self, tmp_path):
+        self._write(
+            tmp_path,
+            comments=[{
+                "comment_id": "65f0abc", "note_id": "note1", "content": "请问这种图用什么app做的呀",
+                "nickname": "小红薯", "user_id": "u1", "like_count": 3,
+                "create_time": int(datetime.now().timestamp()) - 3600,
+                "parent_comment_id": 0, "xsec_token": "T",
+                "comment_url": XHS_NOTE_URL + "#comment-65f0abc",
+            }],
+            contents=[{"note_id": "note1", "title": "AI修图教程", "note_url": XHS_NOTE_URL}],
+        )
+        rows, video_map = auto.read_collected(tmp_path, platform="xhs")
+        assert len(rows) == 1 and rows[0]["video_id"] == "note1"
+        assert rows[0]["platform"] == "xhs"
+        assert rows[0]["comment_url"].endswith("#comment-65f0abc")
+        assert video_map["note1"]["video_url"] == XHS_NOTE_URL
+
+    def test_string_timestamps_normalized(self, tmp_path):
+        self._write(
+            tmp_path,
+            comments=[{"comment_id": "c1", "note_id": "n1", "content": "x", "nickname": "u",
+                       "create_time": "2026-11-19 10:00:00", "parent_comment_id": 0}],
+            contents=[],
+        )
+        rows, _ = auto.read_collected(tmp_path, platform="xhs")
+        expected = int(datetime.strptime("2026-11-19 10:00:00", "%Y-%m-%d %H:%M:%S").timestamp())
+        assert rows[0]["create_time"] == expected
+
+    def test_platforms_do_not_cross_contaminate(self, tmp_path):
+        self._write(
+            tmp_path,
+            comments=[
+                {"comment_id": "x1", "note_id": "n1", "content": "xhs评论", "nickname": "a",
+                 "create_time": 1, "parent_comment_id": 0},
+                {"comment_id": "b1", "video_id": "BV1", "content": "bili评论", "nickname": "b",
+                 "create_time": 1},
+            ],
+            contents=[],
+        )
+        bili_rows, _ = auto.read_collected(tmp_path, platform="bili")
+        xhs_rows, _ = auto.read_collected(tmp_path, platform="xhs")
+        assert [r["comment_id"] for r in bili_rows] == ["b1"]
+        assert [r["comment_id"] for r in xhs_rows] == ["x1"]
+
+
+class TestXhsDraftViolations:
+    """出站硬校验:链接/联系方式/引流话术是封控与举报的直接诱因,一律拦。"""
+
+    def test_link_blocked(self):
+        assert auto.xhs_draft_violations("我用这个工具做的 youvibe.cn 去看看")
+        assert auto.xhs_draft_violations("教程在 https://example.com")
+
+    def test_contact_blocked(self):
+        assert auto.xhs_draft_violations("加微信 abc123 教你")
+        assert auto.xhs_draft_violations("vx: tool888")
+
+    def test_cross_platform_account_blocked(self):
+        assert auto.xhs_draft_violations("我公众号同名，搜一下就有")
+
+    def test_cta_blocked(self):
+        assert auto.xhs_draft_violations("看我主页有教程")
+        assert auto.xhs_draft_violations("私信我发你")
+
+    def test_clean_helpful_draft_passes(self):
+        draft = "用即梦就行,先把参考图固定住,提示词写清主体动作和镜头,一次一条别贪多,出片稳很多"
+        assert auto.xhs_draft_violations(draft) == []
+
+
+class TestXhsStore:
+    def _xhs_store(self, tmp_path):
+        return auto.AutomationStore(path=tmp_path / "xhs.json", platform="xhs")
+
+    def test_xhs_defaults_tightened(self, tmp_path):
+        store = self._xhs_store(tmp_path)
+        assert store.platform == "xhs"
+        assert store.config["daily_send_limit"] == 6      # 个位数日上限
+        assert store.config["send_interval_seconds"] == 600
+
+    def test_bili_defaults_unchanged(self, tmp_path):
+        store = auto.AutomationStore(path=tmp_path / "bili.json")
+        assert store.config["daily_send_limit"] == 10
+
+    def test_user_config_overrides_xhs_defaults(self, tmp_path):
+        store = self._xhs_store(tmp_path)
+        store.update_config({"daily_send_limit": 3})
+        assert store.config["daily_send_limit"] == 3
+
+    def test_approve_blocks_violating_draft(self, tmp_path):
+        store = self._xhs_store(tmp_path)
+        store.add_items([_item("x1", draft="看我主页有完整教程")])
+        with pytest.raises(ValueError, match="硬禁"):
+            store.decide("c_x1", "approve")
+
+    def test_approve_clean_draft_ok(self, tmp_path):
+        store = self._xhs_store(tmp_path)
+        store.add_items([_item("x2", draft="用即梦就行,先把参考图固定住,提示词写清主体动作和镜头,出片稳很多")])
+        ok = store.decide("c_x2", "approve")
+        assert ok and ok["status"] == "approved"
+
+    def test_note_urls_config_filters_non_links(self, tmp_path):
+        store = self._xhs_store(tmp_path)
+        cfg = store.update_config({"note_urls": XHS_NOTE_URL + "\n这不是链接"})
+        assert cfg["note_urls"] == [XHS_NOTE_URL]
+
+    def test_collect_mode_validated(self, tmp_path):
+        store = self._xhs_store(tmp_path)
+        cfg = store.update_config({"collect_mode": "bogus"})
+        assert cfg["collect_mode"] == "auto"  # 非法值不写入
+        cfg = store.update_config({"collect_mode": "list"})
+        assert cfg["collect_mode"] == "list"
+
+    def test_pause_sender_blocks_and_clear_resumes(self, tmp_path):
+        store = self._xhs_store(tmp_path)
+        store.update_config({"enabled": True})
+        store.pause_sender(24, "发送撞风控")
+        ok, reason = store.can_send_now()
+        assert not ok and "暂停" in reason
+        store.clear_pause()
+        ok2, _ = store.can_send_now(now=datetime.now().replace(hour=12))
+        assert ok2
+
+    def test_sender_pause_hours_zero_disables_stoploss(self, tmp_path):
+        store = self._xhs_store(tmp_path)
+        store.pause_sender(0, "不应产生暂停")
+        assert not store._state["sender"].get("pause_until")
+
+
+class TestXhsSenderTick:
+    def _store_ready(self, tmp_path):
+        store = auto.AutomationStore(path=tmp_path / "xhs.json", platform="xhs")
+        store.update_config({
+            "enabled": True, "send_window_start": "00:00", "send_window_end": "23:59",
+            "daily_send_limit": 5, "sender_pause_hours": 24,
+        })
+        return store
+
+    def _approved_item(self, comment_url=XHS_NOTE_URL + "#comment-c1"):
+        it = _item("c1", status="approved",
+                   draft="用即梦就行,先固定参考图,提示词写清主体和镜头,出片稳很多")
+        it["platform"] = "xhs"
+        it["comment_url"] = comment_url
+        it["video_id"] = "note1"
+        return it
+
+    def test_send_success_marks_sent(self, tmp_path, monkeypatch):
+        store = self._store_ready(tmp_path)
+        item = self._approved_item()
+        store.add_items([item])
+        from api.services.outreach import xhs_reply_sender as sender_mod
+
+        called = {}
+
+        def fake_send(*, content_id, comment_id, message, cookie="", url=""):
+            called.update(content_id=content_id, comment_id=comment_id, url=url)
+            return ""
+
+        monkeypatch.setattr(sender_mod, "send_xhs_reply", fake_send)
+        msg = asyncio.run(auto._sender_tick(store))
+        assert "已发送" in msg
+        assert item["status"] == "sent"
+        assert called["url"].endswith("#comment-c1")  # 带令牌的直链必须传给发送器
+        assert called["content_id"] == "note1"
+        assert store._state["sender"]["sent_today"] == 1
+
+    def test_risk_failure_pauses_channel(self, tmp_path, monkeypatch):
+        store = self._store_ready(tmp_path)
+        item = self._approved_item()
+        store.add_items([item])
+        from api.services.outreach import xhs_reply_sender as sender_mod
+
+        def fake_send(**kw):
+            raise sender_mod.ReplySendError("操作过于频繁，被平台限流，请稍后再试")
+
+        monkeypatch.setattr(sender_mod, "send_xhs_reply", fake_send)
+        msg = asyncio.run(auto._sender_tick(store))
+        assert "发送失败" in msg
+        assert store._state["sender"].get("pause_until")  # 停损:整条通道暂停
+        ok, reason = store.can_send_now()
+        assert not ok and "暂停" in reason
+        assert item["attempts"] == 1  # 条目留待暂停结束后重试
+
+    def test_normal_failure_does_not_pause(self, tmp_path, monkeypatch):
+        store = self._store_ready(tmp_path)
+        item = self._approved_item()
+        store.add_items([item])
+        from api.services.outreach import xhs_reply_sender as sender_mod
+
+        def fake_send(**kw):
+            raise sender_mod.ReplySendError("未能定位目标评论（comment_id=c1）,可能已被删除")
+
+        monkeypatch.setattr(sender_mod, "send_xhs_reply", fake_send)
+        msg = asyncio.run(auto._sender_tick(store))
+        assert "发送失败" in msg
+        assert not store._state["sender"].get("pause_until")  # 个别评论被删≠风控,不停损
+
+    def test_sendtime_hard_validation_returns_item(self, tmp_path):
+        store = self._store_ready(tmp_path)
+        item = self._approved_item()
+        item["draft"] = "看我主页有教程"  # 绕过批准口的违规草稿
+        store.add_items([item])
+        msg = asyncio.run(auto._sender_tick(store))
+        assert "退回待审" in msg
+        assert item["status"] == "pending_review"
+
+    def test_missing_comment_url_returns_item(self, tmp_path):
+        store = self._store_ready(tmp_path)
+        item = self._approved_item(comment_url="")  # 旧数据缺带令牌直链
+        store.add_items([item])
+        msg = asyncio.run(auto._sender_tick(store))
+        assert "缺评论直链" in msg
+        assert item["status"] == "pending_review"
+
+
+class TestXhsPrompts:
+    def test_xhs_addendum_appended(self):
+        item = _screen_item("1", "怎么做")
+        item["platform"] = "xhs"
+        prompt = auto._system_prompt_for(item)
+        assert "小红书补充规则" in prompt
+
+    def test_bili_prompt_unchanged_without_platform(self):
+        item = _screen_item("1", "怎么做")
+        assert "小红书补充规则" not in auto._system_prompt_for(item)
+
+    def test_user_message_carries_platform(self):
+        item = _screen_item("1", "怎么做")
+        item["platform"] = "xhs"
+        msg = auto._llm_user_message(item)
+        assert '"平台":"小红书"' in msg
+
+
+class TestXhsCandidatesCarryReplyTarget:
+    def test_items_carry_platform_and_comment_url(self):
+        row = auto._normalize_xhs_comment({
+            "comment_id": "c1", "note_id": "n1", "content": "请问这种图用什么app做的呀",
+            "nickname": "u", "user_id": "u1", "like_count": 1,
+            "create_time": int(datetime.now().timestamp()) - 600,
+            "parent_comment_id": 0, "comment_url": XHS_NOTE_URL + "#comment-c1",
+        })
+        vm = {"n1": {"video_id": "n1", "title": "t", "video_url": XHS_NOTE_URL, "platform": "xhs"}}
+        picked, _ = auto.build_candidates(
+            [row], vm, {"max_new_candidates_per_cycle": 5}, set(), platform="xhs"
+        )
+        assert picked[0]["platform"] == "xhs"
+        assert picked[0]["video_id"] == "n1"
+        assert picked[0]["comment_url"].endswith("#comment-c1")
+        assert picked[0]["video_url"] == XHS_NOTE_URL
+
+
+class TestStoreRegistry:
+    def test_get_store_by_platform(self):
+        bili = auto.get_store()
+        xhs = auto.get_store("xhs")
+        assert bili.platform == "bili" and xhs.platform == "xhs"
+        assert auto.get_store("bili") is bili  # 单例复用
+        assert auto.store_path_for("xhs").name == "xhs_reply.json"
+        assert auto.comment_dir_for("xhs").name == "comments_xhs"
+        assert auto.comment_dir_for("bili").name == "comments"

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { X, RefreshCw, AlertTriangle, CheckCircle2, Filter, Loader2 } from 'lucide-react'
 import clsx from 'clsx'
-import { api, type AutomationCandidate, type AutomationStatus } from '../lib/api'
+import { api, type AutomationCandidate, type AutomationStatus, type AutomationPlatform } from '../lib/api'
 import CandidateCard from '../components/CandidateCard'
 
 const TABS = [
@@ -13,7 +13,13 @@ const TABS = [
   { key: 'rejected', label: '已拒绝' },
 ] as const
 
+const PLATFORM_TABS = [
+  { key: 'bili', label: 'B站' },
+  { key: 'xhs', label: '小红书' },
+] as const
+
 export default function AutomationPage() {
+  const [platform, setPlatform] = useState<AutomationPlatform>('bili')
   const [tab, setTab] = useState<(typeof TABS)[number]['key']>('pending_review')
   const [items, setItems] = useState<AutomationCandidate[]>([])
   const [status, setStatus] = useState<AutomationStatus | null>(null)
@@ -25,7 +31,7 @@ export default function AutomationPage() {
 
   const refresh = useCallback(async () => {
     try {
-      const [s, list] = await Promise.all([api.automationStatus(), api.candidates(tab, 100)])
+      const [s, list] = await Promise.all([api.automationStatus(platform), api.candidates(tab, 100, platform)])
       setStatus(s)
       // 新条目排前(旧规则筛遗留不再压底)
       setItems(
@@ -38,7 +44,7 @@ export default function AutomationPage() {
       setNotice(e instanceof Error ? e.message : String(e))
       return null
     }
-  }, [tab])
+  }, [tab, platform])
 
   // 后台筛选/采集在跑时,自动进入轮询态(从别的页面回来也能续上,不用重新点)
   useEffect(() => {
@@ -58,7 +64,7 @@ export default function AutomationPage() {
     setScreenResult('')
     setNotice('')
     try {
-      await api.screenCollected(50, true)
+      await api.screenCollected(50, true, platform)
       setScreening(true)
     } catch (e) {
       setScreenResult(e instanceof Error ? e.message : String(e))
@@ -73,7 +79,7 @@ export default function AutomationPage() {
     const tick = async () => {
       if (!alive) return
       try {
-        const s = await api.automationStatus()
+        const s = await api.automationStatus(platform)
         setStatus(s)
         if (!s.cycle.running) {
           if (s.cycle.last_error) {
@@ -114,15 +120,37 @@ export default function AutomationPage() {
     return () => {
       alive = false
     }
-  }, [screening]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [screening, platform]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-6 space-y-4">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-semibold">回复自动化</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-lg font-semibold">回复自动化</h1>
+            {/* 平台通道切换：B站 / 小红书（独立队列与节奏） */}
+            <div className="flex rounded-lg border border-stone-200 bg-white p-0.5">
+              {PLATFORM_TABS.map((pt) => (
+                <button
+                  key={pt.key}
+                  onClick={() => {
+                    setPlatform(pt.key)
+                    setSelected(null)
+                  }}
+                  className={clsx(
+                    'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                    platform === pt.key ? 'bg-(--brand) text-white' : 'text-stone-500 hover:text-stone-700',
+                  )}
+                >
+                  {pt.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <p className="text-xs text-stone-400">
-            存量评论 → 筛选目标 → LLM 起草 → lint → 人工批准 → 受控发送(采集在「采集」页)
+            {platform === 'xhs'
+              ? '小红书通道：竞品笔记/关键词采集 → 筛选 → 起草 → 硬校验 → 人批 → CDP 受控发送（撞风控自动停损）'
+              : '存量评论 → 筛选目标 → LLM 起草 → lint → 人工批准 → 受控发送(采集在「采集」页)'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -136,6 +164,24 @@ export default function AutomationPage() {
             >
               {status.enabled ? '发送队列:待命' : '发送队列:暂停'}
             </span>
+          )}
+          {platform === 'xhs' && (
+            <button
+              onClick={async () => {
+                try {
+                  setNotice('采集周期已启动（后台运行），完成后自动刷新')
+                  setScreening(true)
+                  await api.collectNow('xhs')
+                } catch (e) {
+                  setNotice(e instanceof Error ? e.message : String(e))
+                  setScreening(false)
+                }
+              }}
+              disabled={screening}
+              className="flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs hover:border-(--brand) disabled:opacity-50"
+            >
+              立即采集小红书(按配置的清单/关键词)
+            </button>
           )}
           <button
             onClick={() => void runScreen()}
@@ -199,14 +245,43 @@ export default function AutomationPage() {
         </div>
       )}
 
-      {/* 发送通道状态:Cookie 未就绪时显眼提醒 */}
-      {status?.sender && !status.sender.cookie_cached && (
+      {/* 发送通道状态:B站 Cookie 未就绪 / 小红书停损暂停 时显眼提醒 */}
+      {status?.sender && platform === 'bili' && !status.sender.cookie_cached && (
         <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-700">
           <AlertTriangle size={14} className="mt-0.5 shrink-0" />
           <span>
             发送通道未就绪:B站登录态失效(需要重新扫码登录)。你现在批准的回复会在队列里等待,
             登录恢复后按节奏自动发(间隔约 3 分钟、每日上限、发送时段内);不想等的话,点开条目用「去B站回复」手动回。
           </span>
+        </div>
+      )}
+      {status?.sender && platform === 'xhs' && status.sender.pause_until && (
+        <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-xs text-red-700">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+          <span className="flex-1">
+            发送已停损暂停:{status.sender.pause_reason || '发送撞风控'}（至 {String(status.sender.pause_until).slice(5, 16)}）。
+            这是撞到风控后的自动保护,请先人工确认账号没被限流,再解除。
+          </span>
+          <button
+            onClick={async () => {
+              try {
+                await api.senderResume('xhs')
+                setNotice('已解除发送暂停')
+                await refresh()
+              } catch (e) {
+                setNotice(e instanceof Error ? e.message : String(e))
+              }
+            }}
+            className="shrink-0 rounded-lg border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+          >
+            确认无碍,解除暂停
+          </button>
+        </div>
+      )}
+      {status?.sender && platform === 'xhs' && !status.sender.pause_until && (
+        <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-2 text-xs text-stone-500">
+          小红书发送通道:依赖本机已登录小红书的浏览器(CDP 调试端口 9222)保持开启;
+          草稿经硬校验(链接/联系方式/引流话术一律拦)、逐条人工批准后才发送,日上限与间隔比B站更保守。
         </div>
       )}
 
@@ -218,7 +293,7 @@ export default function AutomationPage() {
               const n = items.filter((c) => c.screened_by !== 'llm').length
               if (!window.confirm(`一键拒绝 ${n} 条旧规则筛的遗留条目?(LLM 精筛的条目不受影响)`)) return
               try {
-                const res = await api.bulkRejectRules()
+                const res = await api.bulkRejectRules(platform)
                 setNotice(`已清掉 ${res.rejected} 条旧规则筛条目`)
                 await refresh()
               } catch (e) {
@@ -236,7 +311,7 @@ export default function AutomationPage() {
               const n = items.filter((c) => c.screened_by === 'llm' && (c.draft || '').trim()).length
               if (!window.confirm(`批量批准 ${n} 条 LLM 精筛条目(以当前草稿入队,之后自动发送)?`)) return
               try {
-                const res = await api.bulkApproveLlm()
+                const res = await api.bulkApproveLlm(platform)
                 const parts = [`已批准 ${res.approved} 条`]
                 if (res.skipped_similar) parts.push(`${res.skipped_similar} 条因与近期内容过于相似被拦(需改写)`)
                 if (res.skipped_no_draft) parts.push(`${res.skipped_no_draft} 条无草稿跳过`)
@@ -251,12 +326,12 @@ export default function AutomationPage() {
             批量批准 LLM 精筛条目({items.filter((c) => c.screened_by === 'llm' && (c.draft || '').trim()).length} 条有草稿)
           </button>
         )}
-        {tab === 'sent' && items.length > 0 && (
+        {tab === 'sent' && platform === 'bili' && items.length > 0 && (
           <button
             onClick={async () => {
               try {
                 setNotice('正在回采B站实时互动…')
-                const res = await api.refreshEngagement()
+                const res = await api.refreshEngagement(platform)
                 const act = res.with_activity
                 setNotice(
                   act.length
@@ -283,7 +358,7 @@ export default function AutomationPage() {
             onClick={() => setSelected(c)}
             onApprove={async (cc) => {
               try {
-                const res = await api.approve(cc.id, cc.draft)
+                const res = await api.approve(cc.id, cc.draft, platform)
                 setNotice(res.warnings?.length ? `已批准,但草稿有 ${res.warnings.length} 条样式提醒:${res.warnings[0]}` : '已批准,排队发送')
                 await refresh()
               } catch (e) {
@@ -292,7 +367,7 @@ export default function AutomationPage() {
             }}
             onReject={async (cc) => {
               try {
-                await api.reject(cc.id)
+                await api.reject(cc.id, platform)
                 await refresh()
               } catch (e) {
                 setNotice(e instanceof Error ? e.message : String(e))
@@ -301,7 +376,7 @@ export default function AutomationPage() {
             onHumanTouch={async (cc) => {
               try {
                 setHumanTouchReport(`检测中(约10-30秒,LLM逐句扫描)…\n对象:${cc.comment_text.slice(0, 40)}`)
-                const res = await api.candidateHumanTouch(cc.id)
+                const res = await api.candidateHumanTouch(cc.id, platform)
                 setHumanTouchReport(res.report)
               } catch (e) {
                 setHumanTouchReport(`检测失败:${e instanceof Error ? e.message : String(e)}`)
@@ -326,6 +401,7 @@ export default function AutomationPage() {
       {/* 抽屉式审批 */}
       <Drawer
         c={selected}
+        platform={platform}
         onClose={() => setSelected(null)}
         onDone={(msg) => {
           setSelected(null)
@@ -343,11 +419,13 @@ export default function AutomationPage() {
 
 function Drawer({
   c,
+  platform,
   onClose,
   onDone,
   onDrafted,
 }: {
   c: AutomationCandidate | null
+  platform: AutomationPlatform
   onClose: () => void
   onDone: (msg?: string) => void
   onDrafted?: (item: AutomationCandidate) => void
@@ -362,11 +440,13 @@ function Drawer({
 
   if (!c) return null
   const warnings = c.lint_warnings ?? []
+  const isXhs = platform === 'xhs' || c.platform === 'xhs'
+  const manualReplyUrl = isXhs ? c.comment_url || c.video_url : `${c.video_url}#reply${c.comment_id}`
 
   const approve = async () => {
     setBusy(true)
     try {
-      const res = await api.approve(c.id, draft)
+      const res = await api.approve(c.id, draft, platform)
       onDone(res.warnings?.join(';') || undefined)
     } catch (e) {
       onDone(e instanceof Error ? e.message : String(e))
@@ -400,13 +480,13 @@ function Drawer({
                   {c.video_title}
                 </a>
                 <a
-                  href={`${c.video_url}#reply${c.comment_id}`}
+                  href={manualReplyUrl}
                   target="_blank"
                   rel="noreferrer"
-                  title="打开这条评论在B站的位置,自己手动回复"
+                  title={isXhs ? '打开这条评论在小红书的位置,自己手动回复' : '打开这条评论在B站的位置,自己手动回复'}
                   className="shrink-0 rounded-lg border border-stone-200 px-2 py-0.5 text-xs text-stone-500 hover:border-(--brand) hover:text-(--brand)"
                 >
-                  去B站回复 ↗
+                  {isXhs ? '去小红书回复 ↗' : '去B站回复 ↗'}
                 </a>
               </div>
             </section>
@@ -429,7 +509,7 @@ function Drawer({
                       setBusy(true)
                       setDraftError('')
                       try {
-                        const res = await api.redraft(c.id)
+                        const res = await api.redraft(c.id, platform)
                         setDraft(res.item.draft)
                         onDrafted?.(res.item)
                       } catch (e) {
@@ -477,7 +557,7 @@ function Drawer({
                 </button>
                 <button
                   onClick={async () => {
-                    await api.reject(c.id)
+                    await api.reject(c.id, platform)
                     onDone()
                   }}
                   className="rounded-xl border border-stone-200 px-4 py-2.5 text-sm text-stone-500 hover:border-red-300 hover:text-red-500"
@@ -493,7 +573,7 @@ function Drawer({
                 {c.status === 'approved' && (
                   <button
                     onClick={async () => {
-                      await api.retract(c.id)
+                      await api.retract(c.id, platform)
                       onDone()
                     }}
                     className="ml-3 text-(--brand) hover:underline"

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""B 站回复自动化 · 监工界面 API。"""
+"""评论区回复自动化 · 监工界面 API（B 站 + 小红书双通道，platform 查询参数区分）。"""
 
 from __future__ import annotations
 
@@ -23,6 +23,9 @@ class ConfigUpdate(BaseModel):
     auto_draft: Optional[bool] = None
     keywords: Optional[list[str]] = None
     keywords_text: Optional[str] = None
+    note_urls: Optional[list[str]] = None
+    note_urls_text: Optional[str] = None
+    collect_mode: Optional[str] = None
     collect_interval_hours: Optional[int] = None
     max_notes_per_keyword: Optional[int] = None
     max_comments_per_video: Optional[int] = None
@@ -34,10 +37,13 @@ class ConfigUpdate(BaseModel):
     send_jitter_seconds: Optional[int] = None
     send_window_start: Optional[str] = None
     send_window_end: Optional[str] = None
+    sender_pause_hours: Optional[int] = None
 
 
-def _store() -> auto.AutomationStore:
-    return auto.get_store()
+def _store(platform: str = "bili") -> auto.AutomationStore:
+    if platform not in auto.PLATFORMS:
+        raise HTTPException(status_code=400, detail=f"不支持的平台：{platform}（可选 {', '.join(auto.PLATFORMS)}）")
+    return auto.get_store(platform)
 
 
 def _funnel(store: auto.AutomationStore) -> dict[str, int]:
@@ -52,12 +58,13 @@ def _funnel(store: auto.AutomationStore) -> dict[str, int]:
 
 
 @router.get("/status")
-async def status() -> dict[str, Any]:
-    store = _store()
+async def status(platform: str = "bili") -> dict[str, Any]:
+    store = _store(platform)
     cfg = store.config
     sender = store.sender_state()
     ok, wait_reason = store.can_send_now()
     return {
+        "platform": store.platform,
         "enabled": cfg.get("enabled", False),
         "config": cfg,
         "funnel": _funnel(store),
@@ -67,27 +74,28 @@ async def status() -> dict[str, Any]:
             **sender,
             "can_send": ok,
             "wait_reason": wait_reason,
-            "cookie_cached": bool(auto._cached_cookie()),
-            "account": auto.cached_account_info(),
+            # bili：缓存 Cookie 状态；xhs：依赖本机已登录的 CDP 浏览器
+            "cookie_cached": bool(auto._cached_cookie()) if store.platform == "bili" else None,
+            "account": auto.cached_account_info() if store.platform == "bili" else {},
             "login_flow": store._state["sender"].get("login_flow") or {"running": False, "message": ""},
         },
     }
 
 
 @router.get("/candidates")
-async def candidates(status: str = "pending_review", limit: int = 60) -> list[dict[str, Any]]:
-    store = _store()
+async def candidates(status: str = "pending_review", limit: int = 60, platform: str = "bili") -> list[dict[str, Any]]:
+    store = _store(platform)
     items = [i for i in store.items if i["status"] == status]
     items.sort(key=lambda i: (0 if i.get("tier") == "A" else 1, -i.get("like_count", 0)))
     return items[-limit:][::-1]
 
 
 @router.post("/candidates/{item_id}/approve")
-async def approve(item_id: str, body: CandidateDecision) -> dict[str, Any]:
-    store = _store()
+async def approve(item_id: str, body: CandidateDecision, platform: str = "bili") -> dict[str, Any]:
+    store = _store(platform)
     try:
         item = store.decide(item_id, "approve", draft=body.draft)
-    except ValueError as exc:  # 相似度闸拦截
+    except ValueError as exc:  # 相似度闸 / 小红书硬校验拦截
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not item:
         raise HTTPException(status_code=400, detail="条目不存在、已处理或草稿为空")
@@ -95,14 +103,16 @@ async def approve(item_id: str, body: CandidateDecision) -> dict[str, Any]:
     warnings: list[str] = []
     if not store.config.get("enabled"):
         warnings.append("已批准，但自动化总开关未启动——点右上角「启动自动化」后才会发送")
-    if not auto._cached_cookie():
+    if store.platform == "xhs":
+        warnings.append("小红书发送依赖本机已登录小红书的浏览器（CDP 调试端口）保持开启")
+    elif not auto._cached_cookie():
         warnings.append("B 站登录 Cookie 未就绪——启动后首次采集会弹出扫码窗口，扫一次即恢复")
     return {"ok": True, "item": item, "warnings": warnings}
 
 
 @router.post("/candidates/{item_id}/retract")
-async def retract(item_id: str) -> dict[str, Any]:
-    store = _store()
+async def retract(item_id: str, platform: str = "bili") -> dict[str, Any]:
+    store = _store(platform)
     item = store.retract(item_id)
     if not item:
         raise HTTPException(status_code=400, detail="条目不存在或不在已批准状态")
@@ -110,8 +120,8 @@ async def retract(item_id: str) -> dict[str, Any]:
 
 
 @router.post("/candidates/{item_id}/reject")
-async def reject(item_id: str) -> dict[str, Any]:
-    store = _store()
+async def reject(item_id: str, platform: str = "bili") -> dict[str, Any]:
+    store = _store(platform)
     item = store.decide(item_id, "reject")
     if not item:
         raise HTTPException(status_code=400, detail="条目不存在或已处理")
@@ -119,8 +129,8 @@ async def reject(item_id: str) -> dict[str, Any]:
 
 
 @router.post("/candidates/{item_id}/draft")
-async def redraft(item_id: str) -> dict[str, Any]:
-    store = _store()
+async def redraft(item_id: str, platform: str = "bili") -> dict[str, Any]:
+    store = _store(platform)
     item = store.find(item_id)
     if not item or item["status"] != "pending_review":
         raise HTTPException(status_code=400, detail="条目不存在或已处理")
@@ -132,8 +142,8 @@ async def redraft(item_id: str) -> dict[str, Any]:
 
 
 @router.post("/candidates/{item_id}/draft-manual")
-async def draft_manual(item_id: str, body: CandidateDecision) -> dict[str, Any]:
-    store = _store()
+async def draft_manual(item_id: str, body: CandidateDecision, platform: str = "bili") -> dict[str, Any]:
+    store = _store(platform)
     updated = store.update_draft(item_id, body.draft or "", source="manual")
     if not updated:
         raise HTTPException(status_code=400, detail="条目不存在或已处理")
@@ -143,37 +153,37 @@ async def draft_manual(item_id: str, body: CandidateDecision) -> dict[str, Any]:
 class ScreenRequest(BaseModel):
     max_candidates: int = 50
     auto_draft: bool = True
-    source: str = "both"  # both=双目录合并(默认) | bulk=手动批量(data/comments) | cycle=自动周期(data/automation/comments)
+    source: str = "both"  # both=双目录合并(默认) | bulk=手动批量(data/comments) | cycle=自动周期(各平台目录)
 
 
 @router.post("/candidates/bulk-approve")
-async def bulk_approve() -> dict[str, Any]:
+async def bulk_approve(platform: str = "bili") -> dict[str, Any]:
     """批量批准全部 LLM 精筛且已有草稿的待审条目(规则筛遗留与无草稿的不动)。"""
-    store = _store()
+    store = _store(platform)
     approved, skipped, skipped_similar = store.bulk_approve_llm_screened()
     return {"ok": True, "approved": approved, "skipped_no_draft": skipped, "skipped_similar": skipped_similar}
 
 
 @router.post("/candidates/bulk-reject")
-async def bulk_reject() -> dict[str, Any]:
+async def bulk_reject(platform: str = "bili") -> dict[str, Any]:
     """一键拒绝全部旧规则筛的待审条目(仅限 screened_by != llm 的遗留项)。"""
-    store = _store()
+    store = _store(platform)
     n = store.bulk_reject_rules_screened()
     return {"ok": True, "rejected": n}
 
 
 @router.post("/screen-collected")
-async def screen_collected(body: ScreenRequest) -> dict[str, Any]:
-    """从手动批量采集的存量数据(data/comments)里筛目标用户 + LLM 起草。"""
-    store = _store()
+async def screen_collected(body: ScreenRequest, platform: str = "bili") -> dict[str, Any]:
+    """从手动批量采集的存量数据里筛目标用户 + LLM 起草。"""
+    store = _store(platform)
     if store._state["cycle"].get("running"):
         raise HTTPException(status_code=409, detail="已有筛选/采集任务在运行")
 
     async def _run() -> None:
-        from api.services.outreach.reply_automation import BULK_COMMENT_DIR, COMMENT_DIR
+        from api.services.outreach.reply_automation import BULK_COMMENT_DIR, comment_dir_for
 
         source_dir = (
-            COMMENT_DIR if body.source == "cycle"
+            comment_dir_for(store.platform) if body.source == "cycle"
             else BULK_COMMENT_DIR if body.source == "bulk"
             else None  # both:双目录合并
         )
@@ -187,31 +197,44 @@ async def screen_collected(body: ScreenRequest) -> dict[str, Any]:
 
 
 @router.post("/collect-now")
-async def collect_now() -> dict[str, Any]:
-    store = _store()
+async def collect_now(mode: str = "", platform: str = "bili") -> dict[str, Any]:
+    """立即跑一轮采集。mode 可临时覆盖采集模式：list(竞品清单)/search(关键词扫描)。"""
+    store = _store(platform)
     if store._state["cycle"].get("running"):
         raise HTTPException(status_code=409, detail="采集周期已在运行")
-    asyncio.create_task(auto.run_cycle(store))
+    if mode and mode not in ("list", "search"):
+        raise HTTPException(status_code=400, detail="mode 仅支持 list / search")
+    asyncio.create_task(auto.run_cycle(store, mode_override=mode))
     return {"ok": True, "message": "采集周期已启动（后台运行，稍后刷新查看）"}
 
 
 @router.post("/config")
-async def update_config(body: ConfigUpdate) -> dict[str, Any]:
-    store = _store()
+async def update_config(body: ConfigUpdate, platform: str = "bili") -> dict[str, Any]:
+    store = _store(platform)
     partial: dict[str, Any] = {}
     for key, value in body.dict(exclude_none=True).items():
         if key == "keywords_text":
             partial["keywords"] = value
+        elif key == "note_urls_text":
+            partial["note_urls"] = value
         else:
             partial[key] = value
     cfg = store.update_config(partial)
     return {"ok": True, "config": cfg}
 
 
+@router.post("/sender-resume")
+async def sender_resume(platform: str = "bili") -> dict[str, Any]:
+    """人工解除停损暂停（确认账号没问题后手动恢复发送）。"""
+    store = _store(platform)
+    store.clear_pause()
+    return {"ok": True, "message": "已解除发送暂停"}
+
+
 @router.post("/bili-login")
 async def bili_login() -> dict[str, Any]:
     """打开可见浏览器扫码恢复 B 站登录(后台运行,状态见 /status 的 sender.login_flow)。"""
-    store = _store()
+    store = _store("bili")
     flow = store._state["sender"].get("login_flow") or {}
     if flow.get("running"):
         raise HTTPException(status_code=409, detail="登录窗口已开启,请先完成或等它超时")
@@ -246,12 +269,12 @@ class HumanTouchRequest(BaseModel):
 
 
 @router.post("/candidates/{item_id}/human-touch")
-async def human_touch(item_id: str) -> dict[str, Any]:
+async def human_touch(item_id: str, platform: str = "bili") -> dict[str, Any]:
     """AI 味检测:对草稿逐句扫机器痕迹(姿态/结构/用词/内容/群发味),出报告不改稿。
 
     检测维度参考风物执守·XY 操盘系统 xy-human-touch 的公开思路(自研实现)。
     """
-    store = _store()
+    store = _store(platform)
     item = store.find(item_id)
     if not item:
         raise HTTPException(status_code=404, detail="条目不存在")
@@ -259,7 +282,8 @@ async def human_touch(item_id: str) -> dict[str, Any]:
     if not draft:
         raise HTTPException(status_code=400, detail="该条目没有草稿")
 
-    system = """你是B站评论回复的 AI 味质检员。对草稿逐句扫描,找出像机器写的痕迹,按原文顺序报告。命中才报,干净就明说干净。每处一行:级别(🔴严重/⚠️轻度)+ 引原句(≤20字)+ 问题 + 一句修改方向。最后给一行总评。不重写全文。
+    platform_name = "小红书" if store.platform == "xhs" else "B站"
+    system = f"""你是{platform_name}评论回复的 AI 味质检员。对草稿逐句扫描,找出像机器写的痕迹,按原文顺序报告。命中才报,干净就明说干净。每处一行:级别(🔴严重/⚠️轻度)+ 引原句(≤20字)+ 问题 + 一句修改方向。最后给一行总评。不重写全文。
 
 检测维度:
 1 姿态:替读者编错想法再否定;「不是X而是Y」翻案连用;每段收金句;升维收尾(本质上/归根结底);全篇没有一处不确定或踩坑自白(太权威=太假)
@@ -281,8 +305,10 @@ async def human_touch(item_id: str) -> dict[str, Any]:
 
 
 @router.post("/candidates/refresh-engagement")
-async def refresh_engagement() -> dict[str, Any]:
+async def refresh_engagement(platform: str = "bili") -> dict[str, Any]:
     """回采已发回复在B站的实时互动(点赞/被回复数/楼中楼预览),写入条目。"""
-    store = _store()
+    store = _store(platform)
+    if store.platform != "bili":
+        raise HTTPException(status_code=400, detail="互动回采仅支持 B 站通道（小红书发送即验，不额外读平台）")
     result = await auto.refresh_sent_engagement(store)
     return result

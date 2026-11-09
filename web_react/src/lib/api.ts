@@ -6,6 +6,8 @@ export interface AutomationCandidate {
   video_id: string
   video_title: string
   video_url: string
+  comment_url?: string
+  platform?: string
   commenter: string
   comment_text: string
   like_count: number
@@ -38,6 +40,7 @@ export interface AutomationCandidate {
 }
 
 export interface AutomationStatus {
+  platform?: string
   enabled: boolean
   config: Record<string, unknown>
   funnel: {
@@ -52,9 +55,11 @@ export interface AutomationStatus {
   sender: {
     can_send: boolean
     wait_reason: string
-    cookie_cached: boolean
+    cookie_cached: boolean | null
     account?: { uname?: string; mid?: number; level?: number }
     login_flow?: { running: boolean; message: string }
+    pause_until?: string
+    pause_reason?: string
     [k: string]: unknown
   }
 }
@@ -498,47 +503,55 @@ export interface YouTubeSummary {
   }[]
 }
 
+export type AutomationPlatform = 'bili' | 'xhs'
+
+const p = (platform: AutomationPlatform) => `&platform=${platform}`
+
 export const api = {
-  automationStatus: () => req<AutomationStatus>('/automation/status'),
-  candidates: (status = 'pending_review', limit = 60) =>
-    req<AutomationCandidate[]>(`/automation/candidates?status=${status}&limit=${limit}`),
-  approve: (id: string, draft: string) =>
+  automationStatus: (platform: AutomationPlatform = 'bili') =>
+    req<AutomationStatus>(`/automation/status?platform=${platform}`),
+  candidates: (status = 'pending_review', limit = 60, platform: AutomationPlatform = 'bili') =>
+    req<AutomationCandidate[]>(`/automation/candidates?status=${status}&limit=${limit}${p(platform)}`),
+  approve: (id: string, draft: string, platform: AutomationPlatform = 'bili') =>
     req<{ ok: boolean; item: AutomationCandidate; warnings: string[] }>(
-      `/automation/candidates/${id}/approve`,
+      `/automation/candidates/${id}/approve?platform=${platform}`,
       { method: 'POST', body: JSON.stringify({ draft }) },
     ),
-  reject: (id: string) =>
-    req<{ ok: boolean }>(`/automation/candidates/${id}/reject`, { method: 'POST' }),
-  bulkRejectRules: () =>
-    req<{ ok: boolean; rejected: number }>('/automation/candidates/bulk-reject', {
+  reject: (id: string, platform: AutomationPlatform = 'bili') =>
+    req<{ ok: boolean }>(`/automation/candidates/${id}/reject?platform=${platform}`, { method: 'POST' }),
+  bulkRejectRules: (platform: AutomationPlatform = 'bili') =>
+    req<{ ok: boolean; rejected: number }>(`/automation/candidates/bulk-reject?platform=${platform}`, {
       method: 'POST',
     }),
-  refreshEngagement: () =>
+  refreshEngagement: (platform: AutomationPlatform = 'bili') =>
     req<{ ok: boolean; updated: number; with_activity: { id: string; like: number; rcount: number; subs: string[] }[] }>(
-      '/automation/candidates/refresh-engagement',
+      `/automation/candidates/refresh-engagement?platform=${platform}`,
       { method: 'POST' },
     ),
-  candidateHumanTouch: (id: string) =>
+  candidateHumanTouch: (id: string, platform: AutomationPlatform = 'bili') =>
     req<{ ok: boolean; item_id: string; report: string }>(
-      `/automation/candidates/${id}/human-touch`,
+      `/automation/candidates/${id}/human-touch?platform=${platform}`,
       { method: 'POST' },
     ),
-  bulkApproveLlm: () =>
+  bulkApproveLlm: (platform: AutomationPlatform = 'bili') =>
     req<{ ok: boolean; approved: number; skipped_no_draft: number; skipped_similar: number }>(
-      '/automation/candidates/bulk-approve',
+      `/automation/candidates/bulk-approve?platform=${platform}`,
       { method: 'POST' },
     ),
   biliLogin: () =>
     req<{ ok: boolean; message: string }>('/automation/bili-login', { method: 'POST' }),
-  retract: (id: string) =>
-    req<{ ok: boolean }>(`/automation/candidates/${id}/retract`, { method: 'POST' }),
-  redraft: (id: string) =>
-    req<{ ok: boolean; item: AutomationCandidate }>(`/automation/candidates/${id}/draft`, {
+  senderResume: (platform: AutomationPlatform = 'bili') =>
+    req<{ ok: boolean; message: string }>(`/automation/sender-resume?platform=${platform}`, { method: 'POST' }),
+  retract: (id: string, platform: AutomationPlatform = 'bili') =>
+    req<{ ok: boolean }>(`/automation/candidates/${id}/retract?platform=${platform}`, { method: 'POST' }),
+  redraft: (id: string, platform: AutomationPlatform = 'bili') =>
+    req<{ ok: boolean; item: AutomationCandidate }>(`/automation/candidates/${id}/draft?platform=${platform}`, {
       method: 'POST',
     }),
-  collectNow: () => req('/automation/collect-now', { method: 'POST' }),
-  screenCollected: (max_candidates = 50, auto_draft = true) =>
-    req<{ ok: boolean; message: string }>('/automation/screen-collected', {
+  collectNow: (platform: AutomationPlatform = 'bili', mode: 'list' | 'search' | '' = '') =>
+    req(`/automation/collect-now?platform=${platform}${mode ? `&mode=${mode}` : ''}`, { method: 'POST' }),
+  screenCollected: (max_candidates = 50, auto_draft = true, platform: AutomationPlatform = 'bili') =>
+    req<{ ok: boolean; message: string }>(`/automation/screen-collected?platform=${platform}`, {
       method: 'POST',
       body: JSON.stringify({ max_candidates, auto_draft }),
     }),
@@ -651,8 +664,8 @@ export const api = {
   publishDelete: (id: string) => req(`/publish/records/${id}`, { method: 'DELETE' }),
   writerDelete: (id: string) => req(`/writer/${id}`, { method: 'DELETE' }),
 
-  automationConfigUpdate: (patch: Record<string, unknown>) =>
-    req('/automation/config', { method: 'POST', body: JSON.stringify(patch) }),
+  automationConfigUpdate: (patch: Record<string, unknown>, platform: AutomationPlatform = 'bili') =>
+    req(`/automation/config?platform=${platform}`, { method: 'POST', body: JSON.stringify(patch) }),
   studioSkills: (platform = '', stage = '', q = '') =>
     req<{ items: StudioSkill[]; stages: { stage: string; count: number }[]; stats: { total: number; by_platform: Record<string, number> } }>(
       `/studio/skills?platform=${encodeURIComponent(platform)}&stage=${encodeURIComponent(stage)}&q=${encodeURIComponent(q)}`,

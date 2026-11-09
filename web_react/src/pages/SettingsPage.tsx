@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Save, Loader2, Check, Coins } from 'lucide-react'
-import { api, type AutomationStatus, type Strategy, type CostSummary, type CostEntry } from '../lib/api'
+import clsx from 'clsx'
+import { api, type AutomationStatus, type Strategy, type CostSummary, type CostEntry, type AutomationPlatform } from '../lib/api'
 
 export default function SettingsPage() {
+  const [platform, setPlatform] = useState<AutomationPlatform>('bili')
   const [status, setStatus] = useState<AutomationStatus | null>(null)
   const [keywordsText, setKeywordsText] = useState('')
+  const [noteUrlsText, setNoteUrlsText] = useState('')
+  const [collectMode, setCollectMode] = useState('auto')
   const [dailySendLimit, setDailySendLimit] = useState(5)
   const [sendInterval, setSendInterval] = useState(300)
   const [sendWindowStart, setSendWindowStart] = useState('10:00')
@@ -26,11 +30,13 @@ export default function SettingsPage() {
 
   const refreshStatus = useCallback(() => {
     api
-      .automationStatus()
+      .automationStatus(platform)
       .then((s) => {
         setStatus(s)
         const c = s.config as Record<string, unknown>
         setKeywordsText(((c.keywords as string[]) ?? []).join('\n'))
+        setNoteUrlsText(((c.note_urls as string[]) ?? []).join('\n'))
+        setCollectMode(String(c.collect_mode ?? 'auto'))
         setDailySendLimit(Number(c.daily_send_limit ?? 5))
         setSendInterval(Number(c.send_interval_seconds ?? 300))
         setSendWindowStart(String(c.send_window_start ?? '10:00'))
@@ -39,7 +45,7 @@ export default function SettingsPage() {
         setFreshnessB(Number(c.freshness_b_hours ?? 168))
       })
       .catch(() => {})
-  }, [])
+  }, [platform])
 
   // 发送通道状态轮询:登录进行中加密轮询,平时也是低频刷新
   useEffect(() => {
@@ -67,7 +73,7 @@ export default function SettingsPage() {
     setBusy(true)
     setError('')
     try {
-      await api.automationConfigUpdate({
+      const patch: Record<string, unknown> = {
         keywords: keywordsText.split('\n').map((k) => k.trim()).filter(Boolean),
         daily_send_limit: dailySendLimit,
         send_interval_seconds: sendInterval,
@@ -75,7 +81,12 @@ export default function SettingsPage() {
         send_window_end: sendWindowEnd,
         freshness_a_hours: freshnessA,
         freshness_b_hours: freshnessB,
-      })
+      }
+      if (platform === 'xhs') {
+        patch.note_urls = noteUrlsText.split('\n').map((u) => u.trim()).filter(Boolean)
+        patch.collect_mode = collectMode
+      }
+      await api.automationConfigUpdate(patch, platform)
       setSaved(true)
       setTimeout(() => setSaved(false), 1500)
     } catch (e) {
@@ -83,7 +94,7 @@ export default function SettingsPage() {
     } finally {
       setBusy(false)
     }
-  }, [keywordsText, dailySendLimit, sendInterval, sendWindowStart, sendWindowEnd, freshnessA, freshnessB])
+  }, [platform, keywordsText, noteUrlsText, collectMode, dailySendLimit, sendInterval, sendWindowStart, sendWindowEnd, freshnessA, freshnessB])
 
   const saveStrategy = async () => {
     setStrategyBusy(true)
@@ -113,6 +124,59 @@ export default function SettingsPage() {
       {error && <p className="text-sm text-red-500">{error}</p>}
 
       <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold">回复自动化参数</h2>
+            <p className="text-xs text-stone-400">按平台独立配置(保存即生效);B站与小红书各有自己的队列、配额与节奏</p>
+          </div>
+          <div className="flex rounded-lg border border-stone-200 bg-white p-0.5">
+            {(['bili', 'xhs'] as const).map((pf) => (
+              <button
+                key={pf}
+                onClick={() => setPlatform(pf)}
+                className={clsx(
+                  'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                  platform === pf ? 'bg-(--brand) text-white' : 'text-stone-500 hover:text-stone-700',
+                )}
+              >
+                {pf === 'bili' ? 'B站' : '小红书'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {platform === 'xhs' && (
+          <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50/50 p-3">
+            <div>
+              <label className="text-xs text-stone-400">
+                竞品笔记清单(每行一条完整链接,需带 xsec_token——从浏览器地址栏复制;留空则只按关键词搜索)
+              </label>
+              <textarea
+                value={noteUrlsText}
+                onChange={(e) => setNoteUrlsText(e.target.value)}
+                rows={4}
+                placeholder="https://www.xiaohongshu.com/explore/xxxx?xsec_token=…"
+                className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs outline-none focus:border-(--brand)"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-stone-400">采集模式</label>
+              <select
+                value={collectMode}
+                onChange={(e) => setCollectMode(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm outline-none focus:border-(--brand)"
+              >
+                <option value="auto">自动(有清单爬清单,没清单按关键词)</option>
+                <option value="list">只爬竞品清单(读请求最少,推荐日常)</option>
+                <option value="search">只按关键词搜索(发现新爆笔记)</option>
+              </select>
+              <p className="mt-1 text-xs text-amber-600">
+                建议:日常用清单模式固定盯重点竞品,每周手动跑一次关键词扫描补新笔记进清单
+              </p>
+            </div>
+          </div>
+        )}
+
         <div>
           <label className="text-xs text-stone-400">目标关键词(每行一个,用于自动化的目标视频池)</label>
           <textarea
@@ -406,13 +470,17 @@ export default function SettingsPage() {
         <ul className="text-xs text-stone-500 space-y-1 leading-relaxed">
           <li>· AI 只发现与起草,发送必须经人工批准</li>
           <li>· 草稿硬禁令:无产品名/链接/引流,禁说教腔与黑话(由 reply_style lint 强制执行)</li>
-          <li>· 小红书全线冻结中,只做 B 站</li>
-          <li>· 自动化不再自己定时扫描采集;采集走「采集」页手动批量,再回来自动化页筛选</li>
+          <li>· 小红书通道额外硬校验:链接/联系方式/引流话术在批准与发送两道口都会被拦;撞风控自动停损暂停</li>
+          <li>· 自动化不再自己定时扫描采集;采集走「采集」页手动批量或自动化页「立即采集」,再回来自动化页筛选</li>
         </ul>
         {status && (
           <p className="mt-3 text-xs text-stone-400">
-            当前状态:{status.enabled ? '自动化已启用' : '自动化已暂停'} · Cookie{' '}
-            {status.sender.cookie_cached ? '已缓存' : '未就绪'}
+            当前状态({platform === 'xhs' ? '小红书' : 'B站'}):{status.enabled ? '自动化已启用' : '自动化已暂停'} ·{' '}
+            {platform === 'xhs'
+              ? status.sender.pause_until
+                ? `发送停损暂停中(${String(status.sender.pause_until).slice(5, 16)})`
+                : '发送通道正常(依赖已登录的浏览器)'
+              : `Cookie ${status.sender.cookie_cached ? '已缓存' : '未就绪'}`}
           </p>
         )}
       </section>

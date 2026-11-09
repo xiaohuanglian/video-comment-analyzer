@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
-"""B 站评论区回复自动化引擎。
+"""评论区回复自动化引擎（B 站 + 小红书双通道）。
 
 流程：定时采集 → 产品需要人群筛选 → LLM 起草 → 风格 lint → 人工批准（UI）→ 受控发送。
 
 红线（不变）：机器只采集、筛选、起草；**发送必须经人工批准**，批准动作只发生在 UI。
-状态持久化在 data/automation/bili_reply.json，Web 服务重启后自动续跑。
+状态按平台分库持久化：data/automation/bili_reply.json 与 xhs_reply.json，Web 服务重启后自动续跑。
+小红书通道（2026-11 截流工作台）：竞品笔记清单(detail)/关键词(search) 采集 → 同一套筛选 →
+起草后经**出站硬校验**（链接/联系方式/引流话术一律拦）→ 人批 → CDP 浏览器仿人工发送；
+发送撞风控即**停损暂停**整条通道（默认 24h），被平台处理就停，不调参硬撞。
 
 筛选规则来源（2026-10-12/13 与用户共同定稿）：
 - 目标 = 产品需要人群：问工具/怎么做（看得到学不会）、新手自述（想动手缺路径）
@@ -34,12 +37,32 @@ from api.services import notify as notify_mod
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 STORE_PATH = PROJECT_ROOT / "data" / "automation" / "bili_reply.json"
 COMMENT_DIR = PROJECT_ROOT / "data" / "automation" / "comments"
+XHS_COMMENT_DIR = PROJECT_ROOT / "data" / "automation" / "comments_xhs"
 COOKIE_PATH = PROJECT_ROOT / "data" / "automation" / "bili_cookie.json"
 BILI_PROFILE_DIR = PROJECT_ROOT / "browser_data" / "cdp_bili_user_data_dir"
+
+# 自动化通道按平台分库：B 站(bili)保持原路径与行为不变，小红书(xhs)独立状态/配额/节奏
+PLATFORMS = ("bili", "xhs")
+
+
+def store_path_for(platform: str) -> Path:
+    if platform == "xhs":
+        return PROJECT_ROOT / "data" / "automation" / "xhs_reply.json"
+    return STORE_PATH
+
+
+def comment_dir_for(platform: str) -> Path:
+    """采集子进程的落盘目录。xhs 单独目录，避免与 bili 的 jsonl 混写同名文件。"""
+    return XHS_COMMENT_DIR if platform == "xhs" else COMMENT_DIR
+
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": False,
     "keywords": ["AI工具", "AI实测", "AI工作流", "AI编程", "数字人", "一人公司", "独立开发", "超级个体", "AI副业"],
+    # 采集模式：auto=有竞品笔记清单走 detail，否则关键词 search；list/search 可强制
+    "collect_mode": "auto",
+    # 竞品笔记链接清单（小红书 detail 模式要求带 xsec_token 的完整链接）
+    "note_urls": [],
     "collect_interval_hours": 6,
     "max_notes_per_keyword": 20,  # B 站搜索按页 20 条，代码里低于 20 会被抬到 20
     "max_comments_per_video": 100,
@@ -58,6 +81,20 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "llm_screen_threshold": 6,
     "opinion_like_bypass": 50,
     "user_cooldown_days": 14,
+    # 停损：发送撞风控后整条通道暂停的小时数（0=不启用停损）
+    "sender_pause_hours": 24,
+}
+
+# 小红书截流通道的收紧默认值（该账号已被警告过：读发两侧都压到"正常真人"量级）
+XHS_CONFIG_OVERRIDES: dict[str, Any] = {
+    "collect_interval_hours": 24,
+    "max_notes_per_keyword": 10,
+    "max_comments_per_video": 60,
+    "max_new_candidates_per_cycle": 6,
+    "daily_send_limit": 6,
+    "send_interval_seconds": 600,
+    "send_jitter_seconds": 900,
+    "user_cooldown_days": 21,
 }
 
 # ---------------------------------------------------------------------------
@@ -125,6 +162,38 @@ _RE_AI_ENTITY = re.compile(
 # 营销号昵称(卖号/代充/接单工作室——评论再像样也不值得回)
 _RE_SPAM_NICK = re.compile(r"订阅|可开票|低价|代充|出号|回收|接单|工作室|招商|代理")
 
+# ---------------------------------------------------------------------------
+# 小红书出站硬校验（发送侧红线：截流评论绝不能带链接/联系方式/引流话术）
+# ---------------------------------------------------------------------------
+
+_RE_OUTBOUND_LINK = re.compile(
+    r"https?://|www\.|[a-zA-Z0-9-]+\.(com|cn|net|org|io|me|xyz|top)\b|"
+    r"小红书号|抖音号|公众号|视频号|快手号|B站[号名]|知乎号"
+)
+_RE_OUTBOUND_CONTACT = re.compile(
+    r"加\s*[vV薇微❤]|微信号|[vVxX][：:]\s*[a-zA-Z0-9_-]{3,}|"
+    r"[qQ]{1,2}\s*[：: ]\s*\d{5,}|扣扣|企鹅号|飞机号"
+)
+_RE_OUTBOUND_CTA = re.compile(
+    r"私我|私信我|滴滴我|看我主页|主页有|简介有|关注我|带你(做|赚|飞)|收徒|上车|私聊"
+)
+
+
+def xhs_draft_violations(text: str) -> list[str]:
+    """小红书出站草稿硬校验。返回违禁原因列表，空列表=可发。
+
+    批准与发送两处都会调用：这是平台警告/举报的直接诱因，模型写得再好也不放行。
+    """
+    violations: list[str] = []
+    t = str(text or "")
+    if _RE_OUTBOUND_LINK.search(t):
+        violations.append("含链接或站外账号指向")
+    if _RE_OUTBOUND_CONTACT.search(t):
+        violations.append("含联系方式")
+    if _RE_OUTBOUND_CTA.search(t):
+        violations.append("含引流话术")
+    return violations
+
 
 def classify_comment(text: str) -> tuple[str, str]:
     """返回 (状态, 信号标签)。状态：target_a / target_b / excluded。"""
@@ -169,8 +238,9 @@ def classify_comment(text: str) -> tuple[str, str]:
 class AutomationStore:
     """自动化状态：config + 候选队列 + 已处理评论 + 统计。JSON 持久化。"""
 
-    def __init__(self, path: Path = STORE_PATH):
+    def __init__(self, path: Path = STORE_PATH, platform: str = "bili"):
         self.path = path
+        self.platform = platform if platform in PLATFORMS else "bili"
         self.lock = asyncio.Lock()
         self._state: dict[str, Any] = self._load()
 
@@ -183,8 +253,12 @@ class AutomationStore:
                 data = {}
         else:
             data = {}
+        # xhs 通道在通用默认值之上叠加收紧项；已保存的用户配置始终最优先
+        base_config = dict(DEFAULT_CONFIG)
+        if self.platform == "xhs":
+            base_config.update(XHS_CONFIG_OVERRIDES)
         state = {
-            "config": {**DEFAULT_CONFIG, **(data.get("config") or {})},
+            "config": {**base_config, **(data.get("config") or {})},
             "items": data.get("items") or [],
             "processed_comment_ids": set(data.get("processed_comment_ids") or []),
             "stats": data.get("stats")
@@ -234,6 +308,17 @@ class AutomationStore:
                 if isinstance(val, str):
                     val = [k.strip() for k in re.split(r"[，,]", val) if k.strip()]
                 cfg[key] = [str(k) for k in (val or [])][:20]
+        # 竞品笔记清单：字符串按换行/逗号切，必须是带 xsec_token 的完整链接
+        if "note_urls" in partial:
+            val = partial["note_urls"]
+            if isinstance(val, str):
+                val = [u.strip() for u in re.split(r"[\n，,]", val) if u.strip()]
+            cfg["note_urls"] = [str(u).strip() for u in (val or []) if "xiaohongshu.com" in str(u)][:50]
+        # 采集模式：auto（清单优先）/ list（只爬清单）/ search（只关键词）
+        if "collect_mode" in partial:
+            val = str(partial["collect_mode"] or "").strip().lower()
+            if val in ("auto", "list", "search"):
+                cfg["collect_mode"] = val
         for key in (
             "collect_interval_hours", "max_notes_per_keyword", "max_comments_per_video",
             "collect_timeout_minutes", "freshness_a_hours", "freshness_b_hours",
@@ -246,6 +331,12 @@ class AutomationStore:
                     cfg[key] = max(1, int(partial[key]))
                 except (TypeError, ValueError):
                     continue
+        # 停损时长允许 0（=关闭停损），其余数值键保持下限 1
+        if "sender_pause_hours" in partial:
+            try:
+                cfg["sender_pause_hours"] = max(0, int(partial["sender_pause_hours"]))
+            except (TypeError, ValueError):
+                pass
         for key in ("send_window_start", "send_window_end"):
             if key in partial:
                 val = str(partial[key] or "").strip()
@@ -340,6 +431,13 @@ class AutomationStore:
                 raise ValueError(
                     f"草稿与近期已发/已批内容过于相似({score:.0%}),为防账号风控已拦截,请改写后再批"
                 )
+            # 小红书出站硬校验：链接/联系方式/引流话术是封控与举报的直接诱因，批准口拦截
+            if self.platform == "xhs":
+                violations = xhs_draft_violations(final)
+                if violations:
+                    raise ValueError(
+                        f"草稿含小红书通道硬禁内容({'、'.join(violations)})，已拦截：删掉后重新提交"
+                    )
             it["draft"] = final
             it["lint_warnings"] = list(check_reply_style(final))
             if verdict == "warn":
@@ -397,6 +495,15 @@ class AutomationStore:
         s = self._state["sender"]
         if not self._state["config"]["enabled"]:
             return False, "自动化未启用"
+        # 停损暂停：风控类失败后整条通道冷却，到期自动恢复
+        pause_until = s.get("pause_until") or ""
+        if pause_until:
+            try:
+                if datetime.fromisoformat(pause_until) > now:
+                    reason = s.get("pause_reason") or "风控停损"
+                    return False, f"发送暂停中（{reason}，至 {pause_until[5:16]}）"
+            except ValueError:
+                pass
         start = _hm(self._state["config"]["send_window_start"], 9 * 60)
         end = _hm(self._state["config"]["send_window_end"], 22 * 60)
         cur = now.hour * 60 + now.minute
@@ -412,6 +519,21 @@ class AutomationStore:
             except ValueError:
                 pass
         return True, ""
+
+    def pause_sender(self, hours: float, reason: str) -> None:
+        """停损：发送撞风控后暂停整条通道（hours<=0 等价于立即恢复）。"""
+        if hours <= 0:
+            self.clear_pause()
+            return
+        s = self._state["sender"]
+        s["pause_until"] = (datetime.now() + timedelta(hours=hours)).isoformat(timespec="seconds")
+        s["pause_reason"] = str(reason)[:120]
+        self.save()
+
+    def clear_pause(self) -> None:
+        self._state["sender"].pop("pause_until", None)
+        self._state["sender"].pop("pause_reason", None)
+        self.save()
 
     def mark_sending(self, item: dict[str, Any]) -> None:
         item["status"] = "sending"
@@ -478,6 +600,7 @@ def build_candidates(
     config: dict[str, Any],
     processed_ids: set[str],
     now: Optional[datetime] = None,
+    platform: str = "bili",
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """从采集行里筛出候选。返回 (候选列表, 漏斗统计)。"""
     now = now or datetime.now()
@@ -574,6 +697,9 @@ def build_candidates(
                 "video_id": vid,
                 "video_title": str(video.get("title") or "")[:80],
                 "video_url": str(video.get("video_url") or ""),
+                # 小红书受控回复用：带 xsec_token 的完整评论直链（直链无 token 会 404）
+                "comment_url": str(row.get("comment_url") or ""),
+                "platform": platform,
                 "commenter": nickname,
                 "commenter_id": commenter_id,
                 "comment_text": text[:500],
@@ -862,15 +988,28 @@ _HELP_STRUCTURES = [
 
 
 def _system_prompt_for(item: dict[str, Any]) -> str:
-    return (
+    base = (
         BILI_ENGAGE_SYSTEM_PROMPT
         if item.get("lane") == "engage"
         else BILI_AUTO_SYSTEM_PROMPT
     )
+    if item.get("platform") == "xhs":
+        return base + XHS_PROMPT_ADDENDUM
+    return base
+
+
+# 小红书平台补充规则：语气/篇幅适配 + 平台红线（拼接在 B 站基础 prompt 之后）
+XHS_PROMPT_ADDENDUM = """
+
+小红书补充规则（这是小红书评论区，不是B站）：
+- 语气比B站更生活化一点，可用一两个 emoji（不堆砌），不写B站梗
+- 篇幅更短：30-80 字优先；对方问什么答什么，别铺教程长文
+- 红线：绝不出现链接、任何平台账号名、联系方式、「看我主页/私信我」式引流——这是小红书封控主因，比语气问题严重得多"""
 
 
 def _llm_user_message(item: dict[str, Any]) -> str:
     payload = {
+        "平台": "小红书" if item.get("platform") == "xhs" else "B站",
         "回复类型": "帮助型(给全答案)" if item.get("lane", "help") == "help" else "互动型(自然接话)",
         "对方评论": item["comment_text"],
         "视频标题": item["video_title"],
@@ -994,7 +1133,7 @@ async def draft_with_llm(item: dict[str, Any]) -> str:
 # 采集子进程 + 数据读取
 # ---------------------------------------------------------------------------
 
-def build_collect_command(config: dict[str, Any]) -> list[str]:
+def build_collect_command(config: dict[str, Any], platform: str = "bili") -> list[str]:
     keywords = ",".join(config.get("keywords") or [])
     # 子评论开关从采集器全局配置读(P1-4 打开;曾因硬编码 false 导致始终不采)
     try:
@@ -1003,6 +1142,31 @@ def build_collect_command(config: dict[str, Any]) -> list[str]:
         sub_comment = str(bool(_crawler_cfg.ENABLE_GET_SUB_COMMENTS)).lower()
     except Exception:  # noqa: BLE001
         sub_comment = "false"
+    if platform == "xhs":
+        # 小红书：Cookie 登录（取自 CDP 浏览器，经 VC_CRAWLER_COOKIES 注入子进程）
+        # 目标源两种：竞品笔记清单（detail，读请求最少）或关键词搜索（search，发现新爆笔记）
+        note_urls = [str(u).strip() for u in (config.get("note_urls") or []) if str(u).strip()]
+        mode = str(config.get("collect_mode") or "auto")
+        use_list = bool(note_urls) and mode in ("auto", "list")
+        cmd = [
+            "uv", "run", "python", "main.py",
+            "--platform", "xhs",
+            "--lt", "cookie",
+            "--type", "detail" if use_list else "search",
+            "--crawler_max_notes_count", str(config.get("max_notes_per_keyword", 10)),
+            "--max_comments_count_singlenotes", str(config.get("max_comments_per_video", 60)),
+            "--get_comment", "true",
+            "--get_sub_comment", sub_comment,
+            "--save_data_option", "jsonl",
+            "--save_data_path", str(comment_dir_for("xhs").relative_to(PROJECT_ROOT)),
+            "--split_by_video", "false",
+            "--headless", "false",
+        ]
+        if use_list:
+            cmd.extend(["--specified_id", ",".join(note_urls)])
+        else:
+            cmd.extend(["--keywords", keywords])
+        return cmd
     return [
         "uv", "run", "python", "main.py",
         "--platform", "bili",
@@ -1019,8 +1183,60 @@ def build_collect_command(config: dict[str, Any]) -> list[str]:
     ]
 
 
-def read_collected(comment_dir: Path = COMMENT_DIR) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
-    """读自动化目录下全部 contents/comments jsonl（跨周期追加，靠 comment_id 去重）。"""
+def _normalize_ts(value: Any) -> int:
+    """评论时间归一成秒级 int；无法解析返回 0。容忍 int 秒/int 毫秒/常见日期串。"""
+    try:
+        if isinstance(value, (int, float)):
+            ts = int(value)
+            return ts // 1000 if ts > 10_000_000_000 else ts
+        text = str(value or "").strip()
+        if not text:
+            return 0
+        if text.isdigit():
+            ts = int(text)
+            return ts // 1000 if ts > 10_000_000_000 else ts
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try:
+                return int(datetime.strptime(text, fmt).timestamp())
+            except ValueError:
+                continue
+    except Exception:  # noqa: BLE001
+        pass
+    return 0
+
+
+def _is_xhs_comment_row(row: dict[str, Any]) -> bool:
+    """xhs 存储层的判据：有 note_id 而无 video_id（bili 行恒有 video_id）。"""
+    return bool(row.get("note_id")) and not row.get("video_id")
+
+
+def _normalize_xhs_comment(row: dict[str, Any]) -> dict[str, Any]:
+    out = dict(row)
+    out["video_id"] = str(row.get("note_id") or "")
+    out["create_time"] = _normalize_ts(row.get("create_time"))
+    out["platform"] = "xhs"
+    return out
+
+
+def _normalize_xhs_content(row: dict[str, Any]) -> dict[str, Any]:
+    """xhs 笔记行归一成 bili 形状（video_id/video_url/title），供筛选层无差别消费。"""
+    out = dict(row)
+    out["video_id"] = str(row.get("note_id") or row.get("video_id") or "")
+    out["video_url"] = str(row.get("note_url") or row.get("video_url") or "")
+    if not str(out.get("title") or "").strip():
+        out["title"] = str(row.get("desc") or "")[:80]
+    out["platform"] = "xhs"
+    return out
+
+
+def read_collected(
+    comment_dir: Path = COMMENT_DIR, platform: str = "bili"
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    """读自动化目录下全部 contents/comments jsonl（跨周期追加，靠 comment_id 去重）。
+
+    platform=xhs 时把 xhs 行(note_id/note_url)归一成 bili 形状并只保留 xhs 数据；
+    platform=bili 时跳过混进同一目录的 xhs 行，两条通道互不串数据。
+    """
     video_map: dict[str, dict[str, Any]] = {}
     rows: list[dict[str, Any]] = []
     if not comment_dir.exists():
@@ -1030,6 +1246,12 @@ def read_collected(comment_dir: Path = COMMENT_DIR) -> tuple[list[dict[str, Any]
             for line in path.read_text(encoding="utf-8").splitlines():
                 if line.strip():
                     v = json.loads(line)
+                    if platform == "xhs":
+                        if not (v.get("note_id") or v.get("platform") == "xhs"):
+                            continue
+                        v = _normalize_xhs_content(v)
+                    elif _is_xhs_comment_row(v):
+                        continue
                     video_map[str(v.get("video_id"))] = v
         except (json.JSONDecodeError, OSError):
             continue
@@ -1037,7 +1259,14 @@ def read_collected(comment_dir: Path = COMMENT_DIR) -> tuple[list[dict[str, Any]
         try:
             for line in path.read_text(encoding="utf-8").splitlines():
                 if line.strip():
-                    rows.append(json.loads(line))
+                    row = json.loads(line)
+                    if platform == "xhs":
+                        if not (row.get("note_id") or row.get("platform") == "xhs"):
+                            continue
+                        row = _normalize_xhs_comment(row)
+                    elif _is_xhs_comment_row(row):
+                        continue
+                    rows.append(row)
         except (json.JSONDecodeError, OSError):
             continue
     return rows, video_map
@@ -1064,11 +1293,11 @@ async def screen_collected(
     store.save()
     try:
         if source_dir is not None:
-            rows, video_map = read_collected(source_dir)
+            rows, video_map = read_collected(source_dir, platform=store.platform)
         else:
             # 默认双目录合并(手动批量 data/comments + 自动周期 data/automation/comments),comment_id 去重
-            rows_a, vm_a = read_collected(BULK_COMMENT_DIR)
-            rows_b, vm_b = read_collected(COMMENT_DIR)
+            rows_a, vm_a = read_collected(BULK_COMMENT_DIR, platform=store.platform)
+            rows_b, vm_b = read_collected(comment_dir_for(store.platform), platform=store.platform)
             seen: set[str] = set()
             rows = []
             for r in rows_a + rows_b:
@@ -1090,7 +1319,7 @@ async def screen_collected(
         ]
         cfg["_replied_users"] = dict(store._state.get("replied_users") or {})
         picked, funnel = build_candidates(
-            rows, video_map, cfg, store._state["processed_comment_ids"]
+            rows, video_map, cfg, store._state["processed_comment_ids"], platform=store.platform
         )
         picked, screen_stats = await _refine_candidates(picked, cfg, max_candidates)
         picked = picked[: max(1, int(max_candidates))]
@@ -1129,16 +1358,25 @@ async def screen_collected(
         store.save()
 
 
-async def run_cycle(store: AutomationStore) -> dict[str, Any]:
-    """跑一个完整周期：采集 → 读取 → 筛选 → 起草 → 入队。"""
+async def run_cycle(store: AutomationStore, mode_override: str = "") -> dict[str, Any]:
+    """跑一个完整周期：采集 → 读取 → 筛选 → 起草 → 入队。
+
+    mode_override 可临时切换采集模式（list/search），供"手动补一次关键词扫描"用。
+    """
     if store._state["cycle"].get("running"):
         return {"ok": False, "error": "已有采集周期在运行"}
     store._state["cycle"]["running"] = True
     store._state["cycle"]["last_error"] = ""
     store.save()
     try:
-        cmd = build_collect_command(store.config)
+        cmd_config = dict(store.config)
+        if mode_override in ("list", "search"):
+            cmd_config["collect_mode"] = mode_override
+        cmd = build_collect_command(cmd_config, store.platform)
         env = {**os.environ, "CDP_CONNECT_EXISTING": "0", "PYTHONUNBUFFERED": "1"}
+        if store.platform == "xhs":
+            # 小红书读侧登录态：从本机已登录的 CDP 浏览器取 Cookie 注入子进程
+            env["VC_CRAWLER_COOKIES"] = await _xhs_crawl_cookie()
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=str(PROJECT_ROOT),
@@ -1153,11 +1391,13 @@ async def run_cycle(store: AutomationStore) -> dict[str, Any]:
             proc.kill()
             raise RuntimeError(f"采集超时（>{timeout // 60}分钟），已终止")
 
-        rows, video_map = read_collected()
+        rows, video_map = read_collected(comment_dir_for(store.platform), platform=store.platform)
         cfg = dict(store.config)
         cfg["_items_today"] = [it for it in store.items if it["created_at"].startswith(datetime.now().strftime("%Y-%m-%d"))]
         cfg["_replied_users"] = dict(store._state.get("replied_users") or {})
-        picked, funnel = build_candidates(rows, video_map, cfg, store._state["processed_comment_ids"])
+        picked, funnel = build_candidates(
+            rows, video_map, cfg, store._state["processed_comment_ids"], platform=store.platform
+        )
         quota = int(store.config.get("max_new_candidates_per_cycle", 8))
         picked, screen_stats = await _refine_candidates(picked, cfg, quota)
         picked = picked[:quota]
@@ -1215,8 +1455,24 @@ async def run_cycle(store: AutomationStore) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# B 站 Cookie（发送用）
+# 登录态（B 站 Cookie 缓存 / 小红书 CDP 提取）
 # ---------------------------------------------------------------------------
+
+async def _xhs_crawl_cookie() -> str:
+    """小红书采集子进程的登录态：从本机已登录的 CDP 浏览器提取 Cookie。
+
+    读侧（采集）与发送侧共用同一个浏览器档案，登录一次两边可用。
+    """
+    try:
+        from .xhs_reply_sender import fetch_xhs_cookie
+
+        return await fetch_xhs_cookie()
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            f"小红书登录态不可用：{str(exc)[:160]}。"
+            "请先启动带调试端口的浏览器并登录小红书，再启动采集"
+        ) from exc
+
 
 def _cached_cookie() -> str:
     """返回未过期的缓存 Cookie，无则空串。"""
@@ -1417,6 +1673,9 @@ def _fetch_reply_engagement(cookie: str, oid: str, root: str, rpid: str) -> Opti
 
 async def refresh_sent_engagement(store: "AutomationStore") -> dict[str, Any]:
     """回采全部已发回复的互动:点赞/被回复数/楼中楼预览,写入条目并持久化。"""
+    if store.platform != "bili":
+        # 互动回采走 B 站 API；小红书侧暂无对应接口（发送即验，不额外读平台）
+        return {"ok": False, "updated": 0, "with_activity": [], "error": "互动回采仅支持 B 站通道"}
     cookie = _cached_cookie()
     sent = [it for it in store._state["items"] if it.get("status") == "sent" and it.get("reply_id")]
     updated = 0
@@ -1450,6 +1709,68 @@ async def refresh_sent_engagement(store: "AutomationStore") -> dict[str, Any]:
 # 发送循环
 # ---------------------------------------------------------------------------
 
+async def _sender_tick_xhs(store: AutomationStore, item: dict[str, Any]) -> str:
+    """小红书发送：CDP 浏览器内仿人工回复 + 发送前硬校验 + 风控停损。"""
+    # 发送前二次硬校验（防批准后改草稿/历史遗留条目绕过批准口校验）
+    violations = xhs_draft_violations(item.get("draft") or "")
+    if violations:
+        item["status"] = "pending_review"
+        item.setdefault("lint_warnings", []).append("硬校验拦截：" + "、".join(violations))
+        item["note"] = "发送前硬校验拦截，退回待审"
+        store.save()
+        return f"条目退回待审（{'、'.join(violations)}）"
+    # 带令牌的评论直链是定位评论的唯一可靠途径（直链无 token 会 404）
+    if not str(item.get("comment_url") or "").strip():
+        item["status"] = "pending_review"
+        item["note"] = "缺少带 xsec_token 的评论链接，无法受控回复；请重新采集该笔记"
+        store.save()
+        return "条目退回待审（缺评论直链）"
+    store.mark_sending(item)
+    try:
+        from .xhs_reply_sender import send_xhs_reply
+
+        await asyncio.to_thread(
+            send_xhs_reply,
+            content_id=str(item.get("video_id") or ""),
+            comment_id=str(item.get("comment_id") or ""),
+            message=str(item.get("draft") or ""),
+            url=str(item.get("comment_url") or ""),
+        )
+        store.mark_sent(item, "")
+        store._state["sender"]["last_error"] = ""
+        store.save()
+        if not store.next_approved():
+            if notify_mod.should_notify(
+                store._state["sender"].setdefault("notified", {}), "queue_empty", "队列已清空"
+            ):
+                await notify_mod.notify("小红书发送队列已清空", ["所有已批准回复均已发送完毕"])
+        return f"已发送 → {item.get('commenter', '')}（《{str(item.get('video_title') or '')[:20]}》）"
+    except Exception as exc:  # noqa: BLE001
+        msg = str(exc)
+        store.mark_failed(item, msg)
+        store._state["sender"]["last_error"] = msg[:200]
+        store._state["sender"]["last_error_at"] = datetime.now().isoformat(timespec="seconds")
+        store.save()
+        # 停损：风控/登录类失败 → 暂停整条通道（默认 24h），到期自动恢复。
+        # 被平台处理就停，而不是调参数继续撞——这是与「对抗风控」的本质区别。
+        if any(k in msg for k in ("频繁", "限流", "敏感", "登录", "风控", "验证")):
+            hours = float(store.config.get("sender_pause_hours", 24) or 0)
+            if hours > 0:
+                store.pause_sender(hours, f"发送撞风控：{msg[:80]}")
+            if notify_mod.should_notify(
+                store._state["sender"].setdefault("notified", {}), "risk_pause", msg[:120]
+            ):
+                await notify_mod.notify(
+                    "小红书发送已停损暂停",
+                    [
+                        f"原因:{msg[:160]}",
+                        f"暂停 {hours:g} 小时后自动恢复；可在设置页查看通道状态",
+                        "建议人工确认账号未被限流后再恢复",
+                    ],
+                )
+        return f"发送失败：{msg[:120]}"
+
+
 async def _sender_tick(store: AutomationStore) -> str:
     # 登录窗口开启期间暂停发送:档案浏览器被占用,headless 刷新会撞锁
     if (store._state["sender"].get("login_flow") or {}).get("running"):
@@ -1464,6 +1785,8 @@ async def _sender_tick(store: AutomationStore) -> str:
     item = store.next_approved()
     if not item:
         return "无已批准待发条目"
+    if store.platform == "xhs":
+        return await _sender_tick_xhs(store, item)
     # Cookie 刷新需要独占 cdp_bili 档案，采集周期进行中不动浏览器，只发已缓存的
     cookie_cached = _cached_cookie()
     if not cookie_cached and store._state["cycle"].get("running"):
@@ -1532,48 +1855,51 @@ async def _sender_tick(store: AutomationStore) -> str:
 # 后台任务
 # ---------------------------------------------------------------------------
 
-_store: Optional[AutomationStore] = None
+_stores: dict[str, AutomationStore] = {}
 _tasks: list[asyncio.Task] = []
 
 
-def get_store() -> AutomationStore:
-    global _store
-    if _store is None:
-        _store = AutomationStore()
-    return _store
+def get_store(platform: str = "bili") -> AutomationStore:
+    """按平台取自动化引擎实例（bili 用原 bili_reply.json，xhs 用 xhs_reply.json）。"""
+    platform = platform if platform in PLATFORMS else "bili"
+    if platform not in _stores:
+        _stores[platform] = AutomationStore(path=store_path_for(platform), platform=platform)
+    return _stores[platform]
 
 
 async def automation_loop() -> None:
-    store = get_store()
     while True:
-        try:
-            cfg = store.config
-            # auto_collect:自动化自己定时扫描采集(默认关)。
-            # 2026-10-20 用户定调:先手动批量采集,再从存量数据里筛,效率更高。
-            if cfg.get("enabled") and cfg.get("auto_collect", False) and not store._state["cycle"].get("running"):
-                last = store._state["cycle"].get("last_run_at", "")
-                due = True
-                if last:
-                    try:
-                        elapsed = (datetime.now() - datetime.fromisoformat(last)).total_seconds()
-                        due = elapsed >= float(cfg.get("collect_interval_hours", 6)) * 3600
-                    except ValueError:
-                        due = True
-                if due:
-                    await run_cycle(store)
-        except Exception:  # noqa: BLE001
-            pass
+        for platform in PLATFORMS:
+            try:
+                store = get_store(platform)
+                cfg = store.config
+                # auto_collect:自动化自己定时扫描采集(默认关)。
+                # 2026-10-20 用户定调:先手动批量采集,再从存量数据里筛,效率更高。
+                if cfg.get("enabled") and cfg.get("auto_collect", False) and not store._state["cycle"].get("running"):
+                    last = store._state["cycle"].get("last_run_at", "")
+                    due = True
+                    if last:
+                        try:
+                            elapsed = (datetime.now() - datetime.fromisoformat(last)).total_seconds()
+                            due = elapsed >= float(cfg.get("collect_interval_hours", 6)) * 3600
+                        except ValueError:
+                            due = True
+                    if due:
+                        await run_cycle(store)
+            except Exception:  # noqa: BLE001
+                pass
         await asyncio.sleep(60)
 
 
 async def sender_loop() -> None:
-    store = get_store()
     while True:
-        try:
-            if store.config.get("enabled"):
-                await _sender_tick(store)
-        except Exception:  # noqa: BLE001
-            pass
+        for platform in PLATFORMS:
+            try:
+                store = get_store(platform)
+                if store.config.get("enabled"):
+                    await _sender_tick(store)
+            except Exception:  # noqa: BLE001
+                pass
         await asyncio.sleep(20)
 
 
