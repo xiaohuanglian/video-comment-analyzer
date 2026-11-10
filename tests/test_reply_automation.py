@@ -90,6 +90,34 @@ class TestClassifyComment:
         status, _ = auto.classify_comment("怎么做")
         assert status == "excluded"
 
+    # 2026-11-10 小红书短问句例外:「要钱吗」「什么软件」是截流场景最优质的购买/工具
+    # 意图线索;B 站该长度多为水评,行为不变(默认 platform="bili")
+    def test_xhs_short_question_passes(self):
+        # 带问句线索的短句 → 放行交 LLM 精筛
+        for text in ("要钱吗", "收费？", "免费的吗", "有水印吗", "怎么下载呢"):
+            status, label = auto.classify_comment(text, platform="xhs")
+            assert status in ("target_a", "target_b"), (text, label)
+        # 命中 HOWTO 的短问句照常上 A 档
+        status, label = auto.classify_comment("什么软件？", platform="xhs")
+        assert status == "target_a"
+        # 无问句线索的短水评照常排除
+        status, label = auto.classify_comment("哈哈哈哈", platform="xhs")
+        assert status == "excluded" and label == "太短"
+        # 内容闸对短问句照样生效(渠道类问题仍不碰)
+        status, label = auto.classify_comment("要会员吗", platform="xhs")
+        assert status == "excluded" and label == "使用渠道类"
+
+    def test_bili_short_question_still_excluded(self):
+        # B 站零改动:短问句在 B 站仍按太短排除
+        status, label = auto.classify_comment("要钱吗")
+        assert status == "excluded" and label == "太短"
+        status, _ = auto.classify_comment("怎么做")
+        assert status == "excluded"
+
+    def test_xhs_default_freshness_30_days(self):
+        # 7 天窗口按 B 站节奏设计,曾把小红书 498 条内容过关的目标整层杀掉
+        assert auto.XHS_CONFIG_OVERRIDES["freshness_b_hours"] == 720
+
     # 2026-10-13 真实数据回归(2026-10-23 双通道模型重审):
     # 观点评论分两类——AI 相关有实质内容的观点是互动对象(target_c,交 LLM 精筛判 engage);
     # 纯修辞/抒情/引流仍是噪声。

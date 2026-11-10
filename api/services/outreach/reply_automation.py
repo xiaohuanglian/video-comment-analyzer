@@ -85,12 +85,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "sender_pause_hours": 24,
 }
 
-# 小红书截流通道的收紧默认值（该账号已被警告过：读发两侧都压到"正常真人"量级）
+# 小红书截流通道的收紧默认值（该账号曾被警告：读发两侧都压到"正常真人"量级）。
+# freshness_b_hours 放宽到 720(30天,2026-11-10 实测):B 站默认 168h 是按其评论区节奏
+# 设计的;小红书关键词搜出的笔记偏老(超龄组中位 164 天),但回复通知照样触达评论者,
+# 7 天窗口曾把 498 条内容过关的目标整层杀掉。已保存的用户配置始终优先于此默认。
 XHS_CONFIG_OVERRIDES: dict[str, Any] = {
     "collect_interval_hours": 24,
     "max_notes_per_keyword": 10,
     "max_comments_per_video": 60,
     "max_new_candidates_per_cycle": 6,
+    "freshness_b_hours": 720,
     "daily_send_limit": 6,
     "send_interval_seconds": 600,
     "send_jitter_seconds": 900,
@@ -195,10 +199,14 @@ def xhs_draft_violations(text: str) -> list[str]:
     return violations
 
 
-def classify_comment(text: str) -> tuple[str, str]:
+def classify_comment(text: str, platform: str = "bili") -> tuple[str, str]:
     """返回 (状态, 信号标签)。状态：target_a / target_b / excluded。"""
     text = (text or "").strip()
-    if len(text) < 8:
+    is_short = len(text) < 8
+    # 小红书短问句例外(2026-11-10 实测):「要钱吗」「什么软件」是截流场景最优质的
+    # 购买/工具意图线索,且短问句是小红书评论常态;B 站该长度多为「哈哈哈哈」式
+    # 水评,维持排除。放行的短问句仍要过下方垃圾/渠道/报错等内容闸,再交 LLM 精筛。
+    if is_short and not (platform == "xhs" and _RE_QUESTION_CUE.search(text)):
         return "excluded", "太短"
     for pat, label in (
         (_RE_SPAM, "垃圾广告"),
@@ -228,6 +236,9 @@ def classify_comment(text: str) -> tuple[str, str]:
     if len(text) >= 12 and _RE_AI_ENTITY.search(text):
         # C 档:AI 相关且有实质内容的观点/体验/讨论——不求助也值得互动接话
         return "target_c", "AI相关观点/讨论"
+    if is_short and platform == "xhs":
+        # 走到这里 = xhs 短问句且未撞任何内容闸(HOWTO/新手类已在前面上档)
+        return "target_b", "短疑问(购买/工具线索)"
     return "excluded", "无提问"
 
 
@@ -660,7 +671,7 @@ def build_candidates(
                 funnel["replied_user"] += 1
                 continue  # 冷却期内已回过的人,不重复回复
         text = str(row.get("content") or "").strip()
-        status, signal = classify_comment(text)
+        status, signal = classify_comment(text, platform=platform)
         if status == "excluded" and signal == "无提问":
             # 高赞观点旁路(2026-10-27):语料库本身来自AI关键词采集,视频语境即AI域;
             # 评论没写"AI"两个字≠不在谈AI(实测546条≥50赞实质观点被实体词门槛埋掉)。
