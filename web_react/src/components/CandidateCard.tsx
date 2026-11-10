@@ -18,6 +18,11 @@ export default function CandidateCard({
   onHumanTouch?: (c: AutomationCandidate) => Promise<void> | void
 }) {
   const hasDraft = !!(c.draft || '').trim()
+  // 小红书条目:手动回复入口用带 xsec_token 的评论直链(B站的 #reply 锚点对小红书无效)
+  const isXhs = c.platform === 'xhs'
+  const manualReplyUrl = isXhs
+    ? c.comment_url || c.video_url
+    : `${c.video_url}#reply${c.comment_id}`
   return (
     <div
       role="button"
@@ -86,7 +91,7 @@ export default function CandidateCard({
         {c.status === 'sent' && c.reply_like_count !== undefined && (
           <span
             className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-600"
-            title={c.engagement_note || `B站实时互动(更新于 ${c.engagement_at?.slice(5, 16) ?? ''})`}
+            title={c.engagement_note || `实时互动(更新于 ${c.engagement_at?.slice(5, 16) ?? ''})`}
           >
             回👍{c.reply_like_count} · 被回{c.reply_rcount}
           </span>
@@ -142,13 +147,17 @@ export default function CandidateCard({
             </button>
           )}
           <a
-            href={`${c.video_url}#reply${c.comment_id}`}
+            href={manualReplyUrl}
             target="_blank"
             rel="noreferrer"
-            title="打开这条评论在B站的位置,自己手动回复"
+            title={
+              isXhs
+                ? '打开这条评论在小红书的位置,自己手动回复'
+                : '打开这条评论在B站的位置,自己手动回复'
+            }
             className="rounded-lg border border-stone-200 px-2.5 py-1 text-xs text-stone-500 hover:border-(--brand) hover:text-(--brand)"
           >
-            去B站回 ↗
+            {isXhs ? '去小红书回 ↗' : '去B站回 ↗'}
           </a>
           {onHumanTouch && hasDraft && (
             <button
