@@ -38,6 +38,15 @@ class ConfigUpdate(BaseModel):
     send_window_start: Optional[str] = None
     send_window_end: Optional[str] = None
     sender_pause_hours: Optional[int] = None
+    # 热评通道（根评论）：开关、每周期配额、竞争判定阈值
+    hot_comment_enabled: Optional[bool] = None
+    hot_comment_max_per_cycle: Optional[int] = None
+    hot_comment_min_play: Optional[int] = None
+    hot_comment_cold_comments: Optional[int] = None
+    hot_comment_crowd_multiple: Optional[float] = None
+    hot_comment_crowd_floor: Optional[int] = None
+    hot_comment_open_ratio: Optional[float] = None
+    hot_comment_min_sample: Optional[int] = None
 
 
 def _store(platform: str = "bili") -> auto.AutomationStore:

@@ -1578,3 +1578,319 @@ class TestStoreRegistry:
         assert "VC_CRAWLER_COOKIES" not in bili_env
         assert xhs_env["CDP_CONNECT_EXISTING"] == "1"
         assert xhs_env["VC_CRAWLER_COOKIES"] == "web_session=abc"
+
+
+# ---------------------------------------------------------------------------
+# 根评论通道：发送走 root/parent=0，非 B 站明确拒绝
+# ---------------------------------------------------------------------------
+
+class TestHotCommentSend:
+    """热评条目（action="hot_comment"）的发送路径。
+
+    根评论与楼中楼回复的差别全在 B 站接口的 root/parent 两个参数：
+    根评论两个都是 "0"，回复则都是被回复评论的 id。发错了对象比不发更糟，
+    所以这里逐字断言请求体。
+    """
+
+    def _bili_store(self, tmp_path):
+        store = auto.AutomationStore(path=tmp_path / "bili.json", platform="bili")
+        store.update_config({
+            "enabled": True, "send_window_start": "00:00", "send_window_end": "23:59",
+            "daily_send_limit": 5, "sender_pause_hours": 24,
+        })
+        return store
+
+    def _hot_item(self, status="approved"):
+        it = _item("h_v1", status=status, draft="这类工具真正卡人的不是模型,是素材整理那一步")
+        it["action"] = "hot_comment"
+        it["comment_id"] = "0"
+        it["commenter"] = ""
+        it["comment_text"] = ""
+        return it
+
+    def test_root_comment_posts_zero_root_and_parent(self, tmp_path, monkeypatch):
+        store = self._bili_store(tmp_path)
+        item = self._hot_item()
+        store.add_items([item])
+        from api.services.outreach import reply_sender as sender_mod
+
+        seen = {}
+
+        def fake_send(*, content_id, comment_id, message, cookie="", url="", root_id=""):
+            seen.update(content_id=content_id, comment_id=comment_id, root_id=root_id)
+            return "999"
+
+        monkeypatch.setattr(auto, "_cached_cookie", lambda: "SESSDATA=x; bili_jct=y")
+        monkeypatch.setattr(sender_mod, "send_bilibili_reply", fake_send)
+        msg = asyncio.run(auto._sender_tick(store))
+        assert "已发根评论" in msg
+        assert seen["root_id"] == "0"          # 关键：告诉发送器这是根评论
+        assert item["status"] == "sent"
+        assert item["reply_id"] == "999"
+
+    def test_reply_item_keeps_old_root_behavior(self, tmp_path, monkeypatch):
+        store = self._bili_store(tmp_path)
+        item = _item("c1", status="approved")
+        item["action"] = "reply"
+        store.add_items([item])
+        from api.services.outreach import reply_sender as sender_mod
+
+        seen = {}
+
+        def fake_send(*, content_id, comment_id, message, cookie="", url="", root_id=""):
+            seen.update(root_id=root_id, comment_id=comment_id)
+            return "888"
+
+        monkeypatch.setattr(auto, "_cached_cookie", lambda: "SESSDATA=x; bili_jct=y")
+        monkeypatch.setattr(sender_mod, "send_bilibili_reply", fake_send)
+        asyncio.run(auto._sender_tick(store))
+        assert seen["root_id"] == ""            # 空 = 旧行为，root/parent 用 comment_id
+        assert seen["comment_id"] == "c1"
+
+    def test_xhs_refuses_hot_comment_explicitly(self, tmp_path):
+        """小红书走浏览器自动化，必须定位到具体评论才能回——没有根评论能力。
+
+        必须明确退回并说明原因，不能「以回复某条评论的方式」悄悄发出去。
+        """
+        store = auto.AutomationStore(path=tmp_path / "xhs.json", platform="xhs")
+        store.update_config({
+            "enabled": True, "send_window_start": "00:00", "send_window_end": "23:59",
+            "daily_send_limit": 5,
+        })
+        item = self._hot_item()
+        item["platform"] = "xhs"
+        item["video_id"] = "note1"
+        item["comment_url"] = XHS_NOTE_URL
+        store.add_items([item])
+        msg = asyncio.run(auto._sender_tick(store))
+        assert "不支持根评论" in msg
+        assert item["status"] == "pending_review"     # 不消耗配额、不误发
+        assert store._state["sender"].get("sent_today", 0) == 0
+
+
+class TestRootCommentEngagement:
+    """根评论的互动回采：我们发的这条**就是**楼层 root，不在 replies 里。"""
+
+    def test_fetch_engagement_reads_data_root(self, monkeypatch):
+        import httpx
+
+        class _Resp:
+            def json(self):
+                return {
+                    "code": 0,
+                    "data": {
+                        "root": {"rpid": 999, "like": 12, "rcount": 3, "replies": [
+                            {"member": {"uname": "路人甲"}, "content": {"message": "同问"}}
+                        ]},
+                        "replies": [{"rpid": 1000, "like": 0, "rcount": 0}],
+                    },
+                }
+
+        monkeypatch.setattr(httpx, "get", lambda *a, **kw: _Resp())
+        got = auto._fetch_reply_engagement("SESSDATA=x", "v1", "999", "999")
+        assert got is not None
+        assert got["missing"] is False
+        assert got["like"] == 12
+        assert got["rcount"] == 3
+        assert "路人甲" in got["subs"][0]
+
+    def test_refresh_uses_reply_id_as_root_for_hot_items(self, tmp_path, monkeypatch):
+        store = auto.AutomationStore(path=tmp_path / "bili.json", platform="bili")
+        item = _item("h_v1", status="sent")
+        item["action"] = "hot_comment"
+        item["reply_id"] = "999"
+        store.add_items([item])
+
+        calls = []
+
+        def fake_fetch(cookie, oid, root, rpid):
+            calls.append({"oid": oid, "root": root, "rpid": rpid})
+            return {"missing": False, "like": 5, "rcount": 1, "subs": []}
+
+        monkeypatch.setattr(auto, "_cached_cookie", lambda: "SESSDATA=x")
+        monkeypatch.setattr(auto, "_fetch_reply_engagement", fake_fetch)
+        asyncio.run(auto.refresh_sent_engagement(store))
+        # 根评论自己就是 root：root 必须传 reply_id 而不是 comment_id
+        assert calls[0]["root"] == "999"
+        assert calls[0]["rpid"] == "999"
+
+
+class TestBilibiliReplyBody:
+    """直接验证 B 站发评接口的请求体：root/parent 决定挂在哪一层。"""
+
+    def _fake_client(self, monkeypatch):
+        import httpx
+
+        from api.services.outreach import reply_sender as sender_mod
+
+        seen = {}
+
+        class _Resp:
+            def json(self):
+                return {"code": 0, "data": {"rpid": 12345, "rpid_str": "12345"}}
+
+        class _Client:
+            def __init__(self, *a, **kw):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def post(self, url, data=None, headers=None):
+                seen.update(data or {})
+                return _Resp()
+
+        monkeypatch.setattr(httpx, "Client", _Client)
+        return sender_mod, seen
+
+    def test_root_comment_sets_zero(self, monkeypatch):
+        sender_mod, seen = self._fake_client(monkeypatch)
+        rpid = sender_mod.send_bilibili_reply(
+            content_id="117354226779719",
+            comment_id="0",
+            message="这类工具真正卡人的不是模型",
+            cookie="SESSDATA=x; bili_jct=y",
+            root_id="0",
+        )
+        assert rpid == "12345"
+        assert seen["root"] == "0" and seen["parent"] == "0"
+        assert seen["oid"] == 117354226779719
+
+    def test_reply_uses_target_comment(self, monkeypatch):
+        sender_mod, seen = self._fake_client(monkeypatch)
+        sender_mod.send_bilibili_reply(
+            content_id="117354226779719",
+            comment_id="319020996656",
+            message="你说的是哪一步卡住",
+            cookie="SESSDATA=x; bili_jct=y",
+        )
+        assert seen["root"] == "319020996656" and seen["parent"] == "319020996656"
+
+    def test_reply_without_target_comment_still_errors(self, monkeypatch):
+        sender_mod, _ = self._fake_client(monkeypatch)
+        with pytest.raises(sender_mod.ReplySendError, match="缺少目标评论 id"):
+            sender_mod.send_bilibili_reply(
+                content_id="117354226779719", comment_id="", message="x", cookie="SESSDATA=x; bili_jct=y"
+            )
+
+    def test_root_comment_needs_no_target_comment(self, monkeypatch):
+        """发根评论不该被「缺少目标评论 id」拦住。"""
+        sender_mod, seen = self._fake_client(monkeypatch)
+        sender_mod.send_bilibili_reply(
+            content_id="117354226779719",
+            comment_id="",
+            message="x",
+            cookie="SESSDATA=x; bili_jct=y",
+            root_id="0",
+        )
+        assert seen["root"] == "0"
+
+    def test_xhs_root_comment_rejected_by_dispatch(self):
+        from api.services.outreach import reply_sender as sender_mod
+
+        assert sender_mod.supports_root_comment("bili") is True
+        assert sender_mod.supports_root_comment("xhs") is False
+        assert sender_mod.supports_root_comment("dy") is False
+        with pytest.raises(sender_mod.ReplySendError, match="暂不支持发根评论"):
+            sender_mod.send_reply(
+                platform="xhs", content_id="n1", comment_id="0", message="x", root_id="0"
+            )
+
+
+class TestQueueCandidatesMergesChannels:
+    """`_queue_candidates` 是两条通道的唯一合流点（原先两处各抄一份流程）。
+
+    - reply 通道：按评论找人
+    - hot_comment 通道：按视频找空位
+
+    两条要能同时入队，并共用每日上限；根评论另有自己的小配额。
+    """
+
+    def _video(self, vid, play=100_000, comments=300):
+        return {
+            "video_id": vid,
+            "title": f"视频{vid}",
+            "video_url": f"https://www.bilibili.com/video/{vid}",
+            "video_play_count": str(play),
+            "video_comment": str(comments),
+            "create_time": int((datetime.now() - timedelta(hours=30)).timestamp()),
+        }
+
+    def _quiet_roots(self, vid, n=6):
+        """把评论区的"采样"填够：不足 hot_comment_min_sample 条会判 unknown_coverage。
+
+        这些行本身是没人问事的普通评论（回复通道不会选它们），只用来让
+        根评论通道能看到「这个视频的热评有多热」。
+        """
+        return [_row(f"{vid}-pad{i}", "说到点子上了", vid=vid, hours=20, likes=i % 2) for i in range(n)]
+
+    def _store(self, tmp_path, **cfg):
+        store = auto.AutomationStore(path=tmp_path / "bili.json", platform="bili")
+        store.update_config({
+            # llm_screen 关掉：这些测试验的是通道合流，不该真去调模型网关
+            "enabled": True, "llm_screen": False,
+            "send_window_start": "00:00", "send_window_end": "23:59",
+            **cfg,
+        })
+        return store
+
+    def test_both_channels_queue(self, tmp_path, monkeypatch):
+        async def fake_draft(item):
+            return "这类工具真正卡人的不是模型"
+
+        monkeypatch.setattr(auto, "draft_with_llm", fake_draft)
+        store = self._store(tmp_path, max_new_candidates_per_cycle=4, hot_comment_max_per_cycle=1)
+        rows = self._quiet_roots("v1") + [_row("c1", "请问这种动画用什么软件做的呀", vid="v1", hours=10)]
+        video_map = {
+            "v1": self._video("v1", play=100_000, comments=300),   # 热评空位 → 根评论
+            "v2": self._video("v2", play=100_000, comments=300),
+        }
+        out = asyncio.run(auto._queue_candidates(store, rows, video_map, max_candidates=4, auto_draft=True))
+        actions = sorted(it["action"] for it in store.items)
+        assert actions == ["hot_comment", "reply"]
+        assert out["new_candidates"] == 2
+        assert out["hot_funnel"]["hot_candidates"] == 1
+        # 根评论配额 1，剩余额度留给回复通道
+        assert out["funnel"]["candidates"] >= 1
+
+    def test_hot_channel_respects_own_quota(self, tmp_path, monkeypatch):
+        async def fake_draft(item):
+            return "草稿内容"
+
+        monkeypatch.setattr(auto, "draft_with_llm", fake_draft)
+        store = self._store(tmp_path, max_new_candidates_per_cycle=10, hot_comment_max_per_cycle=2)
+        video_map = {f"v{i}": self._video(f"v{i}") for i in range(6)}
+        rows = [r for i in range(6) for r in self._quiet_roots(f"v{i}")]
+        out = asyncio.run(auto._queue_candidates(store, rows, video_map, max_candidates=10, auto_draft=True))
+        hot = [it for it in store.items if it["action"] == "hot_comment"]
+        assert len(hot) == 2
+        assert out["hot_funnel"]["hot_candidates"] == 2
+
+    def test_hot_channel_can_be_disabled(self, tmp_path, monkeypatch):
+        async def fake_draft(item):
+            return "草稿内容"
+
+        monkeypatch.setattr(auto, "draft_with_llm", fake_draft)
+        store = self._store(tmp_path, hot_comment_enabled=False, max_new_candidates_per_cycle=4)
+        video_map = {"v1": self._video("v1")}
+        out = asyncio.run(
+            auto._queue_candidates(store, self._quiet_roots("v1"), video_map, max_candidates=4, auto_draft=True)
+        )
+        assert out["hot_funnel"]["hot_candidates"] == 0
+        assert not [it for it in store.items if it["action"] == "hot_comment"]
+
+    def test_routes_marked_both_when_same_video(self, tmp_path, monkeypatch):
+        """同一视频既有等待回复的人、又有热评空位 → 两条都做，前端要能看出来。"""
+        async def fake_draft(item):
+            return "草稿内容"
+
+        monkeypatch.setattr(auto, "draft_with_llm", fake_draft)
+        store = self._store(tmp_path, max_new_candidates_per_cycle=4, hot_comment_max_per_cycle=1)
+        rows = self._quiet_roots("v1") + [_row("c1", "请问这种动画用什么软件做的呀", vid="v1", hours=10)]
+        video_map = {"v1": self._video("v1")}
+        asyncio.run(auto._queue_candidates(store, rows, video_map, max_candidates=4, auto_draft=True))
+        routes = {it["video_route"] for it in store.items}
+        assert routes == {"both"}

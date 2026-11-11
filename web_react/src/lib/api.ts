@@ -22,6 +22,12 @@ export interface AutomationCandidate {
   persona?: string
   sub_replies?: string[]
   sub_reply_count?: number
+  /** 这一条要做什么：回复某个具体的人，还是直接发根评论（评在视频下） */
+  action?: 'reply' | 'hot_comment' | string
+  /** 这个视频的策略结论：同一视频既有根评论又有回复时为 both（两条都做） */
+  video_route?: 'reply' | 'hot_comment' | 'both' | string
+  /** 热评竞争强度：cold / open / contested / crowded / too_small */
+  competition?: string
   reply_like_count?: number
   reply_rcount?: number
   engagement_at?: string
@@ -118,6 +124,29 @@ export interface LocalDataBatch {
 export interface LocalDataSummary {
   platforms: Record<string, { comments: number; contents: number; batches: number }>
   batches: LocalDataBatch[]
+}
+
+/** 小红书关键词笔记（只有笔记、没有评论；采集页「笔记列表」用） */
+export interface XhsNoteItem {
+  note_id: string
+  keyword: string
+  title: string
+  author: string
+  note_type: string
+  liked: number
+  collected: number
+  comments: number
+  url: string
+}
+
+export interface XhsNotesResponse {
+  batch: string
+  batches: { batch: string; created_at: string; total: number }[]
+  total: number
+  limit: number
+  offset: number
+  items: XhsNoteItem[]
+  keyword_counts: Record<string, number>
 }
 
 export interface Topic {
@@ -802,6 +831,16 @@ export const api = {
   crawlerLogs: (limit = 30) =>
     req<{ logs: CrawlerLog[] }>(`/crawler/logs?limit=${limit}`),
   crawlerLocalData: () => req<LocalDataSummary>('/crawler/local-data'),
+  xhsNotes: (params: { batch?: string; q?: string; sort?: string; limit?: number; offset?: number } = {}) => {
+    const qs = new URLSearchParams()
+    if (params.batch) qs.set('batch', params.batch)
+    if (params.q) qs.set('q', params.q)
+    if (params.sort) qs.set('sort', params.sort)
+    if (params.limit != null) qs.set('limit', String(params.limit))
+    if (params.offset != null) qs.set('offset', String(params.offset))
+    const tail = qs.toString()
+    return req<XhsNotesResponse>(tail ? `/crawler/xhs-notes?${tail}` : '/crawler/xhs-notes')
+  },
 
   topicsList: () => req<Topic[]>('/topics/list'),
   topicBoard: () => req<TopicBoard>('/topics/board'),

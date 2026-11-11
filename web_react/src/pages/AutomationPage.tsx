@@ -465,8 +465,13 @@ function Drawer({
 
   if (!c) return null
   const warnings = c.lint_warnings ?? []
+  const isHot = c.action === 'hot_comment'
   const isXhs = platform === 'xhs' || c.platform === 'xhs'
-  const manualReplyUrl = isXhs ? c.comment_url || c.video_url : `${c.video_url}#reply${c.comment_id}`
+  const manualReplyUrl = isXhs
+    ? c.comment_url || c.video_url
+    : isHot
+      ? c.video_url
+      : `${c.video_url}#reply${c.comment_id}`
 
   const approve = async () => {
     setBusy(true)
@@ -486,7 +491,9 @@ function Drawer({
         <Dialog.Overlay className="fixed inset-0 bg-black/20" />
         <Dialog.Content className="fixed right-0 top-0 h-full w-[480px] max-w-[90vw] bg-white shadow-xl flex flex-col outline-none">
           <div className="flex items-center justify-between border-b border-stone-100 px-5 py-3.5">
-            <Dialog.Title className="text-sm font-semibold">审批回复草稿</Dialog.Title>
+            <Dialog.Title className="text-sm font-semibold">
+              {isHot ? '审批根评论草稿' : '审批回复草稿'}
+            </Dialog.Title>
             <Dialog.Close className="text-stone-400 hover:text-stone-600">
               <X size={16} />
             </Dialog.Close>
@@ -508,21 +515,49 @@ function Drawer({
                   href={manualReplyUrl}
                   target="_blank"
                   rel="noreferrer"
-                  title={isXhs ? '打开这条评论在小红书的位置,自己手动回复' : '打开这条评论在B站的位置,自己手动回复'}
+                  title={
+                    isHot
+                      ? '打开这条视频,自己手动发一条根评论'
+                      : isXhs
+                        ? '打开这条评论在小红书的位置,自己手动回复'
+                        : '打开这条评论在B站的位置,自己手动回复'
+                  }
                   className="shrink-0 rounded-lg border border-stone-200 px-2 py-0.5 text-xs text-stone-500 hover:border-(--brand) hover:text-(--brand)"
                 >
-                  {isXhs ? '去小红书回复 ↗' : '去B站回复 ↗'}
+                  {isHot ? '去视频下评论 ↗' : isXhs ? '去小红书回复 ↗' : '去B站回复 ↗'}
                 </a>
               </div>
             </section>
-            <section>
-              <div className="text-xs text-stone-400 mb-1">
-                评论 · {c.commenter} · 👍{c.like_count} · {c.signal}
-              </div>
-              <p className="rounded-xl bg-stone-50 px-3.5 py-2.5 text-sm text-stone-700 whitespace-pre-wrap">
-                {c.comment_text}
-              </p>
-            </section>
+            {isHot ? (
+              <section>
+                <div className="text-xs text-stone-400 mb-1">
+                  根评论 · 直接评在视频下 · {c.signal}
+                </div>
+                <p className="rounded-xl bg-rose-50 px-3.5 py-2.5 text-xs leading-relaxed text-stone-600">
+                  这条发出去<b>没有通知</b>,和已有热评一起按赞数排序——赢了才有公域曝光,
+                  输了就是沉底。所以文案要有别人没说的那一面。
+                </p>
+                {c.sub_replies && c.sub_replies.length > 0 && (
+                  <div className="mt-2 rounded-xl bg-stone-50 px-3.5 py-2.5">
+                    <div className="text-xs text-stone-400">评论区已有热评(起草时要求绕开)</div>
+                    <ul className="mt-1 space-y-1 text-xs text-stone-600">
+                      {c.sub_replies.map((t, i) => (
+                        <li key={i}>· {t}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </section>
+            ) : (
+              <section>
+                <div className="text-xs text-stone-400 mb-1">
+                  评论 · {c.commenter} · 👍{c.like_count} · {c.signal}
+                </div>
+                <p className="rounded-xl bg-stone-50 px-3.5 py-2.5 text-sm text-stone-700 whitespace-pre-wrap">
+                  {c.comment_text}
+                </p>
+              </section>
+            )}
             <section>
               <div className="mb-1 flex items-center justify-between">
                 <div className="text-xs text-stone-400">

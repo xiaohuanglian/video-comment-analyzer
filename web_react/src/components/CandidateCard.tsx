@@ -2,6 +2,16 @@ import type { AutomationCandidate } from '../lib/api'
 import clsx from 'clsx'
 import { CheckCircle2, XCircle } from 'lucide-react'
 
+/** 热评竞争判定 → 人话。判定依据见 api/services/outreach/hot_comment.py。 */
+const COMPETITION_LABEL: Record<string, string> = {
+  cold: '评论区冷清,容易占位',
+  open: '还有空位',
+  contested: '有人抢但没坐稳',
+  crowded: '已被热评占住',
+  too_small: '播放太少,没人看',
+  unknown_coverage: '只采到几条评论,看不出真实热评',
+}
+
 export default function CandidateCard({
   c,
   compact = false,
@@ -18,11 +28,15 @@ export default function CandidateCard({
   onHumanTouch?: (c: AutomationCandidate) => Promise<void> | void
 }) {
   const hasDraft = !!(c.draft || '').trim()
+  // 热评条目没有目标评论(comment_id 是 "0"),手动入口只能开到视频本身
+  const isHot = c.action === 'hot_comment'
   // 小红书条目:手动回复入口用带 xsec_token 的评论直链(B站的 #reply 锚点对小红书无效)
   const isXhs = c.platform === 'xhs'
   const manualReplyUrl = isXhs
     ? c.comment_url || c.video_url
-    : `${c.video_url}#reply${c.comment_id}`
+    : isHot
+      ? c.video_url
+      : `${c.video_url}#reply${c.comment_id}`
   return (
     <div
       role="button"
@@ -47,6 +61,32 @@ export default function CandidateCard({
           <span className="rounded bg-sky-100 px-1.5 py-0.5 font-medium text-sky-700">互动</span>
         ) : (
           <span className="rounded bg-orange-100 px-1.5 py-0.5 font-medium text-(--brand)">帮助</span>
+        )}
+        {isHot ? (
+          <span
+            className="rounded bg-rose-100 px-1.5 py-0.5 font-medium text-rose-700"
+            title={
+              `根评论:直接评在视频下,争公域曝光(和已有热评比赞数排序),没有通知` +
+              (c.competition ? ` · 竞争判定:${COMPETITION_LABEL[c.competition] || c.competition}` : '')
+            }
+          >
+            根评论
+          </span>
+        ) : (
+          <span
+            className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-600"
+            title="回复:平台会给被回复的人发通知,触达确定,但只在这条评论的楼里可见"
+          >
+            回复
+          </span>
+        )}
+        {c.video_route === 'both' && (
+          <span
+            className="rounded bg-violet-100 px-1.5 py-0.5 font-medium text-violet-700"
+            title="这个视频值得两条都做:评论区有人在问事(该回),同时热评还没占住位置(该发根评论)"
+          >
+            两条都做
+          </span>
         )}
         {typeof c.worth === 'number' && c.worth > 0 && (
           <span
@@ -107,9 +147,28 @@ export default function CandidateCard({
         <span className="truncate">{c.video_title}</span>
         <span className="ml-auto shrink-0">👍 {c.like_count}</span>
       </div>
-      <p className={clsx('mt-1 text-xs text-stone-600', compact && 'line-clamp-2')}>
-        <span className="text-stone-400">{c.commenter}:</span> {c.comment_text}
-      </p>
+      {isHot ? (
+        <div className="mt-1 text-xs text-stone-600">
+          {c.sub_replies && c.sub_replies.length > 0 ? (
+            <>
+              <span className="text-stone-400">已有热评(起草要绕开):</span>
+              <ul className="mt-0.5 space-y-0.5">
+                {c.sub_replies.slice(0, 3).map((t, i) => (
+                  <li key={i} className={clsx('line-clamp-1', compact && i > 0 && 'hidden')}>
+                    · {t}
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <span className="text-stone-400">评论区还没有像样的热评,第一条就是位置</span>
+          )}
+        </div>
+      ) : (
+        <p className={clsx('mt-1 text-xs text-stone-600', compact && 'line-clamp-2')}>
+          <span className="text-stone-400">{c.commenter}:</span> {c.comment_text}
+        </p>
+      )}
       {c.match_reason && (
         <p className="mt-1 flex items-start gap-1 text-xs text-stone-400">
           <span className="shrink-0">✧</span>
@@ -151,13 +210,15 @@ export default function CandidateCard({
             target="_blank"
             rel="noreferrer"
             title={
-              isXhs
-                ? '打开这条评论在小红书的位置,自己手动回复'
-                : '打开这条评论在B站的位置,自己手动回复'
+              isHot
+                ? '打开这条视频,自己手动发一条根评论'
+                : isXhs
+                  ? '打开这条评论在小红书的位置,自己手动回复'
+                  : '打开这条评论在B站的位置,自己手动回复'
             }
             className="rounded-lg border border-stone-200 px-2.5 py-1 text-xs text-stone-500 hover:border-(--brand) hover:text-(--brand)"
           >
-            {isXhs ? '去小红书回 ↗' : '去B站回 ↗'}
+            {isHot ? '去视频下评论 ↗' : isXhs ? '去小红书回 ↗' : '去B站回 ↗'}
           </a>
           {onHumanTouch && hasDraft && (
             <button

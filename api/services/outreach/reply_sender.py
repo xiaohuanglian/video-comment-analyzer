@@ -97,17 +97,39 @@ def _resolve_bilibili_aid(client: httpx.Client, content_id: str, headers: dict) 
     return int(aid)
 
 
-def send_bilibili_reply(*, content_id: str, comment_id: str, message: str, cookie: str = "", url: str = "") -> str:
-    """Post a public reply and return the platform reply id (if any)."""
+def send_bilibili_reply(
+    *,
+    content_id: str,
+    comment_id: str,
+    message: str,
+    cookie: str = "",
+    url: str = "",
+    root_id: str = "",
+) -> str:
+    """Post a public reply and return the platform reply id (if any).
+
+    `root_id` 决定这条评论挂在哪儿：
+    - 空（默认，旧行为）：回复 `comment_id` 指的那条评论，挂在它的楼里
+    - `"0"`：发**根评论**，直接评在视频下，没有目标评论（`comment_id` 可空）
+
+    B 站接口用 `root`/`parent` 两个字段表示层级：根评论两个都是 0。发根评论后
+    返回的 rpid 就是这条根评论自己的 id，回采时 root/rpid 都指向它。
+    """
     cookie = cookie or _cookie_string()
     if not cookie:
         raise ReplySendError("未配置 B 站登录 Cookie（设置环境变量 VCA_OUTREACH_COOKIE）")
     csrf = _csrf_from_cookie(cookie)
     if not csrf:
         raise ReplySendError("B 站 Cookie 缺少 bili_jct，无法发送")
+    root_id = str(root_id or "").strip()
     comment_id = str(comment_id or "").strip()
-    if not comment_id:
-        raise ReplySendError("缺少目标评论 id，无法回复")
+    if root_id == "0":
+        # 根评论：没有目标评论，root/parent 都是 0
+        root = parent = "0"
+    else:
+        if not comment_id:
+            raise ReplySendError("缺少目标评论 id，无法回复")
+        root = parent = comment_id
 
     with httpx.Client(timeout=20.0, follow_redirects=True) as client:
         aid = _resolve_bilibili_aid(client, content_id, _headers(cookie))
@@ -118,8 +140,8 @@ def send_bilibili_reply(*, content_id: str, comment_id: str, message: str, cooki
                 "oid": aid,
                 "type": 1,
                 "message": message,
-                "root": comment_id,
-                "parent": comment_id,
+                "root": root,
+                "parent": parent,
                 "csrf": csrf,
             },
             headers=_headers(cookie, referer),
@@ -161,6 +183,17 @@ def platform_capability(platform: str) -> bool:
     return (platform or "").strip().lower() in _SENDERS
 
 
+def supports_root_comment(platform: str) -> bool:
+    """该平台能否直接发根评论（评在视频/笔记下，而不是回复某条评论）。
+
+    目前只有 B 站：一个 POST 就能指定 root/parent=0。小红书与抖音走浏览器
+    自动化，必须先在评论区滚动定位到**某条具体评论**才能回复，没有「直接
+    评一条」的流程——硬做等于重写两套发送器，且小红书号被警告过，不值得为
+    热评去冒这个风险。调用方必须据此明确拒绝，不能假装成功。
+    """
+    return (platform or "").strip().lower() in ("bili", "bilibili")
+
+
 def send_reply(
     *,
     platform: str,
@@ -169,9 +202,21 @@ def send_reply(
     message: str,
     cookie: Optional[str] = None,
     url: str = "",
+    root_id: str = "",
 ) -> str:
     key = (platform or "").strip().lower()
     sender = _SENDERS.get(key)
     if sender is None:
         raise ReplySendError(f"平台「{platform or '未知'}」暂不支持自动回复，请改为手动复制发送")
+    if str(root_id or "").strip() == "0":
+        if not supports_root_comment(key):
+            raise ReplySendError(f"平台「{platform}」暂不支持发根评论，请改为手动发送")
+        return sender(
+            content_id=content_id,
+            comment_id=comment_id,
+            message=message,
+            cookie=cookie or "",
+            url=url,
+            root_id="0",
+        )
     return sender(content_id=content_id, comment_id=comment_id, message=message, cookie=cookie or "", url=url)

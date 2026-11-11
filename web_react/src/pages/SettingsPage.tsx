@@ -16,6 +16,12 @@ export default function SettingsPage() {
   const [sendWindowEnd, setSendWindowEnd] = useState('22:00')
   const [freshnessA, setFreshnessA] = useState(48)
   const [freshnessB, setFreshnessB] = useState(168)
+  // 根评论（热评）通道：不回复某个人，直接评在视频下争公域曝光。
+  // 与逐条回复是两种动作，各有各的上限——回复触达确定但只一个人看见，
+  // 根评论零通知、全看赞数排序。默认开，配额保守。
+  const [hotEnabled, setHotEnabled] = useState(true)
+  const [hotPerCycle, setHotPerCycle] = useState(2)
+  const [hotMinPlay, setHotMinPlay] = useState(1000)
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
@@ -59,6 +65,9 @@ export default function SettingsPage() {
         setSendWindowEnd(String(c.send_window_end ?? '22:00'))
         setFreshnessA(Number(c.freshness_a_hours ?? 48))
         setFreshnessB(Number(c.freshness_b_hours ?? 168))
+        setHotEnabled(c.hot_comment_enabled !== false)
+        setHotPerCycle(Number(c.hot_comment_max_per_cycle ?? 2))
+        setHotMinPlay(Number(c.hot_comment_min_play ?? 1000))
       })
       .catch(() => {})
   }, [platform])
@@ -110,6 +119,9 @@ export default function SettingsPage() {
         send_window_end: sendWindowEnd,
         freshness_a_hours: freshnessA,
         freshness_b_hours: freshnessB,
+        hot_comment_enabled: hotEnabled,
+        hot_comment_max_per_cycle: hotPerCycle,
+        hot_comment_min_play: hotMinPlay,
       }
       if (platform === 'xhs' || platform === 'dy') {
         patch.note_urls = noteUrlsText.split('\n').map((u) => u.trim()).filter(Boolean)
@@ -123,7 +135,7 @@ export default function SettingsPage() {
     } finally {
       setBusy(false)
     }
-  }, [platform, keywordsText, noteUrlsText, collectMode, dailySendLimit, sendInterval, sendWindowStart, sendWindowEnd, freshnessA, freshnessB])
+  }, [platform, keywordsText, noteUrlsText, collectMode, dailySendLimit, sendInterval, sendWindowStart, sendWindowEnd, freshnessA, freshnessB, hotEnabled, hotPerCycle, hotMinPlay])
 
   const saveModel = async () => {
     setModelBusy('save')
@@ -355,6 +367,27 @@ export default function SettingsPage() {
               onChange={(e) => setSendWindowEnd(e.target.value)}
               className="mt-1 w-full rounded-lg border border-stone-200 px-3 py-2 text-sm outline-none focus:border-(--brand)"
             />
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-stone-200 bg-stone-50/60 px-4 py-3">
+          <label className="flex items-center gap-2 text-sm text-stone-700">
+            <input
+              type="checkbox"
+              checked={hotEnabled}
+              onChange={(e) => setHotEnabled(e.target.checked)}
+              className="h-4 w-4 accent-(--brand)"
+            />
+            同时发根评论（热评通道）
+          </label>
+          <p className="mt-1.5 text-xs leading-relaxed text-stone-500">
+            逐条回复是<b>确定触达一个人</b>（平台会给对方发通知），根评论是<b>零通知</b>、和已有热评一起按赞数排序，
+            赢了才有公域曝光。所以两者不是替代关系：评论区冷清或被热评占住的位置，发一条根评论比回十条更划算。
+            只有 B 站能自动发根评论，小红书/抖音需要你手动发。
+          </p>
+          <div className="mt-3 grid grid-cols-2 gap-4">
+            <NumField label="每轮根评论上限" v={hotPerCycle} set={setHotPerCycle} min={1} max={10} />
+            <NumField label="最低播放量门槛" v={hotMinPlay} set={setHotMinPlay} min={1} max={1000000} />
           </div>
         </div>
 

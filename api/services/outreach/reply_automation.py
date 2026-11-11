@@ -245,6 +245,9 @@ class AutomationStore:
             "max_new_candidates_per_cycle", "max_per_video_per_day", "daily_send_limit",
             "send_interval_seconds", "send_jitter_seconds", "llm_screen_threshold", "user_cooldown_days",
             "opinion_like_bypass",
+            # 热评通道：配额与竞争判定阈值
+            "hot_comment_max_per_cycle", "hot_comment_min_play", "hot_comment_cold_comments",
+            "hot_comment_crowd_floor", "hot_comment_min_sample",
         ):
             if key in partial:
                 try:
@@ -257,12 +260,20 @@ class AutomationStore:
                 cfg["sender_pause_hours"] = max(0, int(partial["sender_pause_hours"]))
             except (TypeError, ValueError):
                 pass
+        # 倍数型阈值是浮点（2.0 / 0.5），塞进上面那张 int 白名单会被 int()
+        # 截断成 2 和 0——0 会让「竞争空白」判定永不成立。单独处理。
+        for key in ("hot_comment_crowd_multiple", "hot_comment_open_ratio"):
+            if key in partial:
+                try:
+                    cfg[key] = max(0.1, float(partial[key]))
+                except (TypeError, ValueError):
+                    continue
         for key in ("send_window_start", "send_window_end"):
             if key in partial:
                 val = str(partial[key] or "").strip()
                 if re.fullmatch(r"\d{1,2}:\d{2}", val):
                     cfg[key] = val
-        for key in ("enabled", "auto_draft", "llm_screen"):
+        for key in ("enabled", "auto_draft", "llm_screen", "hot_comment_enabled"):
             if key in partial:
                 cfg[key] = bool(partial[key])
         self.save()
@@ -630,6 +641,9 @@ def build_candidates(
                 "signal": signal,
                 "tier": tier,
                 "lane": lane,
+                # 动作：这一条要「回复某个人」还是「发根评论」。发送器靠它决定
+                # B 站接口的 root/parent（根评论两个都是 0），别有第二处判断。
+                "action": "reply",
                 "worth": 0,
                 "intent": "",
                 "match_reason": signal,
@@ -984,6 +998,29 @@ BILI_ENGAGE_SYSTEM_PROMPT = """为B站评论区一位具体用户起草公开回
 - 不编造事实；没把握的经验不说
 - 禁"跟我学""带你赚"式卖课腔;禁贩卖焦虑;禁群发味称呼(亲/家人们)"""
 
+# 根评论（直接评在视频下）与「回复某个人」是两种文体：
+# 回复有明确的对话对象，可以接话、可以答问题；根评论面对的是**还没说话的一群人**，
+# 而且它要和已有的热评抢排序。所以这里不写"回应他"，写"补一个别人没说的点"。
+BILI_HOT_SYSTEM_PROMPT = """为一条B站视频写一条公开根评论（只输出正文，30-110中文字）。
+这条评论会直接出现在视频下方，和已有的热评一起按赞数排序。看的人还没说话，你是在替他们补一个角度。
+
+写法:
+- 给一个具体的、可验证的观察或经验,不要泛泛赞同视频。让人看完能说"这条说到点上了"
+- 最好带上视频里没讲到的那个细节/代价/前提——这是能拿到赞的原因
+- 平等口吻,像同行看完随手留一句;不评价UP主水平,不说"讲得真好"
+- 长短句混着写,允许口语词(其实/说白了/后来我直接);一到三句就够
+- 结尾就是最后那个事实或判断,说完停;不总结不升华不喊话
+
+硬禁令：
+- 不出现任何产品名、下载、链接、App、网址、关注我、私信我
+- 不用破折号；冒号只能用来引直接原话
+- 禁"不是…而是…"翻案句式；禁居高临下
+- 禁黑话（赋能/闭环/底层逻辑/码住/建议收藏/值得关注）
+- 禁结尾开放反问(你觉得呢/怎么看),禁求互动式收尾
+- 禁金句收尾(本质上/归根结底/真正的X是Y)
+- 禁套话开场(太真实了/深有同感/说到心坎),禁"前排""沙发"
+- 不编造没做过的经验和不存在的数字;禁"跟我学""带你赚"式卖课腔"""
+
 # persona → 起草策略(识别对方是什么样的人,说针对性的话;beggar/seller 不入起草)
 _PERSONA_TACTICS = {
     "novice_doer": "对方是新手实干者:给全答案+完整路径,步骤化,专业词配大白话",
@@ -1010,11 +1047,13 @@ _HELP_STRUCTURES = [
 
 
 def _system_prompt_for(item: dict[str, Any]) -> str:
-    base = (
-        BILI_ENGAGE_SYSTEM_PROMPT
-        if item.get("lane") == "engage"
-        else BILI_AUTO_SYSTEM_PROMPT
-    )
+    # 根评论是第三种文体：不是回答谁，是给还没说话的观众补一个角度（见 BILI_HOT_SYSTEM_PROMPT）
+    if item.get("action") == "hot_comment":
+        base = BILI_HOT_SYSTEM_PROMPT
+    elif item.get("lane") == "engage":
+        base = BILI_ENGAGE_SYSTEM_PROMPT
+    else:
+        base = BILI_AUTO_SYSTEM_PROMPT
     if item.get("platform") == "xhs":
         return base + XHS_PROMPT_ADDENDUM
     if item.get("platform") == "dy":
@@ -1042,14 +1081,26 @@ DY_PROMPT_ADDENDUM = """
 
 def _llm_user_message(item: dict[str, Any]) -> str:
     _platform_label = {"xhs": "小红书", "dy": "抖音"}.get(item.get("platform"), "B站")
-    payload = {
+    is_hot = item.get("action") == "hot_comment"
+    payload: dict[str, Any] = {
         "平台": _platform_label,
-        "回复类型": "帮助型(给全答案)" if item.get("lane", "help") == "help" else "互动型(自然接话)",
-        "对方评论": item["comment_text"],
+        "回复类型": (
+            "根评论(直接评在视频下,面对还没说话的一群观众)"
+            if is_hot
+            else ("帮助型(给全答案)" if item.get("lane", "help") == "help" else "互动型(自然接话)")
+        ),
         "视频标题": item["video_title"],
         "信号": item.get("intent") or item["signal"],
         "入选理由": item.get("match_reason", ""),
     }
+    if is_hot:
+        # 根评论没有「对方评论」，取而代之的是「已经有人说了什么」——
+        # 重复已有的热评等于白写一条，必须让模型知道要绕开哪些点
+        if item.get("sub_replies"):
+            payload["评论区已有热评"] = item["sub_replies"]
+            payload["写法要求"] = "别重复上面这些已经被说过的话;找它们没提到的那一面"
+    else:
+        payload["对方评论"] = item["comment_text"]
     persona = str(item.get("persona") or "")
     if persona and persona in _PERSONA_TACTICS:
         payload["对方画像"] = persona
@@ -1058,19 +1109,21 @@ def _llm_user_message(item: dict[str, Any]) -> str:
     structures = _HELP_STRUCTURES if item.get("lane", "help") == "help" else _ENGAGE_STRUCTURES
     payload["本条写法"] = structures[hash(str(item.get("id") or "")) % len(structures)]
     # 私域操盘知识库素材(风物执守·XY 原子,仅观点参考,不照抄不提来源)
+    _query = str(item.get("comment_text") or "").strip() or str(item.get("video_title") or "").strip()
     try:
         from api.services import knowledge as kb
 
-        hits = kb.search(item.get("comment_text") or "", k=2, topics=["私域运营", "成交与话术", "流量获取", "IP人设", "内容创作与平台"])
+        hits = kb.search(_query, k=2, topics=["私域运营", "成交与话术", "流量获取", "IP人设", "内容创作与平台"])
         if hits:
             payload["可用素材"] = [h["knowledge"][:120] for h in hits]
             payload["素材用法"] = "只取观点融入自己的话,不照抄原句,不提素材来源"
     except Exception:  # noqa: BLE001
         pass
-    if item.get("sub_replies"):
+    if item.get("sub_replies") and not is_hot:
         payload["评论区已有回复(楼中楼)"] = item["sub_replies"]
         payload["已有回复处理"] = "若已有人答对一部分,给增量或更完整版,不重复原话"
-    return "起草评论区回复：\n" + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    head = "起草视频根评论：" if is_hot else "起草评论区回复："
+    return head + "\n" + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
 # 自动重写触发类(AI味硬伤,命中即重写;冒号/排比等低危格式仅标注不重写)
@@ -1386,6 +1439,99 @@ def read_collected(
 BULK_COMMENT_DIR = PROJECT_ROOT / "data" / "comments"
 
 
+def _hot_busy_videos(store: AutomationStore) -> dict[str, str]:
+    """哪些视频不该再出根评论候选（已经有根评论在队列里/今天发过）。
+
+    根评论是公开表态，同一个视频下一天连发两条非常像刷屏；而且我们的
+    每日上限本来就窄，浪费在同一个视频上不划算。
+    """
+    today = datetime.now().strftime("%Y-%m-%d")
+    busy: dict[str, str] = {}
+    for it in store.items:
+        if it.get("action") != "hot_comment":
+            continue
+        vid = str(it.get("video_id") or "")
+        if not vid:
+            continue
+        status = str(it.get("status") or "")
+        if status in ("pending_review", "approved", "sending"):
+            busy[vid] = status
+        elif status == "sent" and str(it.get("sent_at") or "").startswith(today):
+            busy[vid] = "sent_today"
+    return busy
+
+
+async def _queue_candidates(
+    store: AutomationStore,
+    rows: list[dict[str, Any]],
+    video_map: dict[str, dict[str, Any]],
+    *,
+    max_candidates: int,
+    auto_draft: bool,
+) -> dict[str, Any]:
+    """筛选 → 精筛 → 起草 → 入队。`screen_collected` 与 `run_cycle` 共用这一份。
+
+    原先两处各抄了一遍同样的 30 行，加通道时改一处漏一处是必然的。
+    这里并联两条通道：
+
+    - `build_candidates`：按**评论**找人 → `action="reply"`（确定触达 1 人）
+    - `build_hot_candidates`：按**视频**找空位 → `action="hot_comment"`（争公域曝光）
+
+    两条通道共用每日上限，但根评论另有 `hot_comment_max_per_cycle` 的小配额：
+    根评论风险高于楼中楼回复（公开、永久、对账号权重影响更大），不该占满额度。
+    """
+    from .hot_comment import build_hot_candidates, mark_video_routes
+
+    cfg = dict(store.config)
+    quota = max(1, int(max_candidates))
+    cfg["_items_today"] = [it for it in store.items if str(it.get("created_at", "")).startswith(datetime.now().strftime("%Y-%m-%d"))]
+    cfg["_replied_users"] = dict(store._state.get("replied_users") or {})
+
+    hot_picked, hot_funnel = build_hot_candidates(
+        rows,
+        video_map,
+        cfg,
+        platform=store.platform,
+        busy_videos=_hot_busy_videos(store),
+    )
+    hot_picked = hot_picked[: max(1, int(cfg.get("hot_comment_max_per_cycle", 2)))]
+    reply_quota = max(1, quota - len(hot_picked))
+
+    # 粗筛放大 3 倍给 LLM 精筛挑选，最终仍按 reply_quota 截断
+    cfg["max_new_candidates_per_cycle"] = max(1, min(reply_quota * 3, 150))
+    reply_picked, funnel = build_candidates(
+        rows, video_map, cfg, store._state["processed_comment_ids"], platform=store.platform
+    )
+    reply_picked, screen_stats = await _refine_candidates(reply_picked, cfg, reply_quota)
+    reply_picked = reply_picked[:reply_quota]
+
+    # 根评论候选**不走** LLM 精筛：那套 prompt 判的是「这个人值不值得回」，
+    # 根评论没有具体的人；它该不该发已经在 assess_video_competition 里按
+    # 播放档/竞争强度判过了。草稿质量由起草 prompt 与人审把关。
+    routes = mark_video_routes(hot_picked + reply_picked)
+    picked = hot_picked + reply_picked
+
+    drafted = 0
+    if auto_draft:
+        for item in picked:
+            draft = await draft_with_llm(item)
+            if draft:
+                item["draft"] = draft
+                item["lint_warnings"] = check_reply_style(draft)
+                item["draft_source"] = "llm"
+                drafted += 1
+
+    added = store.add_items(picked)
+    return {
+        "funnel": funnel,
+        "hot_funnel": hot_funnel,
+        "routes": routes,
+        "llm_screen": screen_stats,
+        "new_candidates": added,
+        "llm_drafted": drafted,
+    }
+
+
 async def screen_collected(
     store: AutomationStore,
     max_candidates: int = 50,
@@ -1421,40 +1567,15 @@ async def screen_collected(
             video_map = {**vm_a, **vm_b}
         if not rows:
             return {"ok": False, "error": "两个采集目录都没有数据,先去「评论采集」面板爬一批"}
-        cfg = dict(store.config)
-        # 粗筛放大 3 倍(封顶 36)给 LLM 精筛挑选,最终仍按 max_candidates 截断
-        cfg["max_new_candidates_per_cycle"] = max(1, min(int(max_candidates) * 3, 150))
-        today = datetime.now().strftime("%Y-%m-%d")
-        cfg["_items_today"] = [
-            it for it in store.items if str(it.get("created_at", "")).startswith(today)
-        ]
-        cfg["_replied_users"] = dict(store._state.get("replied_users") or {})
-        picked, funnel = build_candidates(
-            rows, video_map, cfg, store._state["processed_comment_ids"], platform=store.platform
+        queued = await _queue_candidates(
+            store, rows, video_map, max_candidates=max_candidates, auto_draft=auto_draft
         )
-        picked, screen_stats = await _refine_candidates(picked, cfg, max_candidates)
-        picked = picked[: max(1, int(max_candidates))]
-
-        drafted = 0
-        if auto_draft:
-            for item in picked:
-                draft = await draft_with_llm(item)
-                if draft:
-                    item["draft"] = draft
-                    item["lint_warnings"] = check_reply_style(draft)
-                    item["draft_source"] = "llm"
-                    drafted += 1
-
-        added = store.add_items(picked)
         summary = {
             "ok": True,
             "source": str(source_dir) if source_dir else "双目录合并(bulk+cycle)",
             "videos": len(video_map),
             "comments": len(rows),
-            "funnel": funnel,
-            "llm_screen": screen_stats,
-            "new_candidates": added,
-            "llm_drafted": drafted,
+            **queued,
         }
         store._state["cycle"]["last_run_at"] = datetime.now().isoformat(timespec="seconds")
         store._state["cycle"]["last_summary"] = json.dumps(summary, ensure_ascii=False)
@@ -1513,40 +1634,23 @@ async def run_cycle(store: AutomationStore, mode_override: str = "") -> dict[str
             raise RuntimeError(f"采集超时（>{timeout // 60}分钟），已终止") from exc
 
         rows, video_map = read_collected(comment_dir_for(store.platform), platform=store.platform)
-        cfg = dict(store.config)
-        cfg["_items_today"] = [it for it in store.items if it["created_at"].startswith(datetime.now().strftime("%Y-%m-%d"))]
-        cfg["_replied_users"] = dict(store._state.get("replied_users") or {})
-        picked, funnel = build_candidates(
-            rows, video_map, cfg, store._state["processed_comment_ids"], platform=store.platform
+        queued = await _queue_candidates(
+            store,
+            rows,
+            video_map,
+            max_candidates=int(store.config.get("max_new_candidates_per_cycle", 8)),
+            auto_draft=bool(store.config.get("auto_draft", True)),
         )
-        quota = int(store.config.get("max_new_candidates_per_cycle", 8))
-        picked, screen_stats = await _refine_candidates(picked, cfg, quota)
-        picked = picked[:quota]
-
-        drafted = 0
-        if store.config.get("auto_draft", True):
-            for item in picked:
-                draft = await draft_with_llm(item)
-                if draft:
-                    item["draft"] = draft
-                    item["lint_warnings"] = check_reply_style(draft)
-                    item["draft_source"] = "llm"
-                    drafted += 1
-
-        added = store.add_items(picked)
         stats = store._state["stats"]
         stats["cycles"] += 1
         stats["collected_videos"] = len(video_map)
         stats["collected_comments"] = len(rows)
-        stats["excluded"] += funnel["excluded"]
+        stats["excluded"] += queued["funnel"]["excluded"]
         summary = {
             "ok": True,
             "videos": len(video_map),
             "comments": len(rows),
-            "funnel": funnel,
-            "llm_screen": screen_stats,
-            "new_candidates": added,
-            "llm_drafted": drafted,
+            **queued,
         }
         store._state["cycle"]["last_run_at"] = datetime.now().isoformat(timespec="seconds")
         store._state["cycle"]["last_summary"] = json.dumps(summary, ensure_ascii=False)
@@ -1776,18 +1880,29 @@ def _fetch_reply_engagement(cookie: str, oid: str, root: str, rpid: str) -> Opti
         d = resp.json()
         if d.get("code") != 0:
             return {"missing": True, "like": 0, "rcount": 0, "note": f"接口code={d.get('code')}", "subs": []}
-        for r in (d.get("data") or {}).get("replies") or []:
+        data = d.get("data") or {}
+
+        def _pack(node: dict[str, Any]) -> dict[str, Any]:
+            subs = [
+                f"{(s.get('member') or {}).get('uname', '?')}:{(s.get('content') or {}).get('message', '')[:60]}"
+                for s in (node.get("replies") or [])[:3]
+            ]
+            return {
+                "missing": False,
+                "like": int(node.get("like") or 0),
+                "rcount": int(node.get("rcount") or 0),
+                "subs": subs,
+            }
+
+        # 根评论：我们发的那条**就是**这个楼层的 root，不在 replies 里。
+        # 实测（2026-11-11）：root=<rpid> 时 data["root"] 返回该评论本身，
+        # 带 like/rcount；而 data["replies"] 是它下面的楼中楼，永远找不到自己。
+        root_node = data.get("root") or {}
+        if root_node and str(root_node.get("rpid")) == str(rpid):
+            return _pack(root_node)
+        for r in data.get("replies") or []:
             if str(r.get("rpid")) == str(rpid):
-                subs = [
-                    f"{(s.get('member') or {}).get('uname', '?')}:{(s.get('content') or {}).get('message', '')[:60]}"
-                    for s in (r.get("replies") or [])[:3]
-                ]
-                return {
-                    "missing": False,
-                    "like": int(r.get("like") or 0),
-                    "rcount": int(r.get("rcount") or 0),
-                    "subs": subs,
-                }
+                return _pack(r)
         return {"missing": True, "like": 0, "rcount": 0, "note": "楼内未找到(可能被删/折叠)", "subs": []}
     except Exception:  # noqa: BLE001
         return None
@@ -1805,8 +1920,11 @@ async def refresh_sent_engagement(store: "AutomationStore") -> dict[str, Any]:
     for it in sent:
         if not cookie:
             break
+        rpid = str(it.get("reply_id") or "")
+        # 根评论自己就是所在楼层的 root，查它要 root=rpid；楼中楼回复才是 root=comment_id
+        root = rpid if str(it.get("action") or "") == "hot_comment" else str(it.get("comment_id") or "")
         info = await asyncio.to_thread(
-            _fetch_reply_engagement, cookie, str(it.get("video_id") or ""), str(it.get("comment_id") or ""), str(it.get("reply_id") or "")
+            _fetch_reply_engagement, cookie, str(it.get("video_id") or ""), root, rpid
         )
         if info is None:
             continue
@@ -1902,6 +2020,15 @@ async def _run_sender_tick(
     顺序不能变——硬校验必须在 mark_sending 之前（否则拦下的条目会卡在
     sending），停损必须在 mark_failed 之后（否则无法判断该不该暂停通道）。
     """
+    # 根评论通道只有 B 站有接口。小红书/抖音走浏览器自动化，必须先滚动定位到
+    # 某条具体评论才能回复——没有「直接在评论框发言」的流程。明确退回并说明，
+    # 不能让它以「回复某条评论」的方式悄悄发出去（那发错了对象更糟）。
+    if str(item.get("action") or "") == "hot_comment":
+        item["status"] = "pending_review"
+        item["note"] = f"{adapter.name}暂不支持发根评论（浏览器通道只能定位到具体评论后回复），请改手动发送或换 B 站"
+        store.save()
+        return f"条目退回待审（{adapter.name}不支持根评论）"
+
     # 发送前二次硬校验（防批准后改草稿/历史遗留条目绕过批准口校验）
     violations = adapter.violations(item.get("draft") or "")
     if violations:
@@ -2019,6 +2146,7 @@ async def _sender_tick(store: AutomationStore) -> str:
             )
         return f"发送阻塞：{str(exc)[:120]}"
     store.mark_sending(item)
+    is_hot = str(item.get("action") or "") == "hot_comment"
     try:
         from .reply_sender import send_bilibili_reply
 
@@ -2028,6 +2156,8 @@ async def _sender_tick(store: AutomationStore) -> str:
             comment_id=item["comment_id"],
             message=item["draft"],
             cookie=cookie,
+            # 根评论：B 站接口的 root/parent 都为 "0"（不挂在任何评论下）
+            root_id="0" if is_hot else "",
         )
         store.mark_sent(item, reply_id)
         store._state["sender"]["last_error"] = ""
@@ -2038,19 +2168,26 @@ async def _sender_tick(store: AutomationStore) -> str:
                 store._state["sender"].setdefault("notified", {}), "queue_empty", "队列已清空"
             ):
                 await notify_mod.notify("发送队列已清空", ["所有已批准回复均已发送完毕"])
+        if is_hot:
+            return f"已发根评论（《{str(item.get('video_title') or '')[:20]}》）"
         return f"已发送 → {item['commenter']}（《{item['video_title'][:20]}》）"
     except Exception as exc:  # noqa: BLE001
         msg = str(exc)
         store.mark_failed(item, msg)
         # P0-3:发送失败/风控预警码推飞书(同条目同错误节流)
         risk = "风控预警:" if any(k in msg for k in ("折叠", "验证", "频繁", "限流")) else ""
+        _target = (
+            f"视频:《{str(item.get('video_title') or '')[:24]}》(根评论)"
+            if is_hot
+            else f"对象:{item['commenter']}《{item['video_title'][:24]}》"
+        )
         if notify_mod.should_notify(
             store._state["sender"].setdefault("notified", {}), f"fail:{item['id']}", msg[:120]
         ):
             await notify_mod.notify(
                 f"回复发送失败 {risk}".strip(),
                 [
-                    f"对象:{item['commenter']}《{item['video_title'][:24]}》",
+                    _target,
                     f"原因:{msg[:160]}",
                     f"状态:{item['status']}(重试 {item.get('attempts', 0)}/3)",
                 ],
