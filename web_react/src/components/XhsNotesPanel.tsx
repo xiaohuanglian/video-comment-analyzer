@@ -179,8 +179,9 @@ export default function XhsNotesPanel() {
             共 {data?.total ?? 0} 条{query ? `(筛选「${query}」后)` : ''},当前列表点赞合计{' '}
             {formatCount(totalLiked)}
           </p>
-          <div className="max-h-[560px] overflow-y-auto">
-            <table className="w-full text-left text-xs">
+          {/* 窄窗口（比如内置浏览器面板）下横向滚动，避免标题被挤成竖排 */}
+          <div className="max-h-[560px] overflow-auto">
+            <table className="w-full min-w-[760px] text-left text-xs">
               <thead className="sticky top-0 bg-white">
                 <tr className="border-b border-stone-100 text-stone-400">
                   <th className="py-1.5 pr-3 font-normal">标题</th>
@@ -214,7 +215,7 @@ export default function XhsNotesPanel() {
                         <span className="text-stone-600">{it.title || '(无标题)'}</span>
                       )}
                     </td>
-                    <td className="py-1.5 pr-3 text-stone-500">{it.author || '—'}</td>
+                    <td className="whitespace-nowrap py-1.5 pr-3 text-stone-500">{it.author || '—'}</td>
                     <td className="py-1.5 pr-3 text-right font-medium text-stone-700">
                       {formatCount(it.liked)}
                     </td>
@@ -236,7 +237,7 @@ export default function XhsNotesPanel() {
                         {TYPE_LABELS[it.note_type] ?? it.note_type ?? '—'}
                       </span>
                     </td>
-                    <td className="py-1.5 text-stone-400">{it.keyword || '—'}</td>
+                    <td className="whitespace-nowrap py-1.5 text-stone-400">{it.keyword || '—'}</td>
                   </tr>
                 ))}
               </tbody>

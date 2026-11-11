@@ -1,6 +1,6 @@
 import CollectPanel from '../components/CollectPanel'
-import LocalDataPanel from '../components/LocalDataPanel'
 import XhsNotesPanel from '../components/XhsNotesPanel'
+import LocalDataPanel from '../components/LocalDataPanel'
 import YouTubePanel from '../components/YouTubePanel'
 import ReportPanel from '../components/ReportPanel'
 
@@ -14,8 +14,9 @@ export default function CollectPage() {
         </p>
       </header>
       <CollectPanel />
-      <LocalDataPanel />
+      {/* 笔记列表放在「本地已采数据」之前：刚采回来的帖子是最想先看到的东西 */}
       <XhsNotesPanel />
+      <LocalDataPanel />
       <YouTubePanel />
       <ReportPanel />
     </div>
