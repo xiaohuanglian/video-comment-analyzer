@@ -166,7 +166,23 @@ export interface PlanResult {
   topics: PlanTopic[]
 }
 
+export interface ProfileBrief {
+  profile_id: string
+  name: string
+  niche: string
+  target_audience: string
+  is_active: boolean
+  is_configured: boolean
+  updated_at: string
+}
+
 export interface Strategy {
+  profile_id?: string
+  name?: string
+  domain?: string
+  research_goal?: string
+  is_configured?: boolean
+  is_builtin?: boolean
   niche?: string
   target_audience?: string
   monetization?: string
@@ -175,8 +191,13 @@ export interface Strategy {
   reference_styles?: string[]
   goal?: string
   evidence?: string
+  target_scenarios?: { name?: string; axis?: string; trigger?: string; keywords?: string[] }[]
   updated_at?: string
   exists?: boolean
+  /** 当前生效的档案（不同产品不能混用定位，所以这是显式状态） */
+  active_profile_id?: string
+  is_active?: boolean
+  profiles?: ProfileBrief[]
 }
 
 export interface CostEntry {
@@ -796,9 +817,48 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ ids }),
     }),
-  strategyGet: () => req<Strategy>('/strategy'),
+  strategyGet: (profileId?: string) =>
+    req<Strategy>(`/strategy${profileId ? `?profile_id=${encodeURIComponent(profileId)}` : ''}`),
   strategySave: (s: Partial<Strategy>) =>
     req<Strategy>('/strategy', { method: 'PUT', body: JSON.stringify(s) }),
+  strategyProfiles: () => req<{ active_profile_id: string; profiles: ProfileBrief[] }>('/strategy/profiles'),
+  strategyCreateProfile: (payload: { name: string; niche?: string; target_audience?: string; domain?: string }) =>
+    req<{ profile: Strategy; active_profile_id: string }>('/strategy/profiles', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  strategySetActive: (profileId: string) =>
+    req<{ active_profile_id: string; profiles: ProfileBrief[] }>('/strategy/active', {
+      method: 'PUT',
+      body: JSON.stringify({ profile_id: profileId }),
+    }),
+  strategyDeleteProfile: (profileId: string) =>
+    req<{ deleted: string; active_profile_id: string }>(`/strategy/profiles/${encodeURIComponent(profileId)}`, {
+      method: 'DELETE',
+    }),
+  // ---- 引导式建档：3 个问题 → 一份可用档案 ----
+  onboardingQuestions: () =>
+    req<{
+      questions: { key: string; question: string; hint: string; placeholder: string }[]
+      required_count: number
+      already_configured: boolean
+      active_profile_id: string
+    }>('/strategy/onboarding/questions'),
+  onboardingSubmit: (payload: {
+    domain: string
+    target_audience: string
+    research_goal: string
+    name?: string
+    run_scenario?: boolean
+    scenario_limit?: number
+  }) =>
+    req<{
+      profile: Strategy
+      active_profile_id: string
+      scenarios: { items: Scenario[]; warnings: string[]; verified: boolean } | null
+      scenario_error: string
+      next_steps: string[]
+    }>('/strategy/onboarding', { method: 'POST', body: JSON.stringify(payload) }),
   costsSummary: () => req<CostSummary>('/costs/summary'),
   costsLedger: (limit = 20) => req<CostEntry[]>(`/costs/ledger?limit=${limit}`),
   // ---- 模型网关配置（服务端持久化，脱敏返回）----

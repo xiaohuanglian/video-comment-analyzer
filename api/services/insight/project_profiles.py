@@ -13,14 +13,14 @@ A single domain-neutral default is defined in code; user profiles live in
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from ..json_store import lock_for, read_json, write_json
 from .prompts import (
     PERSONALIZED_VIDEO_KEYWORDS,
     POSITIVE_RESULT_KEYWORDS,
@@ -43,6 +43,8 @@ class TaxonomyItem(BaseModel):
     key: str
     label: str
     description: str = ""
+
+    model_config = ConfigDict(extra="allow")
 
 
 class ProjectProfile(BaseModel):
@@ -71,6 +73,28 @@ class ProjectProfile(BaseModel):
     content_platforms: List[str] = Field(default_factory=list)
     opportunity_templates: List[Dict[str, Any]] = Field(default_factory=list)
     is_builtin: bool = False
+
+    # --- 账号定位（原 api/services/strategy.py 的字段，2026-11-11 合并进来）---
+    #
+    # 为什么合并：原先「账号定位」和「项目档案」是两套并行存储、两套 ID，
+    # 同一件事（我是谁、面向谁）要填两遍，而且两个地方不一致时没人知道该信谁。
+    # 一个产品 = 一个档案，定位与分析口径是同一个档案的两面。
+    niche: str = ""
+    monetization: str = ""
+    tone_rules: List[str] = Field(default_factory=list)
+    forbidden: List[str] = Field(default_factory=list)
+    reference_styles: List[str] = Field(default_factory=list)
+    goal: str = ""
+    evidence: str = ""
+    target_scenarios: List[Dict[str, Any]] = Field(default_factory=list)
+    updated_at: str = ""
+
+    # 2026-11-11：允许未知字段**原样保留**。
+    # 教训：这里原先没有 extra，而 strategy.save() 又只保留白名单里的 8 个键，
+    # 结果「采纳场景」写入的 target_scenarios 在保存时被静默丢弃，接口却返回
+    # {"ok": true}——界面显示已采纳，磁盘上什么都没有，是假成功。
+    # 任何新增字段（插件、实验开关）都不该因为没加进模型就消失。
+    model_config = ConfigDict(extra="allow")
 
 
 # --- built-in profiles -------------------------------------------------------
@@ -139,12 +163,23 @@ def _builtin_default() -> ProjectProfile:
 #: 不看词表/模板（那些有通用默认值，填不填都能跑）。
 _REQUIRED_PROFILE_FIELDS = ("domain", "target_audience", "research_goal")
 
+#: 用户可能只填了「账号定位」那一组（niche/goal），也可能只填了分析口径那一组
+#: （domain/research_goal）。两组都算「配置过」，缺一组时用另一组补齐判定。
+_ALTERNATE_FIELDS = {
+    "domain": ("niche", "name"),
+    "research_goal": ("goal",),
+}
+
 
 def is_configured(profile: Optional[ProjectProfile]) -> bool:
     """档案是否包含真实定位（而非内置占位）。"""
-    if profile is None:
+    if profile is None or getattr(profile, "is_builtin", False):
         return False
-    return all(str(getattr(profile, field, "") or "").strip() for field in _REQUIRED_PROFILE_FIELDS)
+    for field in _REQUIRED_PROFILE_FIELDS:
+        values = (field,) + _ALTERNATE_FIELDS.get(field, ())
+        if not any(str(getattr(profile, f, "") or "").strip() for f in values):
+            return False
+    return True
 
 
 class ProfileNotConfigured(RuntimeError):
@@ -197,6 +232,26 @@ _LEGACY_PROFILE_ALIASES = {"generic": "default"}
 
 
 # --- storage -----------------------------------------------------------------
+#
+# 一个产品 = 一个档案。所有档案同住 `data/project_profiles.json`，结构：
+#   {"version": 2, "active_profile_id": "youvibe", "profiles": [...]}
+#
+# `active_profile_id` 是**可切换的当前档案**——不同产品的定位、受众、口吻
+# 绝不能混用，所以「当前用哪个」必须是显式状态，而不是某个全局默认值。
+#
+# 2026-11-11 之前这里是无锁的 `write_text`，且策略档案另存于
+# `data/strategy/youvibe_account.json`（单文件、单档案、save 只保留白名单字段，
+# 导致采纳的场景被静默丢弃）。现在统一走 json_store：加锁读改写 + 原子写 +
+# 损坏不静默。
+
+PROFILES_FILE_VERSION = 2
+#: 旧版策略档案位置（单档案时代）。首次读取时自动迁移为多档案中的一个。
+LEGACY_STRATEGY_FILE = "strategy/youvibe_account.json"
+
+
+class ActiveProfileMissing(RuntimeError):
+    """有档案但没有指定当前档案，且无法唯一推断。"""
+
 
 def _profiles_path() -> Path:
     from . import paths
@@ -204,57 +259,113 @@ def _profiles_path() -> Path:
     return paths.DATA_DIR / PROFILES_FILE_NAME
 
 
-def _read_profiles_file() -> List[ProjectProfile]:
+def _legacy_strategy_path() -> Path:
+    from . import paths
+
+    return paths.DATA_DIR / LEGACY_STRATEGY_FILE
+
+
+def _read_raw() -> Dict[str, Any]:
+    """读整个文件（含 active_profile_id），顺手做一次旧数据迁移。"""
     path = _profiles_path()
-    if not path.exists():
-        return []
+    with lock_for(path):
+        data = read_json(path, default={}, expect=dict)
+        if not data:
+            data = _migrate_legacy_strategy() or {}
+        if "profiles" not in data and isinstance(data, list):
+            data = {"version": PROFILES_FILE_VERSION, "profiles": data}
+    return data
+
+
+def _write_raw(data: Dict[str, Any]) -> None:
+    path = _profiles_path()
+    with lock_for(path):
+        payload = dict(data)
+        payload["version"] = PROFILES_FILE_VERSION
+        payload.setdefault("profiles", [])
+        write_json(path, payload)
+
+
+def _short_name(text: str, limit: int = 24) -> str:
+    """从定位里取一个能当档案名的短句（按标点切，不硬截断）。"""
+    cleaned = (text or "").strip()
+    for sep in ("，", ",", "：", ":", "。", "；", ";", "\n"):
+        if sep in cleaned:
+            head = cleaned.split(sep)[0].strip()
+            if head:
+                cleaned = head
+                break
+    return cleaned[:limit] or "未命名档案"
+
+
+def _migrate_legacy_strategy() -> Optional[Dict[str, Any]]:
+    """把单档案时代的 `strategy/youvibe_account.json` 迁成第一个项目档案。
+
+    只在还没有 project_profiles.json 时执行；旧文件保留不动（可回溯），
+    但不再被读取。返回迁移后的完整文件内容。
+    """
+    legacy = _legacy_strategy_path()
+    if not legacy.exists():
+        return None
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return []
-    entries = raw.get("profiles") if isinstance(raw, dict) else raw
-    if not isinstance(entries, list):
-        return []
-    out: List[ProjectProfile] = []
-    for item in entries:
-        if not isinstance(item, dict):
-            continue
-        try:
-            out.append(ProjectProfile.model_validate(item))
-        except Exception:
-            continue
-    return out
+        raw = json.loads(legacy.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(raw, dict) or not raw.get("niche"):
+        return None
 
-
-def _write_profiles_file(profiles: List[ProjectProfile]) -> None:
-    path = _profiles_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "version": 1,
-        "profiles": [p.model_dump() for p in profiles],
+    niche = str(raw.get("niche") or "")
+    profile = {
+        "profile_id": "youvibe",
+        # 名字只取定位的第一个短句：整段定位有 60+ 字，直接截断会断在半句上，
+        # 在档案列表里看起来像是数据坏了。
+        "name": _short_name(niche),
+        "niche": str(raw.get("niche") or ""),
+        "target_audience": str(raw.get("target_audience") or ""),
+        "monetization": str(raw.get("monetization") or ""),
+        "tone_rules": [str(x) for x in (raw.get("tone_rules") or [])],
+        "forbidden": [str(x) for x in (raw.get("forbidden") or [])],
+        "reference_styles": [str(x) for x in (raw.get("reference_styles") or [])],
+        "goal": str(raw.get("goal") or ""),
+        "evidence": str(raw.get("evidence") or ""),
+        "target_scenarios": raw.get("target_scenarios") or [],
+        "domain": str(raw.get("niche") or ""),
+        "research_goal": str(raw.get("goal") or ""),
+        "updated_at": str(raw.get("updated_at") or ""),
     }
-    with _write_lock:
-        tmp = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
-        try:
-            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-            os.replace(tmp, path)
-        finally:
-            if tmp.exists():
-                try:
-                    tmp.unlink()
-                except OSError:
-                    pass
+    data = {
+        "version": PROFILES_FILE_VERSION,
+        "active_profile_id": "youvibe",
+        "profiles": [profile],
+        "migrated_from": str(legacy.name),
+    }
+    _write_raw(data)
+    return data
+
+
+def _parse_profile(item: Any) -> Optional[ProjectProfile]:
+    if not isinstance(item, dict):
+        return None
+    try:
+        return ProjectProfile.model_validate(item)
+    except Exception:  # noqa: BLE001 — 单条坏档案不该让整个列表不可用
+        return None
 
 
 def _custom_profiles() -> Dict[str, ProjectProfile]:
-    return {p.profile_id: p for p in _read_profiles_file() if p.profile_id}
+    out: Dict[str, ProjectProfile] = {}
+    for item in _read_raw().get("profiles") or []:
+        profile = _parse_profile(item)
+        if profile is not None and profile.profile_id:
+            out[profile.profile_id] = profile
+    return out
 
 
 def list_profiles() -> List[ProjectProfile]:
     merged = builtin_profiles()
     for pid, profile in _custom_profiles().items():
         merged[pid] = profile
-    return sorted(merged.values(), key=lambda p: (not p.is_builtin, p.profile_id))
+    return sorted(merged.values(), key=lambda p: (p.is_builtin, p.profile_id))
 
 
 def get_profile(profile_id: str) -> Optional[ProjectProfile]:
@@ -268,24 +379,76 @@ def get_profile(profile_id: str) -> Optional[ProjectProfile]:
     return builtin_profiles().get(pid)
 
 
+def get_active_profile_id() -> str:
+    """当前档案 id；没有则返回空串（不猜）。"""
+    data = _read_raw()
+    pid = str(data.get("active_profile_id") or "").strip()
+    if pid:
+        return pid
+    configured = [p.profile_id for p in _custom_profiles().values() if is_configured(p)]
+    return configured[0] if len(configured) == 1 else ""
+
+
+def set_active_profile(profile_id: str) -> str:
+    """切换当前档案。不同产品不能混用，所以这个动作必须显式发生。"""
+    pid = (profile_id or "").strip()
+    if not pid:
+        raise ValueError("profile_id 不能为空")
+    if pid not in _custom_profiles():
+        raise KeyError(f"档案不存在：{pid}")
+    with lock_for(_profiles_path()):
+        data = _read_raw()
+        data["active_profile_id"] = pid
+        _write_raw(data)
+    return pid
+
+
+def get_active_profile() -> Optional[ProjectProfile]:
+    """取当前档案；未显式指定且无法唯一推断时返回 None（调用方决定报错还是降级）。"""
+    pid = get_active_profile_id()
+    return get_profile(pid) if pid else None
+
+
 def upsert_profile(profile: ProjectProfile) -> ProjectProfile:
-    """Create or update a user profile (stored in the data dir)."""
+    """Create or update a user profile (stored in the data dir).
+
+    未指定 `updated_at` 时自动打时间戳；保存时**保留未知字段**（见
+    ProjectProfile.model_config 的说明）。
+    """
     if not profile.profile_id.strip():
         raise ValueError("profile_id 不能为空")
-    stored = profile.model_copy(update={"is_builtin": False})
-    custom = _custom_profiles()
-    custom[stored.profile_id] = stored
-    _write_profiles_file(list(custom.values()))
+    stored = profile.model_copy(
+        update={
+            "is_builtin": False,
+            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+    )
+    with lock_for(_profiles_path()):
+        data = _read_raw()
+        rows = [item for item in (data.get("profiles") or []) if isinstance(item, dict)]
+        rows = [item for item in rows if str(item.get("profile_id") or "") != stored.profile_id]
+        rows.append(stored.model_dump())
+        data["profiles"] = rows
+        # 第一个被创建的档案自动成为当前档案，避免「建好了却没在用」。
+        if not str(data.get("active_profile_id") or "").strip():
+            data["active_profile_id"] = stored.profile_id
+        _write_raw(data)
     return stored
 
 
 def delete_profile(profile_id: str) -> bool:
     pid = (profile_id or "").strip()
-    custom = _custom_profiles()
-    if pid not in custom:
-        return False
-    custom.pop(pid)
-    _write_profiles_file(list(custom.values()))
+    with lock_for(_profiles_path()):
+        data = _read_raw()
+        rows = [item for item in (data.get("profiles") or []) if isinstance(item, dict)]
+        kept = [item for item in rows if str(item.get("profile_id") or "") != pid]
+        if len(kept) == len(rows):
+            return False
+        data["profiles"] = kept
+        if str(data.get("active_profile_id") or "") == pid:
+            remaining = [str(item.get("profile_id") or "") for item in kept if item.get("profile_id")]
+            data["active_profile_id"] = remaining[0] if remaining else ""
+        _write_raw(data)
     return True
 
 
@@ -294,7 +457,7 @@ def resolve_profile(config: Any) -> ProjectProfile:
     pid = (getattr(config, "project_id", "") or "").strip() if config is not None else ""
     profile = get_profile(pid) if pid else None
     if profile is None:
-        profile = builtin_profiles()[DEFAULT_PROFILE_ID]
+        profile = get_active_profile() or builtin_profiles()[DEFAULT_PROFILE_ID]
     if config is None:
         return profile
     compact = (getattr(config, "project_context_compact", "") or "").strip()

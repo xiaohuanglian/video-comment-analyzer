@@ -762,18 +762,22 @@ def _screen_brief() -> str:
 
     # 优先用策略档案里显式填写的定位（用户在设置页填的），
     # 它通常比通用 project profile 更贴近当前账号。
-    niche = str(s.get("niche") or "").strip()
+    niche = str(s.get("niche") or s.get("domain") or s.get("name") or "").strip()
     audience = str(s.get("target_audience") or "").strip()
 
-    if not (niche and audience):
-        # 回落项目档案
+    # 定位和分析口径现在是同一份档案（2026-11-11 合并），拿到 profile_id 就整份取出来，
+    # 下面还要用它的 research_goal 当价值主张。
+    pid = str(s.get("profile_id") or "").strip()
+    if pid:
         try:
-            profile = get_profile(str(s.get("profile_id") or "") or "default")
+            candidate = get_profile(pid)
         except Exception:  # noqa: BLE001
-            profile = None
-        if profile is not None and is_configured(profile):
-            niche = niche or str(profile.domain or "").strip() or str(profile.name or "").strip()
-            audience = audience or str(profile.target_audience or "").strip()
+            candidate = None
+        if candidate is not None and is_configured(candidate):
+            profile = candidate
+    if profile is not None:
+        niche = niche or str(profile.domain or "").strip() or str(profile.name or "").strip()
+        audience = audience or str(profile.target_audience or "").strip()
 
     if not (niche and audience):
         raise ProfileNotConfigured(

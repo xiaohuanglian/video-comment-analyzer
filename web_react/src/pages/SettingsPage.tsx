@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Save, Loader2, Check, Coins, KeyRound } from 'lucide-react'
+import { Save, Loader2, Check, Coins, KeyRound, Plus, Trash2 } from 'lucide-react'
 import clsx from 'clsx'
-import { api, type AutomationStatus, type Strategy, type CostSummary, type CostEntry, type AutomationPlatform } from '../lib/api'
+import { api, type AutomationStatus, type Strategy, type ProfileBrief, type CostSummary, type CostEntry, type AutomationPlatform } from '../lib/api'
+import OnboardingWizard from '../components/OnboardingWizard'
 
 export default function SettingsPage() {
   const [platform, setPlatform] = useState<AutomationPlatform>('bili')
@@ -23,6 +24,14 @@ export default function SettingsPage() {
   const [strategyDirty, setStrategyDirty] = useState(false)
   const [strategyBusy, setStrategyBusy] = useState(false)
   const [strategySaved, setStrategySaved] = useState(false)
+  // 多档案：一个产品一份定位/受众/口吻。不同产品不能混用，所以「当前档案」
+  // 是显式状态，切换后所有生成入口立刻按新档案走。
+  const [profiles, setProfiles] = useState<ProfileBrief[]>([])
+  const [profilesLoaded, setProfilesLoaded] = useState(false)
+  const [activeProfileId, setActiveProfileId] = useState('')
+  const [newProfileName, setNewProfileName] = useState('')
+  const [profileBusy, setProfileBusy] = useState('')
+  const [profileMsg, setProfileMsg] = useState('')
   // 费用统计
   const [costs, setCosts] = useState<CostSummary | null>(null)
   const [recentCalls, setRecentCalls] = useState<CostEntry[]>([])
@@ -64,8 +73,13 @@ export default function SettingsPage() {
   useEffect(() => {
     api
       .strategyGet()
-      .then((s) => setStrategy(s.exists === false ? {} : s))
-      .catch(() => {})
+      .then((s) => {
+        setStrategy(s.exists === false ? {} : s)
+        setProfiles(s.profiles ?? [])
+        setActiveProfileId(s.active_profile_id ?? '')
+        setProfilesLoaded(true)
+      })
+      .catch(() => setProfilesLoaded(true))
     api
       .costsSummary()
       .then(setCosts)
@@ -152,11 +166,90 @@ export default function SettingsPage() {
     try {
       const saved = await api.strategySave(strategy)
       setStrategy(saved)
+      setProfiles(saved.profiles ?? [])
+      setActiveProfileId(saved.active_profile_id ?? '')
       setStrategyDirty(false)
       setStrategySaved(true)
       setTimeout(() => setStrategySaved(false), 1500)
     } finally {
       setStrategyBusy(false)
+    }
+  }
+
+  const loadProfile = async (profileId: string) => {
+    setProfileBusy('load')
+    setProfileMsg('')
+    try {
+      const s = await api.strategyGet(profileId)
+      setStrategy(s.exists === false ? { profile_id: profileId } : s)
+      setProfiles(s.profiles ?? [])
+      setActiveProfileId(s.active_profile_id ?? '')
+      setStrategyDirty(false)
+    } catch (e) {
+      setProfileMsg(e instanceof Error ? e.message : String(e))
+    } finally {
+      setProfileBusy('')
+    }
+  }
+
+  const switchProfile = async (profileId: string) => {
+    setProfileBusy('switch')
+    setProfileMsg('')
+    try {
+      const res = await api.strategySetActive(profileId)
+      setProfiles(res.profiles)
+      setActiveProfileId(res.active_profile_id)
+      await loadProfile(res.active_profile_id)
+      setProfileMsg('已切换。之后选题、写稿、回复筛选都按这份档案走。')
+    } catch (e) {
+      setProfileMsg(e instanceof Error ? e.message : String(e))
+    } finally {
+      setProfileBusy('')
+    }
+  }
+
+  const createProfile = async () => {
+    const name = newProfileName.trim()
+    if (!name) return
+    setProfileBusy('create')
+    setProfileMsg('')
+    try {
+      const res = await api.strategyCreateProfile({ name })
+      setNewProfileName('')
+      setProfiles((p) => [
+        ...p,
+        {
+          profile_id: res.profile.profile_id ?? '',
+          name: res.profile.name ?? name,
+          niche: '',
+          target_audience: '',
+          is_active: false,
+          is_configured: false,
+          updated_at: '',
+        },
+      ])
+      setProfileMsg('档案已创建。填完定位后点「切换到此档案」，否则它不会生效。')
+    } catch (e) {
+      setProfileMsg(e instanceof Error ? e.message : String(e))
+    } finally {
+      setProfileBusy('')
+    }
+  }
+
+  const deleteProfile = async (profileId: string) => {
+    setProfileBusy('delete')
+    setProfileMsg('')
+    try {
+      const res = await api.strategyDeleteProfile(profileId)
+      setActiveProfileId(res.active_profile_id)
+      const fresh = await api.strategyProfiles()
+      setProfiles(fresh.profiles)
+      await loadProfile(res.active_profile_id)
+      setProfileMsg('档案已删除。')
+    } catch (e) {
+      setProfileMsg(e instanceof Error ? e.message : String(e))
+    } finally {
+      setProfileBusy('')
     }
   }
 
@@ -275,6 +368,103 @@ export default function SettingsPage() {
         </button>
       </section>
 
+      {/* 首次使用:还没有任何填过定位的档案时，先给最短路径，而不是让人去填一整页表单 */}
+      {profilesLoaded && !profiles.some((p) => p.is_configured) && (
+        <OnboardingWizard
+          onDone={async (profileId) => {
+            const fresh = await api.strategyProfiles()
+            setProfiles(fresh.profiles)
+            setActiveProfileId(profileId)
+            setProfilesLoaded(true)
+            await loadProfile(profileId)
+          }}
+        />
+      )}
+
+      {/* 产品档案:一个产品一份定位,做完 A 产品再做 B 产品时不用推翻重填 */}
+      <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold">产品档案</h2>
+          <p className="text-xs text-stone-400">
+            每个产品一份档案(定位/受众/口吻各自独立)。下方的「账号定位」与所有生成入口,
+            都使用<b className="font-medium">当前档案</b>
+          </p>
+        </div>
+        <div className="divide-y divide-stone-100 overflow-hidden rounded-xl border border-stone-200">
+          {profiles.length === 0 && (
+            <p className="px-3 py-3 text-xs text-stone-400">还没有档案,先建一个</p>
+          )}
+          {profiles.map((p) => (
+            <div
+              key={p.profile_id}
+              className={clsx(
+                'flex items-center gap-3 px-3 py-2.5 text-sm',
+                p.is_active ? 'bg-emerald-50/60' : 'bg-white',
+              )}
+            >
+              <button
+                onClick={() => loadProfile(p.profile_id)}
+                className="min-w-0 flex-1 text-left hover:opacity-70"
+                title="查看/编辑这份档案"
+              >
+                <p className="flex items-center gap-2 truncate font-medium">
+                  {p.name || p.profile_id}
+                  {p.is_active && (
+                    <span className="shrink-0 rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-normal text-white">
+                      当前
+                    </span>
+                  )}
+                  {!p.is_configured && (
+                    <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-normal text-amber-700">
+                      未填定位
+                    </span>
+                  )}
+                </p>
+                <p className="truncate text-xs text-stone-400">
+                  {p.niche || p.target_audience || '（还没填定位与受众）'}
+                </p>
+              </button>
+              {!p.is_active && (
+                <button
+                  onClick={() => switchProfile(p.profile_id)}
+                  disabled={profileBusy !== ''}
+                  className="shrink-0 rounded-lg border border-stone-300 px-2.5 py-1 text-xs hover:bg-stone-50 disabled:opacity-40"
+                >
+                  切换到此档案
+                </button>
+              )}
+              {!p.is_active && (
+                <button
+                  onClick={() => deleteProfile(p.profile_id)}
+                  disabled={profileBusy !== ''}
+                  className="shrink-0 rounded-lg p-1.5 text-stone-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                  title="删除这份档案"
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            value={newProfileName}
+            onChange={(e) => setNewProfileName(e.target.value)}
+            placeholder="新产品/账号名称,如：同城花店"
+            className="min-w-0 flex-1 rounded-lg border border-stone-300 px-3 py-2 text-sm outline-none focus:border-stone-500"
+          />
+          <button
+            onClick={createProfile}
+            disabled={profileBusy !== '' || !newProfileName.trim()}
+            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-stone-300 px-3 py-2 text-sm hover:bg-stone-50 disabled:opacity-40"
+          >
+            <Plus size={14} />
+            新建档案
+          </button>
+        </div>
+        {profileMsg && <p className="text-xs text-stone-500">{profileMsg}</p>}
+      </section>
+
       {/* 账号定位(策略档案) */}
       <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm space-y-4">
         <div className="flex items-center justify-between">
@@ -290,6 +480,14 @@ export default function SettingsPage() {
             </span>
           )}
         </div>
+        {activeProfileId && (
+          <p className="rounded-lg bg-stone-50 px-3 py-2 text-xs text-stone-500">
+            正在编辑档案：
+            <b className="font-medium text-stone-700">
+              {profiles.find((p) => p.profile_id === activeProfileId)?.name || activeProfileId}
+            </b>
+          </p>
+        )}
         <TextField
           label="一句话定位(赛道+差异化)"
           value={strategy.niche ?? ''}

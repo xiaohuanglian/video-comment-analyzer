@@ -15,7 +15,9 @@ def _isolate_profiles(tmp_path, monkeypatch):
     return tmp_path / pp.PROFILES_FILE_NAME
 
 
-def test_builtin_profiles_available():
+def test_builtin_profiles_available(tmp_path, monkeypatch):
+    # 必须隔离 DATA_DIR：本机真实档案（youvibe 等）不该影响「内置档案只有 default」这条断言。
+    _isolate_profiles(tmp_path, monkeypatch)
     ids = {p.profile_id for p in pp.list_profiles()}
     assert ids == {"default"}
     default = pp.get_profile("default")
@@ -105,7 +107,8 @@ def test_resolve_profile_applies_run_override(monkeypatch):
     assert profile.context_compact == "自定义上下文"
 
 
-def test_resolve_profile_falls_back_to_default():
+def test_resolve_profile_falls_back_to_default(tmp_path, monkeypatch):
+    _isolate_profiles(tmp_path, monkeypatch)
     config = RunConfig(
         run_id="r",
         name="r",

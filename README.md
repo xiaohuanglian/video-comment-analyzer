@@ -70,10 +70,26 @@ uv run playwright install chromium
 > 也支持环境变量 `LLM_BASE_URL / LLM_API_KEY / LLM_MODEL`，优先级高于设置页
 > （显式请求入参 > 环境变量 > 设置页保存值）。
 
-### 项目档案与分类维度
+### 项目档案与多产品切换
 
-「评论洞察 → 配置」里可以选择项目档案（也可通过 `PUT /api/analysis/profiles/{id}` 维护 JSON）。
-除了研究目标、目标人群、H1–H3 假设、内容人设外，档案还可以定义：
+一份档案 = 一个产品/账号。不同产品的定位、受众、口吻、禁区**不能混用**，
+所以「当前档案」是一个可切换的状态，不是全局默认值。
+
+- **首次使用**：设置页只问 3 个问题（做什么 / 面向谁 / 想搞清楚什么），
+  答完即可开始用，并可顺手跑一次切场景。口吻、禁区、参考风格等后续再补。
+- **多产品**：设置页「产品档案」可新建 / 切换 / 删除。新建**不会**自动切换——
+  避免做着 A 产品，AI 却按 B 产品的口径给你筛评论。
+- 存储：`data/project_profiles.json`（`active_profile_id` + `profiles` 列表；
+  旧的 `data/strategy/youvibe_account.json` 首次启动自动迁移为其中一个档案，旧文件保留）。
+- 接口：`GET/PUT /api/strategy`、`GET/POST /api/strategy/profiles`、
+  `PUT /api/strategy/active`、`DELETE /api/strategy/profiles/{id}`、
+  `GET /api/strategy/onboarding/questions`、`POST /api/strategy/onboarding`。
+- 洞察侧仍可按任务指定档案（`GET /api/analysis/profiles`），
+  顺序是「任务指定 → 当前档案 → 内置占位」。
+
+档案除了账号定位（`niche / target_audience / monetization / tone_rules /
+forbidden / reference_styles / goal`）与 `target_scenarios`（切场景采纳结果），
+还可以定义分类维度：
 
 - `intents`：评论的主要沟通目的分类（如提问 / 反馈 / 不满）。
 - `signals`：值得关注的用户表达信号。
