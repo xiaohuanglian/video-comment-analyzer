@@ -6,8 +6,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from ..schemas import CrawlerStartRequest
 from tools.save_path_utils import comment_file_globs, count_csv_rows
+
+from ..schemas import CrawlerStartRequest
 
 
 def resolve_save_base(project_root: Path, save_data_path: str) -> Path:

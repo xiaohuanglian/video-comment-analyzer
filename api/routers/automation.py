@@ -51,6 +51,8 @@ def _funnel(store: auto.AutomationStore) -> dict[str, int]:
     return {
         "pending_review": sum(1 for i in items if i["status"] == "pending_review"),
         "approved": sum(1 for i in items if i["status"] == "approved"),
+        # 2026-11-11：sending 原先不在统计里——卡住的条目在监工台上完全不可见。
+        "sending": sum(1 for i in items if i["status"] == "sending"),
         "sent": sum(1 for i in items if i["status"] == "sent"),
         "failed": sum(1 for i in items if i["status"] == "failed"),
         "rejected": sum(1 for i in items if i["status"] == "rejected"),
@@ -105,6 +107,8 @@ async def approve(item_id: str, body: CandidateDecision, platform: str = "bili")
         warnings.append("已批准，但自动化总开关未启动——点右上角「启动自动化」后才会发送")
     if store.platform == "xhs":
         warnings.append("小红书发送依赖本机已登录小红书的浏览器（CDP 调试端口）保持开启")
+    elif store.platform == "dy":
+        warnings.append("抖音发送依赖本机已登录抖音的浏览器（CDP 调试端口）保持开启")
     elif not auto._cached_cookie():
         warnings.append("B 站登录 Cookie 未就绪——启动后首次采集会弹出扫码窗口，扫一次即恢复")
     return {"ok": True, "item": item, "warnings": warnings}
@@ -260,7 +264,7 @@ async def cookie_refresh() -> dict[str, Any]:
     try:
         cookie = await auto.refresh_bili_cookie()
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=str(exc)[:200])
+        raise HTTPException(status_code=400, detail=str(exc)[:200]) from exc
     return {"ok": True, "message": f"Cookie 已刷新（{len(cookie)} 字符）"}
 
 
@@ -282,7 +286,7 @@ async def human_touch(item_id: str, platform: str = "bili") -> dict[str, Any]:
     if not draft:
         raise HTTPException(status_code=400, detail="该条目没有草稿")
 
-    platform_name = "小红书" if store.platform == "xhs" else "B站"
+    platform_name = {"xhs": "小红书", "dy": "抖音"}.get(store.platform, "B站")
     system = f"""你是{platform_name}评论回复的 AI 味质检员。对草稿逐句扫描,找出像机器写的痕迹,按原文顺序报告。命中才报,干净就明说干净。每处一行:级别(🔴严重/⚠️轻度)+ 引原句(≤20字)+ 问题 + 一句修改方向。最后给一行总评。不重写全文。
 
 检测维度:
@@ -309,6 +313,6 @@ async def refresh_engagement(platform: str = "bili") -> dict[str, Any]:
     """回采已发回复在B站的实时互动(点赞/被回复数/楼中楼预览),写入条目。"""
     store = _store(platform)
     if store.platform != "bili":
-        raise HTTPException(status_code=400, detail="互动回采仅支持 B 站通道（小红书发送即验，不额外读平台）")
+        raise HTTPException(status_code=400, detail="互动回采仅支持 B 站通道（小红书/抖音发送即验，不额外读平台）")
     result = await auto.refresh_sent_engagement(store)
     return result

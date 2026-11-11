@@ -1,22 +1,28 @@
 import asyncio
-import re
-import subprocess
-import signal
 import os
-from typing import Optional, List
+import re
+import signal
+import subprocess
 from datetime import datetime
 from pathlib import Path
+from typing import List, Optional
+
+from tools.crawl_pacing import (
+    BLOCKED_EXIT_CODE,
+    ERROR_HINTS,
+    classify_failure,
+    format_duration,
+    platform_cooldown,
+)
 
 from ..schemas import CrawlerStartRequest, LogEntry
 from .crawl_progress import (
-    count_records_in_file,
     count_final_session_comments,
-    count_session_comment_progress,
+    count_records_in_file,
     resolve_comments_file,
     snapshot_comment_files,
 )
 from .operation_guard import operation_coordinator
-
 
 PROGRESS_CACHE_SECONDS = 120
 
@@ -96,6 +102,32 @@ class CrawlerManager:
             if self.process and self.process.poll() is None:
                 return False
             if not await operation_coordinator.try_acquire("crawl"):
+                return False
+
+            # 平台还在冷却里：不启动子进程，直接给出"还需等多久"的可执行结论
+            cooldown = platform_cooldown(config.platform.value)
+            if cooldown:
+                self.status = "idle"
+                self._last_result = {
+                    "result_kind": "blocked",
+                    "result_title": "平台冷却中",
+                    "result_message": (
+                        f"{config.platform.value} 刚被限流/风控拦过，本次采集没有启动，"
+                        f"还需等待 {format_duration(float(cooldown.get('retry_after_seconds') or 0))}。"
+                        f"{ERROR_HINTS.get(str(cooldown.get('code') or ''), '')}"
+                    ),
+                    "finished_at": datetime.now().isoformat(),
+                    "error_message": str(cooldown.get("message") or "平台冷却中"),
+                    "error_code": cooldown.get("code"),
+                    "retry_after_seconds": cooldown.get("retry_after_seconds"),
+                    "platform_cooldown": cooldown,
+                }
+                await self._push_log(
+                    self._create_log_entry(
+                        f"[CrawlGuard] {self._last_result['result_message']}", "warning"
+                    )
+                )
+                await operation_coordinator.release("crawl")
                 return False
 
             # Clear old logs
@@ -243,6 +275,12 @@ class CrawlerManager:
             "result_title": None,
             "result_message": None,
             "finished_at": None,
+            "error_code": None,
+            "error_hint": None,
+            "retry_after_seconds": None,
+            "platform_cooldown": platform_cooldown(
+                self.current_config.platform.value if self.current_config else ""
+            ),
         }
         if self._last_result:
             payload.update(self._last_result)
@@ -288,14 +326,37 @@ class CrawlerManager:
                 "finished_at": finished_at,
             }
 
+        platform_name = self.current_config.platform.value if self.current_config else ""
+
+        if exit_code == BLOCKED_EXIT_CODE:
+            cooldown = platform_cooldown(platform_name) or {}
+            return {
+                "result_kind": "blocked",
+                "result_title": "平台冷却中",
+                "result_message": (
+                    f"{platform_name or '该平台'} 刚被限流/风控拦过，本次采集没有启动，"
+                    f"还需等待 {format_duration(float(cooldown.get('retry_after_seconds') or 0))}。"
+                    f"{ERROR_HINTS.get(str(cooldown.get('code') or ''), '')}"
+                ),
+                "finished_at": finished_at,
+                "error_message": str(cooldown.get("message") or "平台冷却中"),
+                "error_code": cooldown.get("code"),
+                "retry_after_seconds": cooldown.get("retry_after_seconds"),
+                "platform_cooldown": cooldown,
+            }
+
         if exit_code != 0:
             reason = self._find_last_error_reason(messages) or f"进程异常退出（退出码 {exit_code}）"
+            failure = classify_failure(reason, platform=platform_name)
             return {
                 "result_kind": "error",
                 "result_title": "抓取异常中断",
                 "result_message": f"{reason}。{progress_text}".strip("。"),
                 "finished_at": finished_at,
                 "error_message": reason,
+                "error_code": failure.code,
+                "error_hint": failure.advice,
+                "retry_after_seconds": failure.retry_after_seconds,
             }
 
         partial_line = next((m for m in reversed(messages) if "Partial completion" in m), None)

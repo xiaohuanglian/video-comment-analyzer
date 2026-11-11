@@ -1,7 +1,10 @@
 from fastapi import APIRouter, HTTPException
 
+from tools.crawl_pacing import ERROR_HINTS, format_duration, platform_cooldown
+
 from ..schemas import CrawlerStartRequest, CrawlerStatusResponse
 from ..services import crawler_manager, operation_coordinator
+from ..services.collect_inventory import local_data_inventory
 
 router = APIRouter(prefix="/crawler", tags=["crawler"])
 
@@ -11,6 +14,17 @@ async def start_crawler(request: CrawlerStartRequest):
     """Start crawler task"""
     success = await crawler_manager.start(request)
     if not success:
+        cooldown = platform_cooldown(request.platform.value)
+        if cooldown:
+            # 平台冷却中：告诉用户"还需等多久"，比笼统的启动失败有用
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{request.platform.value} 平台冷却中：还需等待 "
+                    f"{format_duration(float(cooldown.get('retry_after_seconds') or 0))}。"
+                    f"{ERROR_HINTS.get(str(cooldown.get('code') or ''), '')}"
+                ),
+            )
         active_operation = operation_coordinator.snapshot().kind
         if active_operation == "rank":
             raise HTTPException(
@@ -49,7 +63,6 @@ async def get_logs(limit: int = 100):
     """Get recent logs"""
     logs = crawler_manager.logs[-limit:] if limit > 0 else crawler_manager.logs
     return {"logs": [log.model_dump() for log in logs]}
-from ..services.collect_inventory import local_data_inventory
 
 
 @router.get("/local-data")

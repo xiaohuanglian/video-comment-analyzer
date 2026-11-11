@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import re
 import time
 import uuid
 from collections import Counter
@@ -225,15 +224,9 @@ async def analyze(body: AnalyzeRequest) -> dict[str, Any]:
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"LLM 调用失败:{e}") from e
 
-    import re
+    from api.services.llm_json import extract_json_object
 
-    m = re.search(r"\{.*\}", reply, re.S)
-    parsed: dict[str, Any] = {}
-    if m:
-        try:
-            parsed = json.loads(m.group(0))
-        except json.JSONDecodeError:
-            parsed = {}
+    parsed: dict[str, Any] = extract_json_object(reply) or {}
 
     by_vid = Counter(str(r.get("video_id") or "") for r in rows)
     report = {

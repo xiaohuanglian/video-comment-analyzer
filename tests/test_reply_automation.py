@@ -11,7 +11,6 @@ import pytest
 
 from api.services.outreach import reply_automation as auto
 
-
 # ---------------------------------------------------------------------------
 # classify_comment：产品需要人群筛选
 # ---------------------------------------------------------------------------
@@ -324,7 +323,7 @@ class TestAutomationStore:
     def test_mark_failed_backoff_and_three_strikes(self, store):
         item = _item("c1", status="approved")
         store.add_items([item])
-        for i in range(3):
+        for _ in range(3):
             store.mark_failed(item, "评论被折叠/需要验证")
         assert item["status"] == "failed"
         assert item["attempts"] == 3
@@ -698,6 +697,7 @@ class TestNotifyThrottle:
 
     def test_notify_noop_without_webhook(self):
         import asyncio
+
         from api.services import notify as nm
         assert nm.configured() is False or nm.configured() is True  # 取决于环境,不崩即可
         async def _t():
@@ -1017,7 +1017,6 @@ class TestTailHedgeLint:
 
 class TestEngagementRefresh:
     def test_fetch_reply_engagement_parses(self):
-        from api.services.outreach import reply_automation as ra
 
         class FakeResp:
             def json(self):
@@ -1236,6 +1235,85 @@ class TestXhsReadCollected:
         xhs_rows, _ = auto.read_collected(tmp_path, platform="xhs")
         assert [r["comment_id"] for r in bili_rows] == ["b1"]
         assert [r["comment_id"] for r in xhs_rows] == ["x1"]
+
+
+class TestDyPlatform:
+    """抖音通道:平台注册/采集命令/行归一/平台隔离(2026-11-10)。"""
+
+    def test_platform_registered(self):
+        assert "dy" in auto.PLATFORMS
+        assert auto.comment_dir_for("dy").name == "comments_dy"
+        assert auto.store_path_for("dy").name == "dy_reply.json"
+
+    def test_dy_rows_normalized(self, tmp_path):
+        (tmp_path / "contents_2026-11-10.jsonl").write_text(
+            json.dumps({"aweme_id": "aw1", "title": "AI做视频", "desc": "AI做视频",
+                        "aweme_url": "https://www.douyin.com/video/aw1"}, ensure_ascii=False) + "\n",
+            encoding="utf-8")
+        (tmp_path / "comments_2026-11-10.jsonl").write_text(
+            json.dumps({"comment_id": "d1", "aweme_id": "aw1", "content": "用什么软件做的",
+                        "nickname": "老王", "create_time": int(datetime.now().timestamp()) - 60,
+                        "parent_comment_id": 0}, ensure_ascii=False) + "\n",
+            encoding="utf-8")
+        rows, video_map = auto.read_collected(tmp_path, platform="dy")
+        assert len(rows) == 1
+        assert rows[0]["video_id"] == "aw1" and rows[0]["platform"] == "dy"
+        assert video_map["aw1"]["video_url"].endswith("/video/aw1")
+        assert video_map["aw1"]["title"] == "AI做视频"
+
+    def test_dy_does_not_cross_contaminate(self, tmp_path):
+        (tmp_path / "comments_2026-11-10.jsonl").write_text("\n".join([
+            json.dumps({"comment_id": "d1", "aweme_id": "aw1", "content": "dy评论", "nickname": "a",
+                        "create_time": 1, "parent_comment_id": 0}, ensure_ascii=False),
+            json.dumps({"comment_id": "x1", "note_id": "n1", "content": "xhs评论", "nickname": "b",
+                        "create_time": 1, "parent_comment_id": 0}, ensure_ascii=False),
+            json.dumps({"comment_id": "b1", "video_id": "BV1", "content": "bili评论", "nickname": "c",
+                        "create_time": 1}, ensure_ascii=False),
+        ]) + "\n", encoding="utf-8")
+        dy_rows, _ = auto.read_collected(tmp_path, platform="dy")
+        bili_rows, _ = auto.read_collected(tmp_path, platform="bili")
+        xhs_rows, _ = auto.read_collected(tmp_path, platform="xhs")
+        assert [r["comment_id"] for r in dy_rows] == ["d1"]
+        assert [r["comment_id"] for r in bili_rows] == ["b1"]  # bili 跳过 xhs+dy 行
+        assert [r["comment_id"] for r in xhs_rows] == ["x1"]
+
+    def test_collect_command_search(self):
+        cmd = auto.build_collect_command(
+            {"keywords": ["AI工具"], "max_notes_per_keyword": 10, "max_comments_per_video": 60},
+            platform="dy",
+        )
+        assert "--platform" in cmd and cmd[cmd.index("--platform") + 1] == "dy"
+        assert "--type" in cmd and cmd[cmd.index("--type") + 1] == "search"
+        assert "--keywords" in cmd
+        assert "comments_dy" in " ".join(cmd)
+        assert "--split_by_video" not in cmd  # 平铺落盘,read_collected 才找得到
+
+    def test_collect_command_detail_list(self):
+        cmd = auto.build_collect_command(
+            {"keywords": ["AI工具"], "note_urls": ["https://www.douyin.com/video/aw1"],
+             "collect_mode": "auto"},
+            platform="dy",
+        )
+        assert cmd[cmd.index("--type") + 1] == "detail"
+        assert cmd[cmd.index("--specified_id") + 1] == "https://www.douyin.com/video/aw1"
+
+    def test_dy_short_question_passes(self):
+        status, label = auto.classify_comment("要钱吗", platform="dy")
+        assert status in ("target_a", "target_b")
+        status, _ = auto.classify_comment("哈哈哈哈", platform="dy")
+        assert status == "excluded"
+
+    def test_dy_defaults_platform_specific(self):
+        # 抖音基线按平台特性独立定,不照抄小红书:高频评论文化→日发10;
+        # 风控盯规律性→低基线宽抖动(5-20分钟);楼中楼对话常态→冷却14天
+        assert auto.DY_CONFIG_OVERRIDES["daily_send_limit"] == 10
+        assert auto.DY_CONFIG_OVERRIDES["send_interval_seconds"] == 300
+        assert auto.DY_CONFIG_OVERRIDES["send_jitter_seconds"] == 900
+        assert auto.DY_CONFIG_OVERRIDES["user_cooldown_days"] == 14
+        assert auto.DY_CONFIG_OVERRIDES["freshness_b_hours"] == 720
+        # 关键节奏参数与小红书明确不同(平台差异的回归锚点)
+        assert auto.DY_CONFIG_OVERRIDES["daily_send_limit"] != auto.XHS_CONFIG_OVERRIDES["daily_send_limit"]
+        assert auto.DY_CONFIG_OVERRIDES["user_cooldown_days"] != auto.XHS_CONFIG_OVERRIDES["user_cooldown_days"]
 
 
 class TestXhsDraftViolations:

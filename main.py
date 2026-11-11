@@ -25,6 +25,13 @@ from media_platform.weibo import WeiboCrawler
 from media_platform.xhs import XiaoHongShuCrawler
 from media_platform.zhihu import ZhihuCrawler
 from tools.async_file_writer import AsyncFileWriter
+from tools.crawl_pacing import (
+    BLOCKED_EXIT_CODE,
+    CrawlBlocked,
+    CrawlPacer,
+    clear_platform_cooldown,
+    ensure_platform_available,
+)
 from var import crawler_type_var
 
 
@@ -87,8 +94,27 @@ async def main() -> None:
         print(f"Database {args.init_db} initialized successfully.")
         return
 
-    crawler = CrawlerFactory.create_crawler(platform=config.PLATFORM)
-    await crawler.start()
+    platform = config.PLATFORM
+    try:
+        ensure_platform_available(platform)
+    except CrawlBlocked as blocked:
+        # 平台还在冷却里：直接告诉用户要等多久，不启动浏览器、不发请求
+        print(f"[CrawlGuard] {blocked.failure.to_text()}")
+        raise SystemExit(BLOCKED_EXIT_CODE) from None
+
+    crawler = CrawlerFactory.create_crawler(platform=platform)
+    try:
+        await crawler.start()
+    except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
+        raise
+    except Exception as exc:
+        # 分类 + 落盘冷却：下一次采集会先被拦下，而不是重新撞墙
+        failure = CrawlPacer(platform=platform).on_failure(exc)
+        print(f"[CrawlGuard] {failure.to_text()}")
+        raise
+    else:
+        # 跑通了说明平台恢复正常，顺手解掉上一次留下的冷却
+        clear_platform_cooldown(platform)
 
     _flush_excel_if_needed()
 
