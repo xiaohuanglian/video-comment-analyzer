@@ -10,6 +10,9 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     include: ['src/**/*.test.{ts,tsx}'],
+    // 统一在每个用例后卸载 React 树：singleThread 下 document 跨文件复用，
+    // 只靠 @testing-library 的自动 cleanup 会出现"谁先跑谁影响别人"的偶发失败。
+    setupFiles: ['./src/test/setup.ts'],
     // Node 26 + vitest 的 worker 池会在启动阶段挂住（本机实测：
     // 连一个 expect(1+1) 的 smoke 测试都起不来）。单进程内跑，
     // 代价是慢一点，但稳定；CI 用的是 Node 20，不受此影响。

@@ -5,6 +5,7 @@ from tools.crawl_pacing import ERROR_HINTS, format_duration, platform_cooldown
 from ..schemas import CrawlerStartRequest, CrawlerStatusResponse
 from ..services import crawler_manager, operation_coordinator
 from ..services.collect_inventory import local_data_inventory
+from ..services.xhs_notes_inventory import get_notes
 
 router = APIRouter(prefix="/crawler", tags=["crawler"])
 
@@ -72,3 +73,22 @@ async def get_local_data():
     采集页的「本地已采数据」概览用,回答"我到底采回了什么"。
     """
     return local_data_inventory()
+
+
+@router.get("/xhs-notes")
+async def get_xhs_notes(
+    batch: str = "",
+    q: str = "",
+    sort: str = "liked",
+    limit: int = 500,
+    offset: int = 0,
+):
+    """小红书关键词笔记清单（采集页「笔记列表」用）。
+
+    数据来自 `data/xhs_search/<批次>/notes.csv`，是「只有笔记、没有评论」的
+    搜索结果；这里只读不写。`batch` 留空就给最新一批。
+    """
+    try:
+        return get_notes(batch=batch, q=q, sort=sort, limit=limit, offset=offset)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
