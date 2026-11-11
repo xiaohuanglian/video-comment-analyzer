@@ -660,19 +660,43 @@ def build_candidates(
 # LLM 语义精筛(规则粗筛管召回,这里管精度:对齐账号定位,只留值得回复的人)
 # ---------------------------------------------------------------------------
 
-_DEFAULT_NICHE = "用 AI 做视频/动画/图片内容的实战教程,只讲能落地的做法"
-_DEFAULT_AUDIENCE = "想自己动手用 AI 做内容(视频/动画/图)的新手和创作者"
+# 2026-11-11 纠正：这里原先把「我们的定位」硬编码成「用 AI 做视频/动画/图片的教程」，
+# 于是筛选标准变成「你符合我的 AI 定位吗」——做母婴/健身/本地服务的人用它，
+# 会系统性筛掉自己真正的目标用户。现在定位一律来自项目档案，代码不含任何行业预设。
+# 档案未配置时直接报错（ProfileNotConfigured），而不是悄悄用 AI 口径跑。
 
-LLM_SCREEN_PROMPT = """你是B站评论区「值得回复的人」的精筛助手。回复名额有限,只留给值得回复的人。
+LLM_SCREEN_PROMPT = """你是评论区「值得回复的人」的精筛助手。回复名额有限,只留给值得回复的人。
 
-我们是谁:{niche}
-目标受众:{audience}
+我们是谁(产品/内容定位):
+{niche}
+
+目标受众:
+{audience}
+
+我们的核心价值(用户能从我们这里得到什么):
+{value}
+
+{scenario_block}
+
+判定「值得回复」的**唯一标准**：这个人和我们的产品/内容之间,有没有真实的**接触点**。
+接触点不是「他属于我们的受众画像」,而是下列任一条成立:
+- 他正在经历我们解决的问题(痛点陈述、求助、抱怨);
+- 他在用替代方案解决同一问题(别的工具/服务/自学/找人代做),可能有替换或补充空间;
+- 他表达了与我们价值主张直接相关的疑问、怀疑或期待;
+- 他在讨论我们所在的品类/做法,能自然接话而不显突兀。
+**注意**:接触点是「问题层」的,不是「关键词层」的。用户在说「我做的图老板说太假」,
+即使一个我们的品牌词都没提,也是强接触点(他在经历我们的问题);
+反之用户只是复读了我们视频里的术语,不代表有接触点。
 
 值得回复的人分两类(lane):
-- help(帮助型):被困在我们能答的域里——用 AI 做生意/副业的实战问题:选品、获客、定价、接单、工具选型、工作流搭建,以及 AI 内容创作的做法路径。特征:具体问题、真实在动手或真准备动手、我们能给全答案。备考/学术/生活琐事等离域求助不是 help。
-- engage(互动型):对 AI 或 AI 商业机会发表真实观点/看法/体验的评论——惊叹、怀疑、预测、吐槽、经验分享、讨论。特征:有内容可接话,我们自然回应能延续对话、攒账号信用。看热闹式纯情绪("太强了""泪目")没内容可接,不是 engage。
+- help(帮助型):有明确接触点,且我们能给出**完整、可执行**的答案。特征:具体问题、真实在动手或真准备动手。我们答案覆盖不到的地方(需要专业资质、需要线下、领域外的琐事)不算 help。
+- engage(互动型):对我们的品类/做法发表真实观点、体验、怀疑或预测,有内容可接话。
+  纯情绪("太强了""泪目")没内容可接,不是 engage。
 
-一律不选(skip):纯水(666/哈哈哈/打卡)、AI生成水评、纯礼貌夸up、引战抬杠、和我们域无关的求助、购买渠道/账号充值/个案报错调试、求UP主私有资源。**纯焦虑想暴富但零行动意愿**("好焦虑""求暴富""风口不敢上")不是实干者,skip;**卖课同行/拉人头营销话术**("带你赚""上车""私我")一律 skip。
+一律不选(skip):纯水(666/哈哈哈/打卡)、AI生成水评、纯礼貌夸up、引战抬杠、
+与我们产品完全无关的求助、购买渠道/账号充值/个案报错调试、求UP主私有资源。
+**纯焦虑但零行动意愿**("好焦虑""求暴富""风口不敢上")不是实干者,skip;
+**同行/拉人头营销话术**("带你赚""上车""私我")一律 skip。
 
 对方画像(persona,六选一,决定后续回复怎么说话):
 - novice_doer 新手实干者:已在动手或真准备动手,卡在具体问题上,需要完整答案和路径
@@ -680,22 +704,34 @@ LLM_SCREEN_PROMPT = """你是B站评论区「值得回复的人」的精筛助�
 - thinker 观点讨论者:发表看法/预测/吐槽,不是求助,接话延续讨论
 - watcher 观望焦虑者:看得心动但犹豫、怕被割韭菜,需要稳住+一个能上手的第一步
 - beggar 求带党:"求带""怎么加入""带带我",只想被牵着走不想自己动手 → lane=skip
-- seller 卖课同行/营销号:拉人头、卖课、引流话术 → lane=skip
+- seller 同行/营销号:拉人头、卖课、引流话术 → lane=skip
 
 评论信号分型(选最贴近的一个,填进 intent):
 求工具/求推荐 | 求做法/路径 | 痛点吐槽求解决 | 对比纠结 | 观点/预测 | 经验分享 | 吐槽/怀疑 | 讨论闲聊 | 求UP主专属 | 离域求助
 
 打分 worth(0-10 整数):
-- help:具体问题×真实动手×我们能给全答案,三者越齐分越高
-- engage:观点有内容×能自然接话,能延续对话的吐槽/预测/体验分享高分,纯情绪低分
+- help:接触点强度 × 真实行动意愿 × 我们能答全,三者越齐分越高
+- engage:观点有内容 × 能自然接话,能延续对话的吐槽/预测/体验分享高分,纯情绪低分
 - watcher 型 engage 值得回(可转化),但值得≠被收割:他们值得一句稳住人心、能上手的真话
 
-真人鉴定(is_ai_comment):B站大量AI/Agent生成的评论,回它=机器对机器,浪费名额。AI评论特征:装饰符包裹(❀✦❖)、标签式开头("现身说法版:""这条把账算得最清楚:")、复述视频内容给结构化评价、完美"不是X是Y"翻案且无个人痕迹、精确数字考据腔、放任何视频下都成立的通用口号。真人特征:个人处境(我大一/我辞职了/家里人…)、情绪残留(语气词/错字/粗暴)、具体经历、B站原生梗和表情、@朋友闲聊。疑似AI生成 → is_ai_comment=true,一律 lane=skip,reason 写明证据。
+真人鉴定(is_ai_comment):平台有大量AI/Agent生成的评论,回它=机器对机器,浪费名额。
+AI评论特征:装饰符包裹(❀✦❖)、标签式开头("现身说法版:""这条把账算得最清楚:")、
+复述视频内容给结构化评价、完美"不是X是Y"翻案且无个人痕迹、精确数字考据腔、
+放任何视频下都成立的通用口号。真人特征:个人处境(我大一/我辞职了/家里人…)、
+情绪残留(语气词/错字/粗暴)、具体经历、平台原生梗和表情、@朋友闲聊。
+疑似AI生成 → is_ai_comment=true,一律 lane=skip,reason 写明证据。
 
-已答判定(already_answered):输入可能带「评论区已有回复」(楼中楼摘录)。若 UP 或热心人已在评论区把该问题答得靠谱完整,再答一遍像机器人刷存在感 → already_answered=true,一律 lane=skip,reason 里写明「已被答」。若已有回复只是不痛不痒/答非所问,才继续评分。
+已答判定(already_answered):输入可能带「评论区已有回复」(楼中楼摘录)。
+若 UP 或热心人已在评论区把该问题答得靠谱完整,再答一遍像机器人刷存在感 →
+already_answered=true,一律 lane=skip,reason 里写明「已被答」。
+若已有回复只是不痛不痒/答非所问,才继续评分。
 
-输入给你评论原文、所在视频标题、(若有)楼中楼摘录。只输出一个 JSON 对象,不要输出其他文字:
-{{"lane": "help|engage|skip", "persona": "novice_doer|expert_doer|thinker|watcher|beggar|seller", "intent": "信号类型", "worth": 0-10, "is_ai_comment": true|false, "already_answered": true|false, "reason": "一句话理由,给人工审核看,说清为什么值得或不值得"}}
+接触点判据(contact,必填,给人工审核看):
+写清「这个人处于哪个具体情境、为什么和我们有关」。至少包含一个具体细节
+(他的动作/处境/卡点),不许写空话。若 lane=skip 且无接触点,写"无接触点"。
+
+输入给你评论原文、所在视频标题、(若有)楼中楼摘录。只输出一个 JSON 对象:
+{{"lane": "help|engage|skip", "contact": "一句话说清他的情境与关联", "persona": "novice_doer|expert_doer|thinker|watcher|beggar|seller", "intent": "信号类型", "worth": 0-10, "is_ai_comment": true|false, "already_answered": true|false, "reason": "一句话理由,给人工审核看"}}
 """
 
 
@@ -704,16 +740,81 @@ class LlmScreenUnavailable(RuntimeError):
 
 
 def _screen_brief() -> str:
-    """账号定位注入精筛 prompt(策略档案优先,无档案用默认定位)。"""
+    """把项目档案注入精筛 prompt。
+
+    定位来源优先级：项目档案（唯一真相源）→ 策略档案（旧字段，兼容）
+    → **报错**。绝不再回落到某个内置行业，否则通用工作台又会退化成
+    「只服务 AI 内容创作者」。
+    """
+    from api.services.insight.project_profiles import (
+        ProfileNotConfigured,
+        get_profile,
+        is_configured,
+    )
+
+    profile = None
     try:
         from api.services import strategy as _strategy
 
         s = _strategy.load() or {}
     except Exception:  # noqa: BLE001
         s = {}
-    niche = str(s.get("niche") or "").strip() or _DEFAULT_NICHE
-    audience = str(s.get("target_audience") or "").strip() or _DEFAULT_AUDIENCE
-    return LLM_SCREEN_PROMPT.format(niche=niche, audience=audience)
+
+    # 优先用策略档案里显式填写的定位（用户在设置页填的），
+    # 它通常比通用 project profile 更贴近当前账号。
+    niche = str(s.get("niche") or "").strip()
+    audience = str(s.get("target_audience") or "").strip()
+
+    if not (niche and audience):
+        # 回落项目档案
+        try:
+            profile = get_profile(str(s.get("profile_id") or "") or "default")
+        except Exception:  # noqa: BLE001
+            profile = None
+        if profile is not None and is_configured(profile):
+            niche = niche or str(profile.domain or "").strip() or str(profile.name or "").strip()
+            audience = audience or str(profile.target_audience or "").strip()
+
+    if not (niche and audience):
+        raise ProfileNotConfigured(
+            "回复筛选需要先知道「我们是谁、面向谁」。请到「设置 → 账号定位」"
+            "填写 niche 与 target_audience，或配置一份项目档案（domain / target_audience）。"
+            "此前这里会静默回落到内置的 AI 内容定位，导致筛选口径整体跑偏。"
+        )
+
+    # 价值主张：档案里没这一项时用研究目标兜底，仍为空则明确写出来，
+    # 让模型知道自己没有这项信息，而不是自行编造。
+    value = ""
+    if profile is not None:
+        value = str(profile.research_goal or "").strip() or str(profile.context_compact or "").strip()
+    if not value:
+        value = "（未填写：请仅根据「定位」与「受众」判断接触点，不要假设具体卖点）"
+
+    # 切场景：如果用户已经跑过「场景矩阵」并选定场景，把它注入进来，
+    # 这样筛选会围绕"这条评论属于哪个已选场景"来判断，而不是泛泛而谈。
+    scenario_block = ""
+    selected = s.get("target_scenarios") or []
+    if isinstance(selected, list) and selected:
+        lines = []
+        for item in selected[:5]:
+            if isinstance(item, dict):
+                name = str(item.get("name") or "").strip()
+                trigger = str(item.get("trigger") or "").strip()
+                if name:
+                    lines.append(f"- {name}" + (f"（触发情境：{trigger}）" if trigger else ""))
+        if lines:
+            scenario_block = (
+                "我们当前重点切入的具体场景（评论命中这些场景的优先级更高）：\n"
+                + "\n".join(lines)
+                + "\n"
+            )
+
+    return LLM_SCREEN_PROMPT.format(
+        niche=niche,
+        audience=audience,
+        value=value,
+        scenario_block=scenario_block,
+    )
 
 
 def _extract_screen_json(reply: str) -> Optional[dict[str, Any]]:

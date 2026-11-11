@@ -18,7 +18,49 @@ def _isolate_profiles(tmp_path, monkeypatch):
 def test_builtin_profiles_available():
     ids = {p.profile_id for p in pp.list_profiles()}
     assert ids == {"default"}
-    assert pp.get_profile("default").hypotheses["H1"]
+    default = pp.get_profile("default")
+    # 2026-11-11：默认档案是**领域中立占位**，不再自带 AI 行业假设。
+    assert default.domain == ""
+    assert default.hypotheses == {}
+    assert pp.is_configured(default) is False
+
+
+def test_default_profile_is_not_configured():
+    """默认档案不含任何行业预设——这是「通用工作台」的底线。"""
+    default = pp.get_profile("default")
+    blob = " ".join(
+        str(v)
+        for v in (
+            default.domain,
+            default.target_audience,
+            default.research_goal,
+            default.content_persona,
+        )
+    )
+    for banned in ("AI", "视频", "动画", "健身", "训练", "提示词", "创作者"):
+        assert banned not in blob, f"默认档案不应预设「{banned}」：{blob}"
+
+
+def test_require_profile_refuses_unconfigured_default():
+    """需要行业口径的调用必须报错，不能静默用占位档案跑。"""
+    import pytest as _pytest
+
+    with _pytest.raises(pp.ProfileNotConfigured):
+        pp.require_profile("default")
+
+
+def test_require_profile_accepts_configured_custom(tmp_path, monkeypatch):
+    _isolate_profiles(tmp_path, monkeypatch)
+    pp.upsert_profile(
+        pp.ProjectProfile(
+            profile_id="shop",
+            name="本地花店",
+            domain="同城鲜花零售",
+            target_audience="想给伴侣送花但不懂花的男性",
+            research_goal="找出他们选花时的犹豫与踩坑",
+        )
+    )
+    assert pp.require_profile("shop").profile_id == "shop"
 
 
 def test_legacy_profile_ids_alias_to_default():
@@ -74,11 +116,21 @@ def test_resolve_profile_falls_back_to_default():
     assert pp.resolve_profile(config).profile_id == "default"
 
 
-def test_research_prompt_uses_profile_hypotheses():
-    default = pp.get_profile("default")
-    prompt = build_research_system_prompt(default)
-    assert default.hypothesis_short["H1"] in prompt
-    # no vertical-specific vocabulary may leak into the neutral default
+def test_research_prompt_uses_profile_hypotheses(tmp_path, monkeypatch):
+    """假设来自**已配置**的档案，而不是内置默认。"""
+    _isolate_profiles(tmp_path, monkeypatch)
+    custom = pp.ProjectProfile(
+        profile_id="shop",
+        name="本地花店",
+        domain="同城鲜花零售",
+        target_audience="想送花但不懂花的男性",
+        research_goal="找出选花时的犹豫",
+        hypotheses={"H1": "他们不知道送什么花合适"},
+        hypothesis_short={"H1": "不知道选哪种花"},
+    )
+    prompt = build_research_system_prompt(custom)
+    assert "不知道选哪种花" in prompt
+    # no vertical-specific vocabulary may leak into any neutral default
     for banned in ("健身", "训练", "跟练", "实时视觉识别"):
         assert banned not in prompt
 
@@ -103,10 +155,15 @@ def test_suggest_profile_normalizes_and_validates():
     )
     profile = validate_suggested_profile(data)
     assert profile.name
-    assert profile.hypotheses["H1"]
-    assert profile.hypothesis_short["H3"]
     assert profile.decision_keywords
     assert profile.is_builtin is False
+    # 2026-11-11：模板生成的档案**不得自带行业定位**（原先复制了 AI 档案）。
+    assert profile.domain == ""
+    # 验证器会补出 H1-H3 骨架键，但**不该有内容**
+    assert not any(str(v).strip() for v in profile.hypotheses.values())
+    assert pp.is_configured(profile) is False
+    # 但仍要从评论里带出可编辑的线索，而不是一份空壳
+    assert profile.research_goal
 
 
 def test_profile_taxonomy_drives_statistics_labels():

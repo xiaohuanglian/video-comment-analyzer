@@ -657,6 +657,68 @@ export interface InsightReport {
   waiting_for_open_themes?: boolean
 }
 
+
+// ---------------------------------------------------------------------------
+// 切场景（/api/topics/scenario/*）
+//
+// 回答的是「除了我想到的那几个场景，还有哪些地方能打」。
+// 六个轴：身份/困境/替代/触发/否认/邻近——不从产品功能反推，从用户生活情境出发。
+// ---------------------------------------------------------------------------
+
+export interface ScenarioAxis {
+  key: string
+  label: string
+  description: string
+}
+
+export interface Scenario {
+  name: string
+  axis: string
+  axis_label: string
+  /** 具体触发情境（When & Why），写得像一个人的真实瞬间 */
+  trigger: string
+  pain: string
+  /** 我们的产品在这里具体提供什么 */
+  entry: string
+  /** 可直接粘进搜索框的用户原话 */
+  keywords: string[]
+  platforms: string[]
+  why_underused: string
+  /** 低/中/高 + 一句理由；诚实评估比乐观更有用 */
+  competitor_density: string
+  /** 以下全部由代码回算，模型不许报数字 */
+  hits: number | null
+  users: number | null
+  videos: number | null
+  sample_quotes: string[]
+  /** 有信号 / 弱信号 / 无信号 */
+  verdict: string
+}
+
+export interface ScenarioPlanResult {
+  positioning: string
+  audience: string
+  axes: ScenarioAxis[]
+  scenarios: Scenario[]
+  warnings: string[]
+  verified: boolean
+  message: string
+}
+
+export interface ScenarioVerifyResult {
+  scenarios: Scenario[]
+  stats: {
+    total: number
+    with_signal?: number
+    weak_signal?: number
+    no_signal?: number
+    verified: number
+    axis_coverage?: Record<string, number>
+    warnings?: string[]
+  }
+  corpus_size: number
+}
+
 export const api = {
   automationStatus: (platform: AutomationPlatform = 'bili') =>
     req<AutomationStatus>(`/automation/status?platform=${platform}`),
@@ -917,6 +979,30 @@ export const api = {
   studioRuns: (limit = 20) => req<StudioRun[]>(`/studio/runs?limit=${limit}`),
   // 三源选题：评论痛点 / 洗稿台 / 事件（api/routers/topics.py 新增接口）
   // 轻量数据指纹：选题中心用它判断「数据有没有变」，不变就不重拉、不重算
+
+  // ---- 切场景 ----
+  scenarioPlan: (payload: {
+    positioning?: string
+    audience?: string
+    value?: string
+    existing_hint?: string
+    limit?: number
+  }) =>
+    req<ScenarioPlanResult>('/topics/scenario/plan', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  scenarioVerify: (scenarios: Scenario[]) =>
+    req<ScenarioVerifyResult>('/topics/scenario/verify', {
+      method: 'POST',
+      body: JSON.stringify({ scenarios }),
+    }),
+  scenarioAdopt: (scenarios: Scenario[]) =>
+    req<{ ok: boolean; target_scenarios: unknown[] }>('/topics/scenario/adopt', {
+      method: 'POST',
+      body: JSON.stringify({ scenarios }),
+    }),
+
   topicVersion: () =>
     req<{
       version: string

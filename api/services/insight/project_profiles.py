@@ -80,37 +80,45 @@ class ProjectProfile(BaseModel):
 
 
 def _builtin_default() -> ProjectProfile:
+    """领域中立的占位档案。
+
+    2026-11-11 纠正：这里原先是「AI 教学与分享（默认）」——领域、受众、假设、
+    词表全是 AI 内容创作者口径。后果是：一个做母婴/健身/本地服务的用户，
+    即使一个字都没填，采集、洞察、选题也按 AI 内容口径跑，结果全是噪音。
+
+    现在这个档案**只提供结构，不预设任何行业**：domain/target_audience 留空，
+    `is_configured()` 返回 False，需要用户（或 AI 生成档案）填入真实定位后
+    才会被当作有效档案使用。
+
+    为什么仍保留它而不是直接报错：架构里 `resolve_profile()` 需要一个兜底对象，
+    且「只看评论结构、不判行业」的纯统计功能（词频、时间分布）不需要档案。
+    需要行业口径的功能必须显式调 `require_profile()`。
+    """
     return ProjectProfile(
         profile_id="default",
-        name="AI 教学与分享（默认）",
-        domain="AI 教学与知识分享",
-        research_goal="从 AI 学习者与从业者的真实评论中，发现他们在学习/使用 AI 时的需求、卡点与内容机会。",
-        target_audience="想学会用 AI 提升效率的职场人、内容创作者与学生，以及对 AI 好奇的入门者。",
-        forbidden_claims="不得声称已验证需求、市场规模、付费意愿或某项 AI 的确定效果，除非代码统计直接支持。",
-        context_compact=(
-            "研究目标：发现 AI 学习/使用中的需求、卡点与内容选题机会。"
-            "禁止：把玩笑/玩梗当作核心标签；把个别案例夸大为普遍需求。"
+        name="未配置（请先填写你的产品/领域）",
+        domain="",
+        research_goal="",
+        target_audience="",
+        forbidden_claims=(
+            "不得声称已验证需求、市场规模、付费意愿，除非代码统计直接支持；"
+            "不得把玩笑/玩梗当作核心标签；不得把个别案例夸大为普遍需求。"
         ),
+        context_compact="（尚未配置项目档案：请先填写你的产品、目标人群与研究目标。）",
         context_full=(
-            "研究目标：发现 AI 学习/使用中的需求、卡点与内容机会，并评估产品/内容假设。"
-            "禁止：把玩笑/玩梗当作核心标签；把个别案例夸大为普遍需求；把 AI 能力夸大为一定能达成的结果。"
+            "（尚未配置项目档案。本档案不含任何行业预设，"
+            "因此不应据此推断用户所属领域、需求或利益点。）"
         ),
-        hypotheses={
-            "H1": "用户在学习或使用 AI 时存在明确、反复出现的卡点（不知道从哪学、工具太多、不知道怎么落地）。",
-            "H2": "现有教程/课程/工具无法很好满足：太理论、太零散、跟不上更新或缺少场景示范。",
-            "H3": "部分用户愿意为更系统的学习或更好的工具付出时间、注意力或金钱。",
-        },
-        hypothesis_short={
-            "H1": "存在反复出现的 AI 学习/使用卡点",
-            "H2": "现有教程/工具不够好",
-            "H3": "存在投入/付费意愿",
-        },
+        # 行业相关的假设一律留空——由用户或 AI 生成档案填入。
+        hypotheses={},
+        hypothesis_short={},
         hypothesis_rules=(
             "- 只有单一或少样本时，结论必须为 mixed 或 insufficient。\n"
             "- 弱上下文（weak_context）不得支撑结论。\n"
             "- 区分「表达偏好」与「实际行为/付费」。"
         ),
-        decision_keywords=["怎么学", "不会用", "教程", "提示词", "工具", "效果", "踩坑", "替代", "付费", "为什么不"],
+        # 这些是跨行业通用的检索/噪音/疑问信号，与具体卖什么无关，可保留。
+        decision_keywords=["怎么", "不会", "教程", "推荐", "效果", "踩坑", "替代", "付费", "为什么不", "值不值"],
         noise_markers=["哈哈", "支持", "沙发", "第一", "点赞", "路过", "签到"],
         theme_risk_tokens=["风险", "坑", "骗", "割韭菜", "后悔"],
         theme_difficulty_tokens=["不会", "难", "搞不定", "学不会", "麻烦", "卡住"],
@@ -118,13 +126,61 @@ def _builtin_default() -> ProjectProfile:
         realtime_tokens=list(REALTIME_VIDEO_KEYWORDS),
         personalized_tokens=list(PERSONALIZED_VIDEO_KEYWORDS),
         positive_result_tokens=list(POSITIVE_RESULT_KEYWORDS),
-        content_persona="既懂 AI 又能把复杂概念讲明白的老师型创作者口吻；具体、有示范、不夸大、不制造焦虑、不硬推广。",
-        content_platforms=["短视频", "图文", "长文", "课程/直播"],
+        content_persona="",
+        content_platforms=[],
         intents=default_intents(),
         signals=default_signals(),
         opportunity_templates=[],
         is_builtin=True,
     )
+
+
+#: 判断一个档案是否「真的被配置过」。只看用户必须自己填的那几项，
+#: 不看词表/模板（那些有通用默认值，填不填都能跑）。
+_REQUIRED_PROFILE_FIELDS = ("domain", "target_audience", "research_goal")
+
+
+def is_configured(profile: Optional[ProjectProfile]) -> bool:
+    """档案是否包含真实定位（而非内置占位）。"""
+    if profile is None:
+        return False
+    return all(str(getattr(profile, field, "") or "").strip() for field in _REQUIRED_PROFILE_FIELDS)
+
+
+class ProfileNotConfigured(RuntimeError):
+    """需要行业口径，但当前档案是未配置的占位档案。"""
+
+    def __init__(self, message: str = "") -> None:
+        super().__init__(
+            message
+            or "还没有配置项目档案。请先在「设置 → 项目档案」填写你的产品、目标人群与研究目标"
+            "（或用「AI 根据评论生成档案」生成一份），否则采集口径、筛选标准与选题都会失准。"
+        )
+
+
+def require_profile(profile_id: str = "") -> ProjectProfile:
+    """取一个**已配置**的档案；未配置则抛 ProfileNotConfigured。
+
+    凡是要按行业判断的功能（评论筛选、洞察、选题、切场景）都应走这里，
+    而不是 `get_profile()` —— 后者会静默回落到占位档案，产生看起来正常
+    但完全跑偏的结果。
+    """
+    profile = get_profile(profile_id) if profile_id else None
+    if profile is None:
+        candidates = [p for p in list_profiles() if is_configured(p)]
+        if len(candidates) == 1:
+            return candidates[0]
+        if not candidates:
+            raise ProfileNotConfigured()
+        raise ProfileNotConfigured(
+            "有多个已配置的档案，请明确指定要用哪一个：" + "、".join(p.profile_id for p in candidates)
+        )
+    if not is_configured(profile):
+        raise ProfileNotConfigured(
+            f"档案「{profile.name}」还缺少 domain / target_audience / research_goal，"
+            "填完才能用于按行业口径的分析与筛选。"
+        )
+    return profile
 
 
 def builtin_profiles() -> Dict[str, ProjectProfile]:

@@ -476,12 +476,51 @@ class TestLlmScreen:
         brief = auto._screen_brief()
         assert "给新手的AI视频实战教程" in brief and "上班族" in brief
 
-    def test_screen_brief_falls_back_to_default(self, monkeypatch):
+    def test_screen_brief_refuses_when_unconfigured(self, monkeypatch):
+        """没有定位时**必须报错**，不能回落到内置行业口径。
+
+        原先这里会静默用「用 AI 做视频/动画的教程」当定位，于是做母婴、
+        健身、本地服务的人用同一个功能，目标用户会被系统性筛掉。
+        """
         from api.services import strategy as strategy_mod
+        from api.services.insight.project_profiles import ProfileNotConfigured
 
         monkeypatch.setattr(strategy_mod, "load", lambda: {})
+        with pytest.raises(ProfileNotConfigured):
+            auto._screen_brief()
+
+    def test_screen_brief_uses_configured_positioning(self, monkeypatch):
+        from api.services import strategy as strategy_mod
+
+        monkeypatch.setattr(
+            strategy_mod,
+            "load",
+            lambda: {"niche": "同城鲜花配送", "target_audience": "想送花但不懂花的男性"},
+        )
         brief = auto._screen_brief()
-        assert auto._DEFAULT_NICHE in brief
+        assert "同城鲜花配送" in brief
+        assert "想送花但不懂花的男性" in brief
+        # 不应再夹带任何 AI 行业预设
+        assert "AI 做视频" not in brief
+
+    def test_screen_brief_injects_selected_scenarios(self, monkeypatch):
+        """选定场景后，筛选 prompt 要围绕这些场景判断。"""
+        from api.services import strategy as strategy_mod
+
+        monkeypatch.setattr(
+            strategy_mod,
+            "load",
+            lambda: {
+                "niche": "同城鲜花配送",
+                "target_audience": "想送花的男性",
+                "target_scenarios": [
+                    {"name": "纪念日临时抱佛脚", "trigger": "明天就是纪念日"}
+                ],
+            },
+        )
+        brief = auto._screen_brief()
+        assert "纪念日临时抱佛脚" in brief
+        assert "明天就是纪念日" in brief
 
 
 class TestLaneModel:

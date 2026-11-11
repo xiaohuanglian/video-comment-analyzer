@@ -8,10 +8,11 @@ this once, reviews the generated profile in the JSON editor, and saves it.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, List
 
 from .llm_analyzer import build_openai_client
-from .project_profiles import ProjectProfile, builtin_profiles
+from .project_profiles import ProjectProfile
 
 SUGGEST_SYSTEM = (
     "你是评论洞察系统的配置助手。根据用户提供的真实评论文本，推断这个产品/内容所面向的业务场景，"
@@ -84,7 +85,8 @@ def _taxonomy_items(raw: Any, default_items: List[Dict[str, str]]) -> List[Dict[
 
 
 def _normalize(raw: Dict[str, Any]) -> Dict[str, Any]:
-    from .project_profiles import default_intents, default_signals
+    # 用内置默认档案补齐缺省字段（它已中立化：缺省 = 空，不再注入行业）。
+    from .project_profiles import builtin_profiles, default_intents, default_signals
 
     base = builtin_profiles()["default"]
     out: Dict[str, Any] = {}
@@ -119,15 +121,36 @@ def _normalize(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _template(comments: List[str]) -> Dict[str, Any]:
-    base = builtin_profiles()["default"]
+    """无模型时的兜底档案：**只从评论本身推结构，不注入任何行业**。
+
+    2026-11-11：原先直接复制 `builtin_profiles()["default"]`，而默认档案
+    曾是「AI 教学」——于是没配 Key 的用户点「AI 生成档案」，拿到的是
+    一份和评论无关的 AI 档案。默认档案中立化后，这里改为按评论的真实
+    信号给出可编辑的空壳，并明确标注「模板生成，需人工确认」。
+    """
+    from collections import Counter
+
+    sample = [c for c in comments if c and c.strip()]
+    # 用高频词做一份粗略的领域中立提示，帮助用户起笔，但不冒充结论。
+    tokens: Counter[str] = Counter()
+    for text in sample:
+        for word in re.findall(r"[\u4e00-\u9fff]{2,4}", text):
+            tokens[word] += 1
+    frequent = [w for w, _ in tokens.most_common(8)]
+
+    seed = "、".join(frequent[:5]) if frequent else "（评论不足，请手动填写）"
     return _normalize(
         {
-            "name": f"{base.name}（自动生成·模板）",
-            "domain": base.domain,
-            "research_goal": base.research_goal,
-            "target_audience": base.target_audience,
-            "content_persona": base.content_persona,
-            "content_platforms": base.content_platforms,
+            "name": "待确认档案（模板生成）",
+            "domain": "",
+            "research_goal": f"从真实评论中找出与「{seed}」相关的需求与卡点（请人工确认后改写）。",
+            "target_audience": "",
+            "context_compact": "（模板生成的占位档案：请根据评论补充 domain 与 target_audience。）",
+            "context_full": "（模板生成的占位档案：请根据评论补充 domain 与 target_audience，否则按行业口径的功能不可用。）",
+            "hypotheses": {},
+            "hypothesis_short": {},
+            "content_persona": "",
+            "content_platforms": [],
         }
     )
 
