@@ -26,8 +26,8 @@ from .theme_schemas import (
     Round1ResponseLLM,
     Round2ResponseLLM,
     ThemeRecord,
-    ThemeStats,
     ThemesDocument,
+    ThemeStats,
 )
 
 BATCH_SIZE = 40
@@ -292,8 +292,8 @@ def _llm_json_call(
                 # accept it when it still parses.
                 try:
                     return schema_model.model_validate(json.loads(raw)), usage
-                except Exception:
-                    raise json.JSONDecodeError("output truncated by max_tokens", raw or "{}", 0)
+                except Exception as exc:
+                    raise json.JSONDecodeError("output truncated by max_tokens", raw or "{}", 0) from exc
             return schema_model.model_validate(json.loads(raw or "{}")), usage
         except Exception as exc:  # API, JSON and schema failures are all retryable once.
             last_error = exc

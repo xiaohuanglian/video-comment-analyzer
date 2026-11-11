@@ -5,7 +5,6 @@ import re
 from pathlib import Path
 from typing import Optional
 
-
 _INVALID_PATH_CHARS = re.compile(r'[\\/:*?"<>|\r\n\t]+')
 _MULTI_UNDERSCORE = re.compile(r"_+")
 

@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 from .exception import DataFetchError
 from .field import CommentOrderType, SearchOrderType
 from .help import BilibiliSign
-from tools.crawl_pacing import CrawlPacer, is_rate_limited
+from tools.crawl_pacing import CrawlPacer, is_rate_limited, platform_slot
 
 
 class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
@@ -78,8 +78,11 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
         # Check if proxy has expired before each request
         await self._refresh_proxy_if_expired()
 
-        async with make_async_client(proxy=self.proxy) as client:
-            response = await client.request(method, url, timeout=self.timeout, **kwargs)
+        # 平台冷却软等待 + 平台并发槽位（同平台最多 N 条并发，见 tools/crawl_pacing.py）
+        await self._pacer.before_request()
+        async with platform_slot("bili"):
+            async with make_async_client(proxy=self.proxy) as client:
+                response = await client.request(method, url, timeout=self.timeout, **kwargs)
         try:
             data: Dict = response.json()
         except json.JSONDecodeError:

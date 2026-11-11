@@ -20,8 +20,9 @@ from media_platform.xhs import XiaoHongShuCrawler
 from media_platform.xhs.help import parse_creator_info_from_url as parse_xhs_creator
 from media_platform.zhihu import ZhihuCrawler
 from model.m_zhihu import ZhihuCreator
-from tools.crawler_util import safe_int
 from tools import utils
+from tools.crawler_util import safe_int
+
 from .platform_capabilities import get_platform_capabilities
 
 _rank_lock = asyncio.Lock()

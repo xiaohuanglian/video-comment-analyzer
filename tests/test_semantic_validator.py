@@ -20,7 +20,7 @@ from api.services.insight.semantic_validator import (
     run_semantic_review,
     sanitize_item_semantics,
 )
-from api.services.insight.theme_schemas import ThemeRecord, ThemeStats, ThemesDocument
+from api.services.insight.theme_schemas import ThemeRecord, ThemesDocument, ThemeStats
 
 
 def _record(rid: str, text: str, source_file: str = "a.csv") -> SourceRecord:

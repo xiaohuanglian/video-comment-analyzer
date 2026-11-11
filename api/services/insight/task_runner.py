@@ -3,11 +3,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import threading
 from typing import Callable, Dict, Optional
-
-import hashlib
-
 
 _lock = threading.RLock()
 _active: Dict[str, threading.Thread] = {}

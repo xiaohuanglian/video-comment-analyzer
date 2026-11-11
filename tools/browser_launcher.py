@@ -1,12 +1,10 @@
 import os
 import platform
+import signal
+import socket
 import subprocess
 import time
-import socket
-import signal
-from typing import Optional, List, Tuple
-import asyncio
-from pathlib import Path
+from typing import List, Optional, Tuple
 
 from tools import utils
 
@@ -225,7 +223,7 @@ class BrowserLauncher:
                 result = subprocess.run([browser_path, "--version"],
                                       capture_output=True, text=True, encoding='utf-8', errors='ignore', timeout=5)
                 version = result.stdout.strip() if result.stdout else "Unknown Version"
-            except:
+            except Exception:  # noqa: BLE001 - 探测失败不该让浏览器启动失败
                 version = "Unknown Version"
 
             return name, version

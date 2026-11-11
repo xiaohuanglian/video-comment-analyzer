@@ -12,6 +12,8 @@ from api.services.insight.candidate_schemas import (
     ReplyControl,
 )
 from api.services.insight.field_mapping import parse_bilibili_targets
+from api.services.insight.schemas import FieldMapping, RunConfig
+from api.services.insight.storage import create_run, load_outreach, save_outreach
 from api.services.outreach.outreach import merge_outreach_update
 from api.services.outreach.reply_runner import (
     ReplyRun,
@@ -20,8 +22,6 @@ from api.services.outreach.reply_runner import (
     start_reply_run,
     stop_reply_run,
 )
-from api.services.insight.schemas import FieldMapping, RunConfig
-from api.services.insight.storage import create_run, load_outreach, save_outreach
 
 
 def _isolate(tmp_path, monkeypatch):

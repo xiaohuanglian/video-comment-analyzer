@@ -7,9 +7,8 @@ import asyncio
 import json
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set
 
 from openai import AsyncOpenAI
 from pydantic import ValidationError
@@ -33,7 +32,6 @@ from .evidence_schemas import (
     PrimaryExpression,
     RecordStatus,
     SpeakerScope,
-    compute_evidence_level,
 )
 from .llm_analyzer import LlmUsage, build_openai_client, parse_usage
 from .schemas import RunConfig, SourceRecord

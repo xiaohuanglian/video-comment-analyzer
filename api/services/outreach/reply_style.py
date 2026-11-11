@@ -17,49 +17,36 @@ from __future__ import annotations
 import re
 from typing import List
 
+# 共享写作规则：稿件质检（api/services/content_quality.py）与评论区回复共用一份，
+# 避免两套词表各自漂移。改规则改共享层，两边同时生效。
+from api.services.content_quality import (
+    JARGON_WORDS as _JARGON_WORDS,
+)
+from api.services.content_quality import (
+    RE_CONNECTIVES as _RE_CONNECTIVES,
+)
+from api.services.content_quality import (
+    RE_FAKE_PRECISION as _RE_FAKE_PRECISION,
+)
+from api.services.content_quality import (
+    RE_TAIL_HEDGE as _RE_TAIL_HEDGE,
+)
+from api.services.content_quality import (
+    RE_TAIL_OPEN_QUESTION as _RE_TAIL_OPEN_QUESTION,
+)
+from api.services.content_quality import (
+    RE_TAIL_PUNCHLINE as _RE_TAIL_PUNCHLINE,
+)
+from api.services.content_quality import (
+    REVERSAL_PATTERNS as _REVERSAL_PATTERNS,
+)
+from api.services.content_quality import (
+    tail_sentence as _tail_sentence,
+)
+
 # ---------------------------------------------------------------------------
 # 硬禁令（命中即在 style_warnings 里标出，人工闸门决定是否修改）
 # ---------------------------------------------------------------------------
-
-# 翻案腔：先立一个对方并没有的误解，再推翻它抬价
-_REVERSAL_PATTERNS: list[tuple[str, str]] = [
-    (r"不是[^。；？！]{1,20}而是", "翻案句式「不是……而是……」"),
-    (r"并非[^。；？！]{1,20}而是", "翻案句式「并非……而是……」"),
-    (r"不在于[^。；？！]{1,20}而在于", "翻案句式「不在于……而在于……」"),
-    (r"与其说[^。；？！]{1,20}不如说", "翻案句式「与其说……不如说……」"),
-    (r"(表面|看似|表面上)[^。；？！]{0,20}(实际|实则|其实)", "翻案句式「表面……实际……」"),
-    (r"你以为[^。；？！]{1,20}其实", "翻案句式「你以为……其实……」"),
-    (r"说到底", "翻案腔「说到底」"),
-    (r"答案恰恰", "翻案腔「答案恰恰相反」"),
-]
-
-# 模型腔/营销腔黑话（评论区回复里直接禁）
-_JARGON_WORDS: list[str] = [
-    "赋能",
-    "抓手",
-    "闭环",
-    "底层逻辑",
-    "顶层设计",
-    "颗粒度",
-    "对齐一下",
-    "认知升级",
-    "破圈",
-    "私域",
-    "干货满满",
-    "宝藏博主",
-    "码住",
-    "建议收藏",
-    "值得关注",
-    "值得注意的是",
-    "需要指出的是",
-    "从某种意义上说",
-    "说白了",
-    "说穿了",
-    "先说结论",
-    "更微妙的是",
-    "还有一层",
-    "只说对了一半",
-]
 
 # 连接号式破折号一律禁
 _DASH_CHARS = "—–−—―"
@@ -81,19 +68,7 @@ _POINTING_PATTERNS: list[tuple[str, str]] = [
     (r"(好多人|很多人|大家)都?在?(评论区)?(找|问|求|蹲)", "无信息量元评论，删除"),
 ]
 
-# 结尾开放反问(AI味最强特征:真人接话陈述完就走,抛回去的是运营号)
-# 只打引导互动式(你觉得/怎么看/哪个好/是不是这样),不打针对对方处境的具体提问
-_RE_TAIL_OPEN_QUESTION = re.compile(
-    r"(你觉得|你们觉得|大家觉得|大伙觉得|怎么(看|想|说)|哪个(更)?好|"
-    r"是不是.{0,14}(呢|吗)[?？。]?$|你说?是不是|(不是吗|对吧|对不对)$|"
-    r"你们说|评论区.{0,6}(聊聊|讨论)|欢迎.{0,6}(讨论|分享))"
-)
 
-# 金句收尾(观点可留,收束句像文案;粗检,warning 级)
-_RE_TAIL_PUNCHLINE = re.compile(
-    r"(本质上|归根结底|真正的?.{0,12}(是|在于)|从来不是|缺的不是|差的不是|"
-    r"补不了|拼的是|才是(关键|根本|核心|真相)|说到底)"
-)
 
 # 套话开场(模型高频共情模板)
 _RE_CLICHE_OPEN = re.compile(r"^(太真实了|太对了|说到心坎|深有同感|感同身受|简直说到)")
@@ -104,28 +79,9 @@ _RE_TRANSLATION_TONE = re.compile(r"进行(一|了|一次)?(分析|处理|优化
 # 群发味称呼
 _RE_BROADCAST_TONE = re.compile(r"亲[，,!！]|家人们")
 
-# 编造感精确数字:小数点参数真人开口极少说(0.2秒/12.5%),整数约数(3到5秒)正常
-_RE_FAKE_PRECISION = re.compile(r"\d+\.\d+\s*(秒|分钟|小时|%|倍|张|条|次|个点)")
-
-# 模板化不确定尾巴(被模型当固定签名复制:"这块我也还在试/确认/摸索",批量看最重 AI 感)
-# 只打「现在进行时+位于末句」的模式;过去式经验("我之前也这么试过")不误伤
-_RE_TAIL_HEDGE = re.compile(
-    r"(这块|这个|这方面|这条)[^。]{0,8}还在(试|确认|摸索|调整|找|踩|验)|"
-    r"我也还在|我到现在(也|还)|(没|不)(法|能)?(完全|彻底)(跑通|搞定|稳|摸透|想明白)"
-)
-
-# 固定连接词(堆叠才报)
-_RE_CONNECTIVES = re.compile(r"然而|事实上|值得注意的是|更重要的是|与此同时|不得不说")
 
 
-def _tail_sentence(text: str) -> str:
-    """取末句:先去尾部标点,再按句读切取最后一段(末尾分隔符不会再产生空段)。"""
-    t = (text or "").strip().rstrip("。！!？?～~\n ")
-    if not t:
-        return ""
-    parts = re.split(r"[。！!？?]", t)
-    tail = parts[-1] if parts[-1] else (parts[-2] if len(parts) > 1 else t)
-    return tail.strip()
+
 
 
 def check_reply_style(text: str) -> List[str]:

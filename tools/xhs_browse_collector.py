@@ -32,8 +32,8 @@ from api.services.outreach.xhs_reply_sender import ReplySendError, _connect_brow
 from tools.human_behavior import (
     dwell_seconds,
     human_pause,
-    smooth_scroll,
     scroll_container_smooth,
+    smooth_scroll,
 )
 
 _SEARCH_URL = "https://www.xiaohongshu.com/search_result?keyword={keyword}&source=web_explore_feed"

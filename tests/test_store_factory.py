@@ -2,19 +2,20 @@
 Unit tests for Store Factory functionality
 """
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
+import pytest
+
+from store.excel_store_base import ExcelStoreBase
 from store.xhs import XhsStoreFactory
 from store.xhs._store_impl import (
     XhsCsvStoreImplement,
-    XhsJsonStoreImplement,
-    XhsJsonlStoreImplement,
     XhsDbStoreImplement,
-    XhsSqliteStoreImplement,
+    XhsJsonlStoreImplement,
+    XhsJsonStoreImplement,
     XhsMongoStoreImplement,
+    XhsSqliteStoreImplement,
 )
-from store.excel_store_base import ExcelStoreBase
 
 
 class TestXhsStoreFactory:

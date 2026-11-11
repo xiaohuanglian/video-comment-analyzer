@@ -4,15 +4,15 @@
 from __future__ import annotations
 
 from api.services.insight.ab_blind_pack import select_blind_sample_ids
-from api.services.insight.evidence_extractor import extract_evidence_card_mock, extract_batch_with_split
+from api.services.insight.evidence_extractor import extract_batch_with_split, extract_evidence_card_mock
 from api.services.insight.evidence_schemas import (
     EvidenceCard,
     PrimaryExpression,
     RecordStatus,
     Validity,
-    normalize_validity,
     is_participating_validity,
     is_spam_validity,
+    normalize_validity,
 )
 from api.services.insight.performance_metrics import PerformanceMetrics
 from api.services.insight.schemas import SourceRecord

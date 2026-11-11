@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+
 from openai import OpenAI
 
 APP_DIR = Path(__file__).resolve().parents[1]
@@ -21,8 +22,8 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
 from api.services.insight.analyzer import build_summary, run_analysis_batch
-from api.services.insight.evidence_schemas import EVIDENCE_PROMPT_VERSION
 from api.services.insight.evidence_extractor import call_evidence_batch_llm
+from api.services.insight.evidence_schemas import EVIDENCE_PROMPT_VERSION
 from api.services.insight.run_locations import run_dir_for_id
 from api.services.insight.schemas import SourceRecord
 from api.services.insight.storage import (

@@ -10,7 +10,6 @@ from typing import Any, Optional
 from .schemas import SourceRecord
 from .storage import append_evidence_card
 
-
 _SENTINEL = object()
 
 

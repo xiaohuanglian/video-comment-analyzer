@@ -4,7 +4,6 @@ from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-
 PlatformType = Literal["xhs", "dy", "ks", "bili", "wb", "tieba", "zhihu"]
 FetchOrderType = Literal["default", "pubdate", "click", "dm", "stow"]
 

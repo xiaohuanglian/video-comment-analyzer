@@ -13,13 +13,13 @@ import random
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Sequence
 
 APP_DIR = Path(__file__).resolve().parents[1]
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-from api.services.insight.ab_blind_pack import select_blind_sample_ids, TARGET_TOTAL
+from api.services.insight.ab_blind_pack import TARGET_TOTAL, select_blind_sample_ids
 from api.services.insight.storage import load_evidence_cards, load_results
 
 DEFAULT_LEGACY_RUN = ""  # pass --legacy-run with your own run_id

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 from .candidate_schemas import CandidateComment, CandidateRecord, CandidatesDocument
 from .evidence_adapter import analysis_dict_from_result_row

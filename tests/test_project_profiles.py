@@ -3,10 +3,10 @@
 
 from __future__ import annotations
 
-from api.services.insight import project_profiles as pp
 from api.services.insight import paths as insight_paths
+from api.services.insight import project_profiles as pp
 from api.services.insight.evidence_prompts import build_research_system_prompt
-from api.services.insight.readable_report import _reportable_themes, _is_reportable_theme
+from api.services.insight.readable_report import _is_reportable_theme, _reportable_themes
 from api.services.insight.schemas import FieldMapping, RunConfig
 
 

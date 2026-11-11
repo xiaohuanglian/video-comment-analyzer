@@ -17,19 +17,18 @@ import asyncio
 import random
 from typing import Optional
 
-from tools import utils
-
 try:  # playwright is a hard dependency of the project already
     from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 except Exception:  # pragma: no cover - tests run without browser
     async_playwright = None  # type: ignore[assignment]
 
-from .reply_sender import ReplySendError
 from tools.human_behavior import (
     human_click,
     human_pause,
     scroll_container_smooth,
 )
+
+from .reply_sender import ReplySendError
 
 _XHS_NOTE_URL = "https://www.xiaohongshu.com/explore/{note_id}"
 _PAGE_TIMEOUT_MS = 30000
@@ -199,8 +198,11 @@ async def _submit_and_verify(page: Page, message: str) -> str:
             ("登录", "登录态失效，请重新登录小红书"),
         ):
             if keyword in page_text:
-                raise ReplySendError(reason)
-        raise ReplySendError("发送后未能确认成功（页面未出现回复内容），请人工核查")
+                # 与「等待超时」这个底层异常无关，显式切断异常链
+                raise ReplySendError(reason) from None
+        raise ReplySendError(
+            "发送后未能确认成功（页面未出现回复内容），请人工核查"
+        ) from None
     return ""
 
 

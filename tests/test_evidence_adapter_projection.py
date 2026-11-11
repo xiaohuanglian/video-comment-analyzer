@@ -9,7 +9,6 @@ from api.services.insight.evidence_adapter import (
     infer_training_evidence,
     outreach_analysis_from_card,
 )
-from api.services.insight.schemas import CommentAnalysisResult
 from api.services.insight.evidence_schemas import (
     EvidenceCard,
     EvidenceItem,
@@ -19,6 +18,7 @@ from api.services.insight.evidence_schemas import (
     RecordStatus,
     SpeakerScope,
 )
+from api.services.insight.schemas import CommentAnalysisResult
 
 
 def _card(**kwargs) -> EvidenceCard:

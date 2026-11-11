@@ -7,7 +7,6 @@ from api.services.insight.schemas import FieldMapping, RunConfig
 from api.services.insight.storage import create_run, save_trial_sample
 from api.services.insight.trial_report import build_trial_report
 
-
 SAMPLE_CSV = """comment_id,content,user_id,nickname
 {i},{content},u{i},用户{i}
 """

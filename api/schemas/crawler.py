@@ -1,9 +1,8 @@
 from enum import Enum
-from typing import Optional, Literal
 from pathlib import PurePath
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
-
 
 MAX_API_LIMIT_COUNT = 50000
 
@@ -90,10 +89,15 @@ class CrawlerStatusResponse(BaseModel):
     comments_crawled: Optional[int] = None
     comments_target: Optional[int] = None
     progress_updated_at: Optional[str] = None
-    result_kind: Optional[Literal["completed", "partial", "stopped", "error"]] = None
+    result_kind: Optional[Literal["completed", "partial", "stopped", "error", "blocked"]] = None
     result_title: Optional[str] = None
     result_message: Optional[str] = None
     finished_at: Optional[str] = None
+    # crawl guard: 类型化失败（平台冷却 / 限流 / 登录失效…），前端据此给"下一步"
+    error_code: Optional[str] = None
+    error_hint: Optional[str] = None
+    retry_after_seconds: Optional[int] = None
+    platform_cooldown: Optional[dict] = None
 
 
 class LogEntry(BaseModel):

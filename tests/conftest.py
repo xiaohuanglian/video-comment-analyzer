@@ -2,9 +2,10 @@
 Pytest configuration and shared fixtures
 """
 
-import pytest
 import sys
 from pathlib import Path
+
+import pytest
 
 # Add project root to Python path
 project_root = Path(__file__).parent.parent

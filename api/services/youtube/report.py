@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import json
-import re
 import time
 import uuid
 from pathlib import Path
@@ -157,18 +156,10 @@ def previous_digest(n: int = 3) -> str:
 # ---------------------------------------------------------------------------
 
 def _extract_json(text: str) -> Dict[str, Any]:
-    text = (text or "").strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
-        text = re.sub(r"\n?```$", "", text).strip()
-    start, end = text.find("{"), text.rfind("}")
-    if start >= 0 and end > start:
-        try:
-            data = json.loads(text[start : end + 1])
-            return data if isinstance(data, dict) else {}
-        except json.JSONDecodeError:
-            return {}
-    return {}
+    """统一走 api.services.llm_json。"""
+    from api.services.llm_json import extract_json_object
+
+    return extract_json_object(text) or {}
 
 
 async def analyze(

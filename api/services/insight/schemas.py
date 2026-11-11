@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Pydantic schemas for comment insight analysis."""
 
+import re
 from collections import Counter
 from enum import Enum
-import re
 from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, computed_field, field_validator

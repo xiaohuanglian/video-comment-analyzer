@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 from api.services.insight.evidence_extractor import (
-    extract_evidence_card_mock,
     extract_batch_with_split,
+    extract_evidence_card_mock,
     sanitize_evidence_card,
 )
 from api.services.insight.evidence_schemas import (

@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 
+from unittest.mock import Mock
+
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
-from unittest.mock import Mock
 
 from api.main import app
 from api.routers import data as data_router
@@ -80,16 +81,20 @@ def test_platform_capability_matrix_is_exposed():
 
 
 def test_csv_preview_is_limited_and_reports_total(tmp_path, monkeypatch):
-    csv_file = tmp_path / "comments.csv"
+    # 2026-11-11 起 /api/data/* 走白名单：只能浏览 data/ 下的采集结果目录，
+    # data 根目录本身不开放（那里放着 model_settings.json 等凭据）。
+    comments_dir = tmp_path / "comments"
+    comments_dir.mkdir()
+    csv_file = comments_dir / "comments.csv"
     csv_file.write_text("id,content\n1,first\n2,second\n3,third\n", encoding="utf-8")
     monkeypatch.setattr(data_router, "DATA_DIR", tmp_path)
 
-    response = TestClient(app).get("/api/data/files/comments.csv?preview=true&limit=2")
+    response = TestClient(app).get("/api/data/files/comments/comments.csv?preview=true&limit=2")
     assert response.status_code == 200
     assert response.json()["total"] == 3
     assert len(response.json()["data"]) == 2
 
-    normalized = TestClient(app).get("/api/data/dataset/comments.csv?limit=2")
+    normalized = TestClient(app).get("/api/data/dataset/comments/comments.csv?limit=2")
     assert normalized.status_code == 200
     assert normalized.json()["status"] == "ready"
     assert normalized.json()["content"]["metrics"]["comments"] == 2

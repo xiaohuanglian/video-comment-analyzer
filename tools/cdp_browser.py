@@ -1,15 +1,16 @@
-import os
 import asyncio
-import socket
-import httpx
-import signal
 import atexit
-from typing import Optional, Dict, Any
+import os
+import signal
+import socket
+from typing import Any, Dict, Optional
+
+import httpx
 from playwright.async_api import Browser, BrowserContext, Playwright
 
 import config
-from tools.browser_launcher import BrowserLauncher
 from tools import utils
+from tools.browser_launcher import BrowserLauncher
 
 
 class CDPBrowserManager:
@@ -446,7 +447,7 @@ class CDPBrowserManager:
                         if pages is not None:
                             await self.browser_context.close()
                             utils.logger.info("[CDPBrowserManager] Browser context closed")
-                    except:
+                    except Exception:  # noqa: BLE001 - 已关闭是预期路径
                         utils.logger.debug("[CDPBrowserManager] Browser context already closed")
                 except Exception as context_error:
                     # Only log warning if error is not due to already being closed

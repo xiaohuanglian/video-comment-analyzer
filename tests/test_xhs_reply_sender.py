@@ -17,7 +17,6 @@ from api.services.outreach.outreach import _apply_candidate_targets
 from api.services.outreach.reply_sender import platform_capability
 from api.services.outreach.xhs_reply_sender import ReplySendError, send_xhs_reply_async
 
-
 # ---------------------------------------------------------------------------
 # 链接解析
 # ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
-from typing import Awaitable, Callable, Iterable, Optional
+from typing import Awaitable, Callable, Iterable
 
 from playwright.async_api import BrowserContext, Page
 

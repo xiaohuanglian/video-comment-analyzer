@@ -8,10 +8,10 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from .evidence_schemas import (
     ActionGapItem,
+    BehaviorCertainty,
     ContentEngagementItem,
     ContentEngagementType,
     EvidenceCard,
-    EvidenceItem,
     EvidenceItemType,
     EvidenceLevel,
     FactItem,
@@ -20,13 +20,9 @@ from .evidence_schemas import (
     QuantitativeEvidence,
     QuotedItem,
     RecordStatus,
-    SpeakerScope,
     TrainingBehaviorItem,
     TrainingBehaviorType,
-    BehaviorCertainty,
     compute_evidence_level,
-    normalize_certainty,
-    normalize_speaker_scope,
 )
 from .prompts import (
     PERSONALIZED_VIDEO_KEYWORDS,

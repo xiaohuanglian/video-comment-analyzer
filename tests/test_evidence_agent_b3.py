@@ -10,11 +10,11 @@ from api.services.insight.evidence_extractor import (
     sanitize_evidence_card,
 )
 from api.services.insight.evidence_schemas import (
+    EVIDENCE_PROMPT_VERSION,
     EvidenceCard,
     EvidenceLevel,
     RecordStatus,
     TrainingBehaviorType,
-    EVIDENCE_PROMPT_VERSION,
 )
 from api.services.insight.schemas import SourceRecord
 

@@ -8,29 +8,26 @@ import io
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Sequence, Set
 
 from .candidate_schemas import CONTACT_STATUS_LABELS
 from .labels import (
-    INTENT_LABELS,
-    PRODUCT_FIT_LABELS,
-    SIGNAL_LABELS,
-    SINGLE_VIDEO_LABELS,
     TRAINING_EVIDENCE_LABELS,
     label_intent,
     label_product_fit,
     label_signal,
     label_single_video,
 )
+from .run_locations import export_artifact_targets, resolve_under_data
 from .statistics import candidate_priority, compute_candidate_score
 from .storage import (
     _read_json,
     _run_dir,
     load_candidates,
     load_config,
+    load_evidence_cards,
     load_outreach,
     load_progress,
-    load_evidence_cards,
     load_research_analysis,
     load_results,
     load_semantic_review,
@@ -39,7 +36,6 @@ from .storage import (
     load_themes,
     save_summary,
 )
-from .run_locations import export_artifact_paths, export_artifact_targets, resolve_under_data
 
 
 def _format_new_signals(signals: Any) -> str:

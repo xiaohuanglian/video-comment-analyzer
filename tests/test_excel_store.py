@@ -2,12 +2,11 @@
 Unit tests for Excel export functionality
 """
 
-import pytest
 import asyncio
-import os
-from pathlib import Path
-import tempfile
 import shutil
+import tempfile
+
+import pytest
 
 try:
     import openpyxl

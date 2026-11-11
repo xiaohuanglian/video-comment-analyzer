@@ -39,27 +39,41 @@ uv run playwright install chromium
 
 > 本工具默认仅本机使用（`run_web.sh` 绑定 `127.0.0.1`）。API **无鉴权**，请勿将端口暴露到公网。
 
+### 安全边界
+
+- `/api/data/*` 只开放**采集结果目录**（comments / wechat / youtube_comments /
+  xhs_browse / analysis / bench），且只认数据文件扩展名。登录 Cookie、
+  API Key、队列与中间态（`model_settings.json`、`automation/*.json`、
+  `topics/`、`growth/` 等）不可通过该接口列出或下载。
+- 模型配置写入 `data/model_settings.json`（0600），接口只返回脱敏值。
+- 回复发送默认受控：最小间隔、每日上限、允许时段、已回复用户冷却；
+  任何发送都必须先经人工批准。
+
 ## 使用流程
 
 1. **采集**：选择平台 → 粘贴链接或扫描博主内容 → 批量采集评论（每条内容保存到独立子文件夹）。
-2. **评论洞察**：选择已采集的 CSV → 配置模型 API → 选择分析数量（100 / 1K / 10K / 全部）→ 开始分析。支持断点续跑与预算暂停。
+2. **评论洞察**：勾选已采集的评论文件 → 选项目档案与分析数量（100 / 1K / 10K / 全部）→ 点「开始分析」→ 看报告。支持断点续跑、停止与失败重试。
 3. **评论区回复**：筛选 → 勾选确认 → AI 生成回复内容 → 逐条审核 → 受控发送。
 4. **内容选题**：基于评论需求生成选题与多形态草稿 → 人工审核后再发布。
 
 ### 模型 API 配置
 
-在「评论洞察」面板填写 Base URL、Model、API Key：
+在「设置 → 模型网关」填写 Base URL、Model、API Key，保存一次后**全部功能共用**
+（对话 / 选题 / 写稿 / 质检 / 洞察 / 回复起草）。
 
-- 默认 Base URL：`https://api.deepseek.com`
-- 默认 Model：`deepseek-v4-flash`
-- Key 仅保存在浏览器 sessionStorage，**不会写入磁盘**。
-- 未配置 Key 时，可用 `use_mock` 走通全流程（结果仅用于演示）。
+- Base URL 填**根地址**，不用带 `/v1`（带也会被自动去掉，端点只会拼出一个 `/v1`）。
+- 默认 Base URL：`https://api.deepseek.com`；默认 Model：`deepseek-v4-flash`。
+- 配置保存在服务端本地 `data/model_settings.json`（权限 0600，已被 git 忽略）；
+  接口只返回脱敏形式（`sk-****尾4位`），明文不会出现在响应或日志里。
+- 未配置 Key 时，可用「演示模式（use_mock）」走通全流程（结果仅用于演示）。
 
-> 真正做分析需要 API Key；`use_mock` 只是无 Key 时的演示路径（模板兜底）。
+> 也支持环境变量 `LLM_BASE_URL / LLM_API_KEY / LLM_MODEL`，优先级高于设置页
+> （显式请求入参 > 环境变量 > 设置页保存值）。
 
 ### 项目档案与分类维度
 
-「评论洞察」面板可编辑项目档案（JSON）。除了研究目标、目标人群、H1–H3 假设、内容人设外，档案还可以定义：
+「评论洞察 → 配置」里可以选择项目档案（也可通过 `PUT /api/analysis/profiles/{id}` 维护 JSON）。
+除了研究目标、目标人群、H1–H3 假设、内容人设外，档案还可以定义：
 
 - `intents`：评论的主要沟通目的分类（如提问 / 反馈 / 不满）。
 - `signals`：值得关注的用户表达信号。
@@ -88,27 +102,47 @@ export VCA_OUTREACH_COOKIE="SESSDATA=...; bili_jct=...; ..."
 ## 项目结构
 
 ```
-├── api/                  # FastAPI 后端与业务服务（洞察/回复/选题/公众号/对话等）
-│   └── services/insight/ # 评论洞察 / 回复 / 内容选题
-├── web_react/            # React 工作台面板（Vite+React+Tailwind+Radix，npm run dev @5173）
-├── media_platform/       # 各平台爬虫
-├── tools/                # 浏览器与通用工具
-├── data/                 # 采集与分析结果（已被 .gitignore 忽略）
-└── tests/                # 测试
+├── api/
+│   ├── routers/            # HTTP 路由（analysis_artifacts 是从 analysis 拆出的导出/成稿）
+│   └── services/
+│       ├── insight/        # 评论洞察（证据抽取 → 校验 → 研究 Agent → 报告）
+│       ├── outreach/       # 评论区回复（筛选/起草/硬校验/受控发送）
+│       ├── topics/         # 内容选题三源（评论/洗稿/事件）
+│       ├── growth/         # 增长引擎（独立子系统，CLI + API）
+│       ├── llm.py          # 统一 LLM 出口
+│       ├── llm_config.py   # 模型配置解析（单一真相源，避免双 /v1）
+│       ├── llm_json.py     # 模型 JSON 输出解析（单一实现）
+│       ├── json_store.py   # JSON 持久化底座（锁 + 原子写 + 损坏留档）
+│       └── error_handlers.py # 统一错误信封
+├── web_react/              # React 工作台（Vite+React+Tailwind+Radix，npm run dev @5173）
+├── media_platform/         # 各平台爬虫
+├── tools/                  # 浏览器、采集节奏、可达性分析等工具
+├── scripts/                # 一次性/运维脚本（数据迁移、清理）
+├── data/                   # 采集与分析结果（gitignore；独立本地仓库，永不 push）
+└── tests/                  # 测试
 ```
 
 ## 开发
 
 ```bash
-# 运行测试
-uv run pytest tests -q
+# 后端
+uv run pytest tests -q          # 期望全绿
+uv run ruff check api tools scripts
 
 # 命令行入口
 uv run python main.py --help
 
 # 工作台面板（React，另开终端）
 cd web_react && npm install && npm run dev   # http://localhost:5173，/api 自动代理到 8766
+cd web_react && npx tsc -b --noEmit && npx oxlint && npx vitest run
 ```
+
+CI（`.github/workflows/ci.yml`）在每次 push/PR 时跑：`ruff` + `pytest` +
+`tsc` + `oxlint` + `vitest` + 构建。
+
+> 本机 Node 若为 v26，vitest 的 worker 可能起不来（实测连空测试都会挂）。
+> 这种情况用 `cd web_react && npm run test:node` 跑一份等价的错误解析校验；
+> CI 用 Node 20，不受影响。
 
 LLM 网关等本地配置放在 `.env`（参考 `.env.example`，已被 git 忽略；`run_web.sh` 启动时自动加载）。
 

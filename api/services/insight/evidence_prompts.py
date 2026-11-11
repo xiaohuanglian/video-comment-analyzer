@@ -4,10 +4,10 @@
 from __future__ import annotations
 
 import json
-from typing import Iterable, List, Optional
+from typing import Any, Iterable, List, Optional
 
 from .evidence_schemas import EVIDENCE_PROMPT_VERSION
-from .prompts import HYPOTHESES, HYPOTHESIS_SHORT
+from .prompts import HYPOTHESES
 from .schemas import SourceRecord
 
 _CONTEXT_CHAR_LIMIT = 200

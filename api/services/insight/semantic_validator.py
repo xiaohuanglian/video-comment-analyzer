@@ -7,7 +7,7 @@ import hashlib
 import json
 import re
 from enum import Enum
-from typing import Any, Dict, List, Optional, Sequence, Set
+from typing import Any, Dict, List, Sequence, Set
 
 from pydantic import BaseModel, Field
 

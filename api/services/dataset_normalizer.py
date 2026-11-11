@@ -7,7 +7,6 @@ from typing import Any, Iterable, Mapping, Optional
 
 from ..schemas.analysis import Comment, Content, Dataset, DatasetStatus
 
-
 PLATFORMS = {"xhs", "dy", "ks", "bili", "wb", "tieba", "zhihu"}
 
 

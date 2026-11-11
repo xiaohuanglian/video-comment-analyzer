@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 
 from typing import List, Literal, Optional
-from pydantic import BaseModel, Field
 
+from pydantic import BaseModel, Field
 
 FetchOrderType = Literal["default", "pubdate", "click", "dm", "stow"]
 

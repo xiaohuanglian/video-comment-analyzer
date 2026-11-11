@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional
 
 from .candidate_schemas import CandidateRecord
 
 # Built-in intents that count as "有效". For custom profiles any concrete,
 # non-invalid intent key is accepted (see _is_valid_intent).
 from .statistics import VALID_INTENTS  # noqa: F401  (kept for backward-compat imports)
+
 _INVALID_INTENTS = {"", "invalid_or_unclear", "other_invalid", "unclear"}
 
 

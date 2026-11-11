@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
-import pytest
-import config
 from unittest.mock import AsyncMock, patch
+
+import pytest
 from fastapi.testclient import TestClient
-from cmd_arg import parse_cmd
-from api.schemas import CrawlerStartRequest, PlatformEnum, LoginTypeEnum, CrawlerTypeEnum
-from api.services.crawler_manager import CrawlerManager
+
+import config
 from api.main import app
+from api.schemas import CrawlerStartRequest, CrawlerTypeEnum, LoginTypeEnum, PlatformEnum
+from api.services.crawler_manager import CrawlerManager
+from cmd_arg import parse_cmd
+
 
 @pytest.mark.asyncio
 async def test_cmd_arg_crawler_max_notes_count():

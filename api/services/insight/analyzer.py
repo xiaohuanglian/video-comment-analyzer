@@ -11,15 +11,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from .evidence_adapter import outreach_analysis_from_card, derive_new_signals_from_card
-from .evidence_schemas import ANALYSIS_VERSION_EVIDENCE, ResearchAnalysis
+from .evidence_adapter import derive_new_signals_from_card, outreach_analysis_from_card
 from .evidence_extractor import BatchExtractStats, run_evidence_extraction
+from .evidence_schemas import ANALYSIS_VERSION_EVIDENCE, ResearchAnalysis
 from .evidence_writer import EvidenceWriterQueue
 from .llm_analyzer import estimate_cost
 from .pricing import resolve_pricing
 from .run_locations import run_dir_for_id
 from .sampling import DEFAULT_SAMPLE_SEED, stratified_sample
-from .schemas import CommentAnalysisResult, RunProgress, TrainingEvidence, TrainingImpact, ProductFit, PrimaryIntent, SourceRecord
+from .schemas import (
+    CommentAnalysisResult,
+    PrimaryIntent,
+    ProductFit,
+    RunProgress,
+    SourceRecord,
+    TrainingEvidence,
+    TrainingImpact,
+)
 from .storage import (
     BufferedResultsWriter,
     completed_evidence_record_ids,
@@ -623,10 +631,10 @@ def run_analysis_batch(
 
 
 def build_summary(run_id: str) -> Dict[str, object]:
-    from .export import auto_export_artifacts
     from .evidence_adapter import derive_new_signals_from_card, merge_projected_analysis, outreach_analysis_from_card
+    from .export import auto_export_artifacts
     from .statistics import apply_candidates_to_summary, build_statistics
-    from .storage import load_candidates, load_evidence_cards, load_progress, load_results, save_progress, save_summary
+    from .storage import load_candidates, load_evidence_cards, load_progress, load_results, save_summary
 
     results = load_results(run_id)
     try:

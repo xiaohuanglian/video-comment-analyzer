@@ -1,21 +1,17 @@
 # -*- coding: utf-8 -*-
 """Checkpoint 1 tests for insight module."""
 
-import json
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app
-
 from api.services.insight.analyzer import build_summary, run_analysis_batch
 from api.services.insight.field_mapping import detect_field_mapping
 from api.services.insight.ingestion import ingest_files
 from api.services.insight.schemas import CommentAnalysisResult, FieldMapping, PrimaryIntent, RunConfig
-from api.services.insight.storage import completed_record_ids, create_run, load_results
+from api.services.insight.storage import completed_record_ids, create_run
 from api.services.insight.validation import validate_analysis
-
 
 SAMPLE_CSV = """comment_id,video_id,content,user_id,nickname,like_count
 1,100,这个教程一周学几次？,u1,测试用户,0

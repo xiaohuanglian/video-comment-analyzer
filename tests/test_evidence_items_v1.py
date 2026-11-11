@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from api.services.insight.evidence_adapter import finalize_card, third_column_fields
+from api.services.insight.evidence_adapter import third_column_fields
 from api.services.insight.evidence_extractor import (
     evidence_item_count,
     extract_batch_with_split,
@@ -303,6 +303,7 @@ def test_candidates_from_evidence_card():
 
 def test_adaptive_gate_limit_changes():
     import asyncio
+
     from api.services.insight.evidence_extractor import AdaptiveGate
 
     async def main():

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from api.services.insight.ingestion import ingest_files
 from api.services.insight.run_partitions import partition_run_storage
-from api.services.insight.schemas import FieldMapping, RunConfig
+from api.services.insight.schemas import CommentAnalysisResult, FieldMapping, RunConfig
 from api.services.insight.storage import (
     append_result,
     create_run,
@@ -16,7 +16,6 @@ from api.services.insight.storage import (
 )
 from api.services.insight.theme_clustering import merge_theme_documents, run_theme_clustering
 from api.services.insight.theme_schemas import ThemesDocument
-from api.services.insight.schemas import CommentAnalysisResult
 
 
 def _patch_data_dir(monkeypatch, data_dir):

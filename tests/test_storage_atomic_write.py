@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from api.services.insight.storage import _write_json

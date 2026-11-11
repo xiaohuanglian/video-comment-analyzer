@@ -14,8 +14,7 @@ from api.services.insight.schemas import (
     FieldMapping,
     RunConfig,
 )
-from api.services.insight.storage import create_run, load_config, load_progress
-
+from api.services.insight.storage import create_run
 
 SAMPLE_CSV = """comment_id,video_id,content,user_id,nickname,like_count
 1,100,这个教程一周学几次？,u1,测试用户,0
@@ -166,6 +165,7 @@ def test_pricing_auto_detect():
 @pytest.fixture()
 def client():
     from fastapi.testclient import TestClient
+
     from api.main import app
 
     return TestClient(app)

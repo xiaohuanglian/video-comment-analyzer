@@ -4,9 +4,8 @@
 from api.services.insight.analyzer import build_summary, run_analysis_batch
 from api.services.insight.ingestion import ingest_files
 from api.services.insight.schemas import FieldMapping, RunConfig
-from api.services.insight.statistics import build_statistics, compute_candidate_score
+from api.services.insight.statistics import compute_candidate_score
 from api.services.insight.storage import create_run
-
 
 SAMPLE = """comment_id,content,user_id,nickname
 1,已打卡,u1,用户1

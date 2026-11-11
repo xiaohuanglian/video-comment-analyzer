@@ -12,7 +12,7 @@ import config
 from base.base_crawler import AbstractApiClient
 from proxy.proxy_mixin import ProxyRefreshMixin
 from tools import utils
-from tools.crawl_pacing import CrawlPacer
+from tools.crawl_pacing import CrawlPacer, platform_slot
 
 if TYPE_CHECKING:
     from proxy.proxy_ip_pool import ProxyIpPool
@@ -109,11 +109,14 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         """
         # Check if proxy is expired before each request
         await self._refresh_proxy_if_expired()
+        # 平台冷却软等待 + 平台并发槽位（同平台最多 N 条并发，见 tools/crawl_pacing.py）
+        await self._pacer.before_request()
 
         # return response.text
         return_response = kwargs.pop("return_response", False)
-        async with make_async_client(proxy=self.proxy) as client:
-            response = await client.request(method, url, timeout=self.timeout, **kwargs)
+        async with platform_slot("xhs"):
+            async with make_async_client(proxy=self.proxy) as client:
+                response = await client.request(method, url, timeout=self.timeout, **kwargs)
 
         if response.status_code == 471 or response.status_code == 461:
             # someday someone maybe will bypass captcha

@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+from api.services.insight.candidates import build_candidates
 from api.services.insight.conclusion_review import review_research_code
 from api.services.insight.evidence_adapter import (
+    analysis_dict_from_result_row,
     assign_evidence_item_ids,
     outreach_analysis_from_card,
 )
@@ -29,8 +31,6 @@ from api.services.insight.readable_report import (
 )
 from api.services.insight.research_agent import research_analysis_mock
 from api.services.insight.schemas import RunConfig, SourceRecord
-from api.services.insight.candidates import build_candidates
-from api.services.insight.evidence_adapter import analysis_dict_from_result_row
 
 
 def _rec(rid: str, text: str, user_id: str = "") -> SourceRecord:
@@ -373,8 +373,8 @@ def test_review_soft_warns_dropped_refs_not_fail_on_paraphrase():
             "card": assign_evidence_item_ids(extract_evidence_card_mock(records[0])).model_dump(),
         }
     ]
-    from api.services.insight.research_agent import compute_dataset_summary
     from api.services.insight.evidence_schemas import ResearchAnalysis, ResearchTheme
+    from api.services.insight.research_agent import compute_dataset_summary
 
     analysis = ResearchAnalysis(
         dataset_summary=compute_dataset_summary(records, rows),

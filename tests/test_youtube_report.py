@@ -10,7 +10,6 @@ import pytest
 
 from api.services.youtube import report
 
-
 ROWS = [
     {
         "comment_id": "c1",

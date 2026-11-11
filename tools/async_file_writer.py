@@ -3,11 +3,14 @@ import csv
 import json
 import os
 import pathlib
-from typing import Dict, List
+from typing import Dict
+
 import aiofiles
+
 import config
 from tools.utils import utils
 from tools.words import AsyncWordCloudGenerator
+
 
 class AsyncFileWriter:
     def __init__(self, platform: str, crawler_type: str):
@@ -101,7 +104,7 @@ class AsyncFileWriter:
                             comments_data = [comments_data]
 
             if not comments_data:
-                utils.logger.info(f"[AsyncFileWriter.generate_wordcloud_from_comments] No comments data found")
+                utils.logger.info("[AsyncFileWriter.generate_wordcloud_from_comments] No comments data found")
                 return
 
             # Filter comments data to only include 'content' field
@@ -115,7 +118,7 @@ class AsyncFileWriter:
                         filtered_data.append({'content': content_text})
 
             if not filtered_data:
-                utils.logger.info(f"[AsyncFileWriter.generate_wordcloud_from_comments] No valid comment content found")
+                utils.logger.info("[AsyncFileWriter.generate_wordcloud_from_comments] No valid comment content found")
                 return
 
             # Generate wordcloud

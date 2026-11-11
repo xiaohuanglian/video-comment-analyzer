@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from api.services.insight.analyzer import build_summary, run_analysis_batch
 from api.services.insight.export import auto_export_artifacts, build_report_markdown, build_results_csv
 from api.services.insight.ingestion import ingest_files
 from api.services.insight.run_locations import run_exists_in_csv_dir
@@ -16,7 +17,6 @@ from api.services.insight.storage import (
     save_themes,
 )
 from api.services.insight.theme_schemas import ThemeRecord, ThemesDocument
-from api.services.insight.analyzer import build_summary, run_analysis_batch
 
 
 def _patch_data_dir(monkeypatch, data_dir):

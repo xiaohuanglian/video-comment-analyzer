@@ -3,7 +3,6 @@
 # @Desc    : Crawler utility functions
 
 import base64
-import json
 import random
 import re
 import urllib
@@ -11,7 +10,6 @@ import urllib.parse
 from io import BytesIO
 from typing import Dict, List, Optional, Tuple, cast
 
-import httpx
 from PIL import Image, ImageDraw, ImageShow
 from playwright.async_api import BrowserContext, Cookie, Page
 

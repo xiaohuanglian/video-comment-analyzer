@@ -43,6 +43,9 @@ htmlcov/
 .coverage
 .coverage.*
 .cache
+# crawl guard 运行态（平台冷却状态，按机器生成，不入库）
+cache/crawl_guard/
+cache/transcripts/
 nosetests.xml
 coverage.xml
 *.cover

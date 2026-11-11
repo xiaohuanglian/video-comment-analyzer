@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 
-import config
 import pytest
+
+import config
 from cmd_arg import parse_cmd
 from media_platform.tieba import TieBaCrawler
 

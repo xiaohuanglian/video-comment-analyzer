@@ -8,7 +8,10 @@ import re
 from pathlib import Path
 from typing import Set
 
-from .paths import DATA_DIR, INSIGHT_SUBDIR
+# DATA_DIR 故意在模块层转出：测试通过 monkeypatch.setattr(run_locations, "DATA_DIR", ...)
+# 来隔离数据目录，删掉会让 3 个测试直接报 AttributeError（2026-11-11 被 ruff
+# F401 自动修复误删过一次）。
+from .paths import DATA_DIR, INSIGHT_SUBDIR  # noqa: F401
 from .schemas import RunConfig
 
 
@@ -132,7 +135,7 @@ def find_resumable_run(file_paths: list[str]) -> str | None:
     target = _normalize_file_paths(file_paths)
     if not target:
         return None
-    from .storage import load_config, load_progress, list_runs
+    from .storage import list_runs, load_config, load_progress
 
     candidates: list[str] = []
     for item in list_runs():

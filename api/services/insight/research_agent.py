@@ -7,15 +7,14 @@ import json
 from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
-from pydantic import ValidationError
-
+from .evidence_adapter import assign_evidence_item_ids
 from .evidence_prompts import (
-    RESEARCH_SYSTEM_PROMPT,
     build_research_system_prompt,
     build_research_user_message,
 )
 from .evidence_schemas import (
     DatasetSummaryCounts,
+    EvidenceCard,
     EvidenceLevel,
     EvidenceRef,
     HypothesisAssessment,
@@ -27,12 +26,9 @@ from .evidence_schemas import (
     ResearchTheme,
     UnexpectedFinding,
     is_participating_status,
-    is_excluded_status,
     normalize_evidence_level,
     normalize_record_status,
 )
-from .evidence_adapter import assign_evidence_item_ids
-from .evidence_schemas import EvidenceCard
 from .llm_analyzer import LlmUsage, build_openai_client, parse_usage
 from .schemas import RunConfig, SourceRecord
 from .user_identity import user_key

@@ -21,7 +21,6 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from .paths import DATA_DIR
 from .prompts import (
     PERSONALIZED_VIDEO_KEYWORDS,
     POSITIVE_RESULT_KEYWORDS,

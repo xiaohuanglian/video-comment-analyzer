@@ -23,8 +23,6 @@ from api.services.insight.evidence_schemas import (
     EvidenceCard,
     EvidenceCardLLMItem,
     PrimaryExpression,
-    RecordStatus,
-    Validity,
 )
 from api.services.insight.llm_analyzer import LlmUsage
 from api.services.insight.schemas import FieldMapping, RunConfig, SourceRecord

@@ -154,6 +154,30 @@ CRAWLER_PAGE_BATCH_PAUSE_SEC = 8
 # Safer defaults: longer intervals, batch pauses, adaptive backoff
 ENABLE_SAFE_CRAWL_MODE = True
 
+# ---- Crawl guard: 跨进程的平台冷却 + 平台并发槽位 ----
+# 限流/风控等失败会把整个平台标记为冷却中，冷却状态写在磁盘上，
+# 因此下一次采集（哪怕是新进程、新任务）也会先被拦下，而不是重新撞墙。
+ENABLE_CRAWL_GUARD = True
+
+# 冷却状态存放目录（相对项目根目录；可用环境变量 CRAWL_GUARD_STATE_DIR 覆盖）
+CRAWL_GUARD_STATE_DIR = "./cache/crawl_guard"
+
+# 各类失败对应的平台冷却时长（秒）。0 = 不冷却。
+CRAWL_GUARD_RATE_LIMIT_COOLDOWN_SEC = 900
+CRAWL_GUARD_BLOCKED_COOLDOWN_SEC = 1800
+CRAWL_GUARD_UPSTREAM_COOLDOWN_SEC = 300
+CRAWL_GUARD_TIMEOUT_COOLDOWN_SEC = 120
+
+# 已在抓取过程中时，冷却剩余时间最多再等这么久（秒）才继续请求（0 = 不等待）
+CRAWL_GUARD_WAIT_GRACE_SEC = 20
+
+# 并发槽位：同一平台最多同时 N 个请求（跨任务生效，防单平台打爆）
+CRAWL_MAX_CONCURRENCY_PER_PLATFORM = 2
+# 所有平台合计最多同时 N 个请求
+CRAWL_MAX_CONCURRENCY_GLOBAL = 4
+# 排队等槽位的最长时间（秒），超时返回 BUSY
+CRAWL_SLOT_WAIT_SEC = 120
+
 # Save each video's data under {SAVE_DATA_PATH}/{title_slug}_{video_id}/
 ENABLE_VIDEO_FOLDER_SPLIT = True
 
