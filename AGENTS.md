@@ -15,13 +15,12 @@ uv run pytest tests -q          # 期望全绿
 uv run ruff check api tools scripts   # 期望 All checks passed
 ./run_web.sh                    # 后端 API http://127.0.0.1:8766（启动时自动加载 .env）
 cd web_react && npm run dev     # 工作台面板 http://localhost:5173（/api 代理到 8766）
-cd web_react && npx tsc -b --noEmit && npx oxlint
-cd web_react && npm run test:node    # 本机 Node v26 上 vitest worker 起不来时的替代
+cd web_react && npx tsc -b --noEmit && npx oxlint && npx vitest run
 ```
 
 - CI 在 `.github/workflows/ci.yml`（push/PR 自动跑 ruff + pytest + 前端三件套 + 构建）。
-- **本机 Node 若为 v26，`npx vitest run` 会在 worker 启动阶段挂住**（空测试也挂），
-  不是测试代码问题；用 `npm run test:node` 跑等价的错误解析校验，CI 用 Node 20 正常。
+- 前端测试用 vitest 3。**不要降到 vitest 2**——在本机 Node v26 上它的 worker 会在
+  启动阶段挂住（连空测试都跑不起来）。`npm run test:node` 是不依赖 worker 的兜底脚本。
 
 - 本地网关/密钥等配置在 `.env`（git 忽略，模板见 `.env.example`）；LLM 网关需 `LLM_BASE_URL/LLM_API_KEY/LLM_MODEL`。
 

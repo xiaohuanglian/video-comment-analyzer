@@ -140,9 +140,8 @@ cd web_react && npx tsc -b --noEmit && npx oxlint && npx vitest run
 CI（`.github/workflows/ci.yml`）在每次 push/PR 时跑：`ruff` + `pytest` +
 `tsc` + `oxlint` + `vitest` + 构建。
 
-> 本机 Node 若为 v26，vitest 的 worker 可能起不来（实测连空测试都会挂）。
-> 这种情况用 `cd web_react && npm run test:node` 跑一份等价的错误解析校验；
-> CI 用 Node 20，不受影响。
+> 前端测试用 vitest 3（vitest 2 在 Node v26 上 worker 会挂住，别降级）。
+> `npm run test:node` 是不依赖 worker 的兜底校验，CI 里两个都跑。
 
 LLM 网关等本地配置放在 `.env`（参考 `.env.example`，已被 git 忽略；`run_web.sh` 启动时自动加载）。
 
