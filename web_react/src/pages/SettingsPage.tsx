@@ -22,6 +22,7 @@ export default function SettingsPage() {
   const [hotEnabled, setHotEnabled] = useState(true)
   const [hotPerCycle, setHotPerCycle] = useState(2)
   const [hotMinPlay, setHotMinPlay] = useState(1000)
+  const [hotSilence, setHotSilence] = useState(720)
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
@@ -68,6 +69,7 @@ export default function SettingsPage() {
         setHotEnabled(c.hot_comment_enabled !== false)
         setHotPerCycle(Number(c.hot_comment_max_per_cycle ?? 2))
         setHotMinPlay(Number(c.hot_comment_min_play ?? 1000))
+        setHotSilence(Number(c.hot_comment_max_silence_hours ?? 720))
       })
       .catch(() => {})
   }, [platform])
@@ -122,6 +124,7 @@ export default function SettingsPage() {
         hot_comment_enabled: hotEnabled,
         hot_comment_max_per_cycle: hotPerCycle,
         hot_comment_min_play: hotMinPlay,
+        hot_comment_max_silence_hours: hotSilence,
       }
       if (platform === 'xhs' || platform === 'dy') {
         patch.note_urls = noteUrlsText.split('\n').map((u) => u.trim()).filter(Boolean)
@@ -135,7 +138,7 @@ export default function SettingsPage() {
     } finally {
       setBusy(false)
     }
-  }, [platform, keywordsText, noteUrlsText, collectMode, dailySendLimit, sendInterval, sendWindowStart, sendWindowEnd, freshnessA, freshnessB, hotEnabled, hotPerCycle, hotMinPlay])
+  }, [platform, keywordsText, noteUrlsText, collectMode, dailySendLimit, sendInterval, sendWindowStart, sendWindowEnd, freshnessA, freshnessB, hotEnabled, hotPerCycle, hotMinPlay, hotSilence])
 
   const saveModel = async () => {
     setModelBusy('save')
@@ -388,6 +391,13 @@ export default function SettingsPage() {
           <div className="mt-3 grid grid-cols-2 gap-4">
             <NumField label="每轮根评论上限" v={hotPerCycle} set={setHotPerCycle} min={1} max={10} />
             <NumField label="最低播放量门槛" v={hotMinPlay} set={setHotMinPlay} min={1} max={1000000} />
+          </div>
+          <div className="mt-3">
+            <NumField label="评论区安静多久就不发了（小时）" v={hotSilence} set={setHotSilence} min={1} max={8760} />
+            <p className="mt-1 text-xs text-stone-400">
+              看的是评论区最近还有没有人说话，不是视频发布多久——B 站评论常出现在发布一个月后，
+              按发布时间筛会把还在长的视频全部错过。
+            </p>
           </div>
         </div>
 

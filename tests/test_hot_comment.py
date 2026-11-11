@@ -31,14 +31,14 @@ def _video(vid: str = "v1", play: int = 100_000, comments: int = 200, age_hours:
     }
 
 
-def _root(cid: str, likes: int, vid: str = "v1", text: str = "") -> dict:
+def _root(cid: str, likes: int, vid: str = "v1", text: str = "", age_hours: float = 0) -> dict:
     return {
         "comment_id": cid,
         "video_id": vid,
         "content": text or f"评论{cid}",
         "like_count": likes,
         "parent_comment_id": "0",
-        "create_time": int(_now().timestamp()),
+        "create_time": int((_now() - timedelta(hours=age_hours)).timestamp()),
     }
 
 
@@ -220,8 +220,9 @@ class TestBuildHotCandidates:
             "hot_comment_crowd_multiple": 2.0,
             "hot_comment_crowd_floor": 50,
             "hot_comment_open_ratio": 0.5,
+            "hot_comment_min_sample": 5,
+            "hot_comment_max_silence_hours": 720,
             "freshness_a_hours": 48,
-            "freshness_b_hours": 720,
         }
         cfg.update(kw)
         return cfg
@@ -279,10 +280,36 @@ class TestBuildHotCandidates:
         assert picked == []
         assert funnel["hot_candidates"] == 0
 
-    def test_stale_video_skipped(self):
-        video_map = {"v1": _video("v1", play=100_000, comments=300, age_hours=1000)}
-        picked, funnel = hc.build_hot_candidates(_quiet_roots("v1"), video_map, self._cfg(), now=_now())
+    def test_silent_comment_section_skipped(self):
+        """评论区一年没新评论 → 没人看了，发根评论没意义。"""
+        video_map = {"v1": _video("v1", play=100_000, comments=300)}
+        rows = [_root(f"v1-c{i}", 1 if i == 0 else 0, vid="v1", age_hours=9000) for i in range(6)]
+        picked, funnel = hc.build_hot_candidates(rows, video_map, self._cfg(), now=_now())
         assert picked == []
+        assert funnel["cooldown"] == 1
+
+    def test_old_video_with_live_comments_is_eligible(self):
+        """视频发了一年但评论区昨天还在长 → 正是「现在还有人看」，该发。
+
+        实测评论到达时间中位 753 小时（31 天），用视频年龄当窗口会把这类全杀掉。
+        """
+        video_map = {"v1": _video("v1", play=100_000, comments=300, age_hours=9000)}
+        picked, funnel = hc.build_hot_candidates(_quiet_roots("v1"), video_map, self._cfg(), now=_now())
+        assert len(picked) == 1
+        assert picked[0]["tier"] == "A"          # 昨天还有新评论 → A
+        assert picked[0]["age_hours"] > 8000     # 但视频本身很老
+        assert picked[0]["quiet_hours"] <= 24
+
+    def test_silence_window_configurable(self):
+        """把「安静多久算没人看」调小，同样语料就该被挡掉。"""
+        video_map = {"v1": _video("v1", play=100_000, comments=300)}
+        rows = [_root(f"v1-c{i}", 1 if i == 0 else 0, vid="v1", age_hours=100) for i in range(6)]
+        loose, _ = hc.build_hot_candidates(rows, video_map, self._cfg(), now=_now())
+        strict, funnel = hc.build_hot_candidates(
+            rows, video_map, self._cfg(hot_comment_max_silence_hours=24), now=_now()
+        )
+        assert len(loose) == 1
+        assert strict == []
         assert funnel["cooldown"] == 1
 
     def test_unknown_coverage_video_not_picked(self):

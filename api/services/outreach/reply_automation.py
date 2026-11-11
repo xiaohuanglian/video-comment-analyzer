@@ -247,7 +247,7 @@ class AutomationStore:
             "opinion_like_bypass",
             # 热评通道：配额与竞争判定阈值
             "hot_comment_max_per_cycle", "hot_comment_min_play", "hot_comment_cold_comments",
-            "hot_comment_crowd_floor", "hot_comment_min_sample",
+            "hot_comment_crowd_floor", "hot_comment_min_sample", "hot_comment_max_silence_hours",
         ):
             if key in partial:
                 try:

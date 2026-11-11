@@ -54,6 +54,7 @@ cd web_react && npx tsc -b --noEmit && npx oxlint && npx vitest run
 - **根评论（热评）通道（2026-11-11）**：`api/services/outreach/hot_comment.py` 决定「这个视频值不值得发一条根评论」，与「回复某个具体的人」是**两种动作而非替代**（回复=确定触达 1 人；根评论=零通知、靠赞排序抢公域曝光）。判据按播放档归一（`PLAY_TIERS` 的实测中位数），因为同一个 30 赞在 2 千播放里是热评、在 20 万播放里没人看得见。
   - **阈值不许拍脑袋**：改 `PLAY_TIERS` 前先跑 `uv run python scripts/hot_comment_stats.py`（它会合并 `data/comments` 与 `data/automation/comments` 并按 comment_id 去重——不去重的话同一批评论会被算两遍，中位数直接错）。
   - **采样不足时不要猜**：采到少于 `hot_comment_min_sample`（默认 5）条根评论而平台又报告有评论 → 判 `unknown_coverage` 退回回复通道。实测 0–4 条时六成判断是错的。
+  - **窗口看评论区，不看视频发布时间**：`hot_comment_max_silence_hours`（默认 720h）判的是「最后一条评论距今多久」。实测评论到达时间中位 753 小时、视频年龄中位 40 天——沿用回复通道的 `freshness_b_hours`（168h，按发布算）会让配额 5 一条都选不出来（93% 讨论被挡在门外）。
   - **只有 B 站能发根评论**（`reply_sender.supports_root_comment`）：小红书/抖音走浏览器自动化，必须先定位到具体评论才能回复，所以 `_run_sender_tick` 对热评条目直接退回待审并说明原因，不许假装成功。
   - 根评论同样要**人工批准**才发（`pending_review → approved`），同一视频不连发（`_hot_busy_videos`），并且**不走 LLM 精筛**（那套 prompt 判「这个人值不值得回」，根评论没有具体的人）。
 - **分类维度（intents / signals / hypotheses）由项目档案驱动**：`project_profiles.intent_label_map` / `signal_label_map` 解析，仪表盘/筛选/CSV/报告/AI 解读均读档案标签。新增行为键还需要在检测层（`evidence_adapter.infer_legacy_signals`）接入，否则不会触发。

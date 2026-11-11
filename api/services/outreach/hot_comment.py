@@ -314,7 +314,11 @@ def build_hot_candidates(
     skip_videos = {str(v) for v in (skip_videos or set())}
     #: 近期已有根评论/正在发的视频 → 换下一个，别在同一个视频下连着刷
     busy_videos = dict(busy_videos or {})
-    max_age_h = _float(cfg.get("freshness_b_hours", 168), 168.0)
+    #: 热评窗口看「评论区最近还有没有人说话」，不看视频发布多久。
+    #: 实测：评论到达时间中位 753 小时（31 天），视频年龄中位 40 天——
+    #: 沿用回复通道的 freshness_b_hours=168h（按发布时间算）会把 93% 的真实
+    #: 讨论挡在门外，选不出任何一条。
+    max_silence_h = _float(cfg.get("hot_comment_max_silence_hours", 720), 720.0)
     quota_left = max(1, _int(cfg.get("hot_comment_max_per_cycle", 2), 2))
 
     by_video: dict[str, list[dict[str, Any]]] = {}
@@ -354,7 +358,18 @@ def build_hot_candidates(
         except (TypeError, ValueError):
             ts = 0
         age_hours = max(0.0, (now.timestamp() - ts) / 3600) if ts else 0.0
-        if ts and age_hours > max_age_h:
+        # 「这个视频现在还有人看」= 评论区最近还有新评论，不是发布多久。
+        # 没有评论时间数据时退回用视频年龄，避免旧视频无限期入选。
+        last_ts = 0
+        for row in by_video.get(vid, []):
+            try:
+                cand = int(row.get("create_time") or 0)
+            except (TypeError, ValueError):
+                continue
+            if 1e9 < cand < now.timestamp() + 86400:
+                last_ts = max(last_ts, cand)
+        silence_h = max(0.0, (now.timestamp() - last_ts) / 3600) if last_ts else age_hours
+        if silence_h > max_silence_h:
             funnel["cooldown"] += 1
             continue
         picked.append(
@@ -374,8 +389,11 @@ def build_hot_candidates(
                 "comment_text": "",
                 "like_count": int(assess["top1_like"]),
                 "age_hours": round(age_hours, 1),
+                # 「还记得有多新」用评论区安静了多久衡量，与上面同一口径
+                "quiet_hours": round(silence_h, 1),
                 "signal": f"热评空位({assess['competition']})",
-                "tier": "A" if ts and age_hours <= _float(cfg.get("freshness_a_hours", 48), 48.0) else "B",
+                # 评论区还在长新评论 = A（值得优先处理），否则 B
+                "tier": "A" if silence_h <= _float(cfg.get("freshness_a_hours", 48), 48.0) else "B",
                 # 根评论是「表态」不是「答问题」，起草走 engage 那套口吻
                 "lane": "engage",
                 "worth": 0,

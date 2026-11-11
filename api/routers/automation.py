@@ -47,6 +47,7 @@ class ConfigUpdate(BaseModel):
     hot_comment_crowd_floor: Optional[int] = None
     hot_comment_open_ratio: Optional[float] = None
     hot_comment_min_sample: Optional[int] = None
+    hot_comment_max_silence_hours: Optional[int] = None
 
 
 def _store(platform: str = "bili") -> auto.AutomationStore:
