@@ -1,20 +1,24 @@
-from .crawler import router as crawler_router
-from .data import router as data_router
-from .websocket import router as websocket_router
-from .bilibili import router as bilibili_router
-from .creator import router as creator_router
 from .analysis import router as analysis_router
-from .growth import router as growth_router
+from .analysis_artifacts import router as analysis_artifacts_router
 from .automation import router as automation_router
+from .bilibili import router as bilibili_router
 from .chat import router as chat_router
-from .topics import router as topics_router
-from .writer import router as writer_router
-from .youvibe import router as youvibe_router
 from .comments import router as comments_router
-from .strategy import router as strategy_router
-from .wechat import router as wechat_router
-from .hot_radar import router as hot_radar_router
 from .costs import router as costs_router
+from .crawler import router as crawler_router
+from .creator import router as creator_router
+from .data import router as data_router
+from .growth import router as growth_router
+from .hot_radar import router as hot_radar_router
+from .publish import router as publish_router
+from .strategy import router as strategy_router
+from .studio import router as studio_router
+from .topics import router as topics_router
+from .websocket import router as websocket_router
+from .wechat import router as wechat_router
+from .writer import router as writer_router
+from .youtube import router as youtube_router
+from .youvibe import router as youvibe_router
 
 __all__ = [
     "crawler_router",
@@ -23,6 +27,7 @@ __all__ = [
     "bilibili_router",
     "creator_router",
     "analysis_router",
+    "analysis_artifacts_router",
     "growth_router",
     "automation_router",
     "chat_router",
@@ -34,4 +39,7 @@ __all__ = [
     "hot_radar_router",
     "wechat_router",
     "costs_router",
+    "publish_router",
+    "studio_router",
+    "youtube_router",
 ]

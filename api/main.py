@@ -5,18 +5,43 @@ Or: python -m api.main
 Or: ./run_web.sh
 """
 import asyncio
+import contextlib
+import logging
 import os
-import sys
 import subprocess
-import uvicorn
+import sys
 from pathlib import Path
+
+import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
-from .routers import crawler_router, data_router, websocket_router, bilibili_router, creator_router, analysis_router, growth_router, automation_router, chat_router, topics_router, writer_router, youvibe_router, comments_router, strategy_router, wechat_router, costs_router, hot_radar_router
-from .services.platform_capabilities import PLATFORM_CAPABILITIES
+from .routers import (
+    analysis_artifacts_router,
+    analysis_router,
+    automation_router,
+    bilibili_router,
+    chat_router,
+    comments_router,
+    costs_router,
+    crawler_router,
+    creator_router,
+    data_router,
+    growth_router,
+    hot_radar_router,
+    publish_router,
+    strategy_router,
+    studio_router,
+    topics_router,
+    websocket_router,
+    wechat_router,
+    writer_router,
+    youtube_router,
+    youvibe_router,
+)
 from .services.browser_check import probe_browser_launch
+from .services.platform_capabilities import PLATFORM_CAPABILITIES
 
 APP_DIR = Path(__file__).parent.parent
 
@@ -49,11 +74,74 @@ if hasattr(sys.stdout, "reconfigure"):
         pass
 os.environ.setdefault("PYTHONUTF8", "1")
 
+logger = logging.getLogger("api")
+
+
+def _configure_logging() -> None:
+    """统一日志：原先 api/ 里散落 13 个 print，uvicorn 只转发自己那部分。
+
+    只在该 logger 尚无 handler 时配置，避免 uvicorn --reload 重复叠加。
+    """
+    root = logging.getLogger()
+    if root.handlers:
+        return
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s", "%H:%M:%S")
+    )
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+
+
+@contextlib.asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """应用生命周期：启动后台任务、退出时优雅停止。
+
+    2026-11-11：`@app.on_event("startup")` 已被 FastAPI 标记废弃，而且
+    从没有对应的 shutdown 钩子——`automation_loop` / `sender_loop` 起的
+    task 永远不结束，进程退出时被硬杀。这里迁到 lifespan 并补上关闭路径。
+    """
+    _configure_logging()
+
+    from api.services.outreach.reply_automation import (
+        PLATFORMS,
+        get_store,
+        reconcile_stuck_sending,
+        start_background_tasks,
+        stop_background_tasks,
+    )
+
+    # 启动自愈：把上次进程中断时卡在 sending 的条目退回待发
+    for platform in PLATFORMS:
+        try:
+            recovered = reconcile_stuck_sending(get_store(platform))
+            if recovered:
+                logger.warning("[startup] %s 通道有 %s 条回复卡在 sending，已退回待发", platform, recovered)
+        except Exception:  # noqa: BLE001 - 自愈失败不该拦住启动
+            logger.exception("[startup] %s 通道 reconcile 失败", platform)
+
+    start_background_tasks()
+    try:
+        yield
+    finally:
+        await stop_background_tasks()
+        logger.info("[shutdown] 后台任务已停止")
+
+
+_configure_logging()
+
 app = FastAPI(
     title="视频评论分析 WebUI API",
     description="视频评论采集与预览 Web API",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
+
+# 统一失败信封：HTTPException / 校验错误 / 未捕获异常都归一成
+# {"ok": false, "error": {code, message, hint, retry_after_seconds}}
+from .services.error_handlers import install_error_handlers  # noqa: E402
+
+install_error_handlers(app)
 
 # CORS configuration - allow frontend dev server access
 app.add_middleware(
@@ -78,6 +166,7 @@ app.include_router(websocket_router, prefix="/api")
 app.include_router(bilibili_router, prefix="/api")
 app.include_router(creator_router, prefix="/api")
 app.include_router(analysis_router, prefix="/api")
+app.include_router(analysis_artifacts_router, prefix="/api/analysis")
 app.include_router(growth_router, prefix="/api")
 app.include_router(automation_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
@@ -89,14 +178,9 @@ app.include_router(strategy_router, prefix="/api")
 app.include_router(wechat_router, prefix="/api")
 app.include_router(costs_router, prefix="/api")
 app.include_router(hot_radar_router, prefix="/api")
-
-
-@app.on_event("startup")
-async def start_reply_automation_tasks():
-    """B 站回复自动化：采集循环 + 受控发送循环（内部检查 enabled 开关）。"""
-    from api.services.outreach.reply_automation import start_background_tasks
-
-    start_background_tasks()
+app.include_router(publish_router, prefix="/api")
+app.include_router(studio_router, prefix="/api")
+app.include_router(youtube_router, prefix="/api")
 
 
 @app.get("/")

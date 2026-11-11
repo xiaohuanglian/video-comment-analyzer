@@ -3,26 +3,31 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
-
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from api.services.insight.analyzer import build_summary, reconcile_stale_progress, run_analysis_batch
+from api.services.insight.candidate_schemas import ReplyControl
+from api.services.insight.candidates import build_candidates, merge_candidate_updates
 from api.services.insight.export import (
-    build_candidates_csv,
-    build_outreach_csv,
-    build_report_json,
     build_report_markdown,
-    build_results_csv,
 )
-from api.services.insight.ingestion import ingest_files, list_comment_sources, list_comment_sources_grouped, preview_file
+from api.services.insight.ingestion import (
+    ingest_files,
+    list_comment_sources,
+    list_comment_sources_grouped,
+    preview_file,
+)
 from api.services.insight.llm_analyzer import estimate_cost
 from api.services.insight.pricing import DEFAULT_BASE_URL, DEFAULT_MODEL, normalize_model_settings, resolve_pricing
+from api.services.insight.query_filters import paginate_candidates, paginate_results_iter
+from api.services.insight.research_matching import parse_research_targets
+from api.services.insight.run_locations import find_resumable_run, run_exists_in_csv_dir
 from api.services.insight.run_naming import build_run_id
 from api.services.insight.sampling import DEFAULT_SAMPLE_SEED, stratified_sample
 from api.services.insight.schemas import FieldMapping, RunConfig
@@ -30,6 +35,8 @@ from api.services.insight.storage import (
     completed_record_ids,
     create_run,
     ensure_run_config,
+    iter_results,
+    list_runs,
     load_candidates,
     load_config,
     load_document_warnings,
@@ -43,29 +50,19 @@ from api.services.insight.storage import (
     load_summary,
     load_themes,
     load_trial_sample,
-    list_runs,
-    iter_results,
-    reset_failed_records,
     results_for_candidates,
     save_candidates,
     save_config,
     save_outreach,
     save_progress,
-    save_semantic_review,
-    save_themes,
     save_trial_sample,
     sync_progress_from_results,
 )
-from api.services.insight.run_locations import find_resumable_run, run_exists_in_csv_dir
 from api.services.insight.task_runner import is_running, reconcile_thread_state, request_cancel, start_background
-from api.services.insight.research_matching import parse_research_targets
-from api.services.insight.candidates import build_candidates, merge_candidate_updates
-from api.services.insight.candidate_schemas import ReplyControl
-from api.services.outreach.outreach import generate_outreach_drafts, merge_outreach_update
-from api.services.outreach.reply_runner import is_reply_running, start_reply_run, stop_reply_run
-from api.services.outreach.outreach_prompts import DEFAULT_BASE_TEMPLATE
-from api.services.insight.query_filters import paginate_candidates, paginate_results_iter
 from api.services.insight.trial_report import build_trial_report
+from api.services.outreach.outreach import generate_outreach_drafts, merge_outreach_update
+from api.services.outreach.outreach_prompts import DEFAULT_BASE_TEMPLATE
+from api.services.outreach.reply_runner import is_reply_running, start_reply_run, stop_reply_run
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
@@ -380,16 +377,16 @@ async def post_verify_model(body: VerifyModelRequest) -> Dict[str, Any]:
         cards = usage = None
         for attempt in range(2):
             try:
-                cards, usage = call_evidence_batch_llm(
-                    [record], config, body.api_key.strip()
+                # 同步 LLM 调用放线程里跑：否则重试期间的 0.6s 睡眠
+                # 会把整个事件循环一起按住。
+                cards, usage = await asyncio.to_thread(
+                    call_evidence_batch_llm, [record], config, body.api_key.strip()
                 )
                 break
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
                 if attempt == 0:
-                    import time as _time
-
-                    _time.sleep(0.6)
+                    await asyncio.sleep(0.6)
         if cards is None or usage is None:
             raise last_exc or RuntimeError("模型调用失败")
         card = cards[record.internal_record_id]
@@ -729,7 +726,11 @@ async def post_analyze(run_id: str, body: AnalyzeRequest) -> Dict[str, Any]:
             return {**_start_analyze_job(run_id, body, use_mock), "estimate": estimate}
 
         id_set = set(body.record_ids) if body.record_ids else None
-        result = run_analysis_batch(
+        # 2026-11-11：run_analysis_batch 是同步的（内部打 LLM），直接在 async
+        # 路由里跑会把整个事件循环卡住——期间 WebSocket 心跳、健康检查、
+        # 其他接口全部停摆。丢到线程池里跑。
+        result = await asyncio.to_thread(
+            run_analysis_batch,
             run_id,
             limit=body.limit,
             record_ids=id_set,
@@ -791,7 +792,8 @@ async def post_trial_run(run_id: str, body: AnalyzeRequest) -> Dict[str, Any]:
         body.retry_failed_only = False
         if body.background:
             return _start_analyze_job(run_id, body, use_mock)
-        result = run_analysis_batch(
+        result = await asyncio.to_thread(
+            run_analysis_batch,
             run_id,
             record_ids=set(trial["record_ids"]),
             use_mock=use_mock,
@@ -818,7 +820,8 @@ async def post_retry_failed(run_id: str, body: AnalyzeRequest) -> Dict[str, Any]
         body.record_ids = None
         if body.background:
             return _start_analyze_job(run_id, body, use_mock)
-        result = run_analysis_batch(
+        result = await asyncio.to_thread(
+            run_analysis_batch,
             run_id,
             retry_failed_only=True,
             use_mock=use_mock,
@@ -880,87 +883,14 @@ async def post_cancel(run_id: str) -> Dict[str, Any]:
     }
 
 
-@router.get("/runs/{run_id}/export/results.csv")
-async def export_run_results_csv(run_id: str) -> Response:
-    try:
-        load_config(run_id)
-        content = build_results_csv(run_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="任务不存在") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    filename = f"{run_id}_results.csv"
-    return Response(
-        content=content,
-        media_type="text/csv; charset=utf-8",
-        headers=_attachment_headers(filename, "analysis_results.csv"),
-    )
-
-
-@router.get("/runs/{run_id}/export/report.md")
-async def export_run_report_md(run_id: str) -> Response:
-    try:
-        content = build_report_markdown(run_id).encode("utf-8")
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="任务不存在") from exc
-    filename = f"{run_id}_report.md"
-    return Response(
-        content=content,
-        media_type="text/markdown; charset=utf-8",
-        headers=_attachment_headers(filename, "analysis_report.md"),
-    )
-
-
-@router.get("/runs/{run_id}/export/report.json")
-async def export_run_report_json(run_id: str) -> Dict[str, Any]:
-    try:
-        return build_report_json(run_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="任务不存在") from exc
-
-
-@router.get("/runs/{run_id}/export/candidates.csv")
-async def export_run_candidates_csv(run_id: str) -> Response:
-    try:
-        load_config(run_id)
-        content = build_candidates_csv(run_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="任务不存在") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    filename = f"{run_id}_candidates.csv"
-    return Response(
-        content=content,
-        media_type="text/csv; charset=utf-8",
-        headers=_attachment_headers(filename, "candidates.csv"),
-    )
-
-
-@router.get("/runs/{run_id}/export/outreach.csv")
-async def export_run_outreach_csv(run_id: str) -> Response:
-    try:
-        load_config(run_id)
-        content = build_outreach_csv(run_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="任务不存在") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    filename = f"{run_id}_outreach.csv"
-    return Response(
-        content=content,
-        media_type="text/csv; charset=utf-8",
-        headers=_attachment_headers(filename, "outreach.csv"),
-    )
-
-
 @router.get("/runs/{run_id}/themes")
 async def get_themes(run_id: str) -> Dict[str, Any]:
     try:
         load_config(run_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="任务不存在") from exc
-    from api.services.insight.theme_job import reconcile_theme_progress, theme_job_id
     from api.services.insight.task_runner import is_running as job_is_running
+    from api.services.insight.theme_job import reconcile_theme_progress, theme_job_id
 
     doc = load_themes(run_id).model_dump()
     progress = reconcile_theme_progress(run_id)
@@ -977,8 +907,8 @@ async def get_theme_cluster_progress(run_id: str) -> Dict[str, Any]:
         load_config(run_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="任务不存在") from exc
-    from api.services.insight.theme_job import reconcile_theme_progress, theme_job_id
     from api.services.insight.task_runner import is_running as job_is_running
+    from api.services.insight.theme_job import reconcile_theme_progress, theme_job_id
 
     job_id = theme_job_id(run_id)
     progress = reconcile_theme_progress(run_id)
@@ -1009,14 +939,14 @@ async def post_cluster_themes(run_id: str, body: ThemeClusterRequest) -> Dict[st
             detail="评论分析尚未完成，无法基于不完整结果生成开放主题",
         )
 
+    from api.services.insight.task_runner import is_running as job_is_running
+    from api.services.insight.task_runner import reconcile_thread_state, start_background
     from api.services.insight.theme_job import (
         execute_theme_cluster,
         load_theme_progress,
         mark_theme_cluster_starting,
         theme_job_id,
     )
-    from api.services.insight.task_runner import is_running as job_is_running
-    from api.services.insight.task_runner import reconcile_thread_state, start_background
 
     job_id = theme_job_id(run_id)
     reconcile_thread_state(job_id)
@@ -1033,7 +963,9 @@ async def post_cluster_themes(run_id: str, body: ThemeClusterRequest) -> Dict[st
 
     if not body.background:
         try:
-            return execute_theme_cluster(
+            # 同步 LLM 批处理：放线程里跑，别阻塞事件循环
+            return await asyncio.to_thread(
+                execute_theme_cluster,
                 run_id,
                 api_key=body.api_key or "",
                 use_mock=use_mock,
@@ -1074,8 +1006,8 @@ async def cancel_cluster_themes(run_id: str) -> Dict[str, Any]:
         load_config(run_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="任务不存在") from exc
-    from api.services.insight.theme_job import theme_job_id
     from api.services.insight.task_runner import request_cancel
+    from api.services.insight.theme_job import theme_job_id
 
     if not request_cancel(theme_job_id(run_id)):
         raise HTTPException(status_code=409, detail="当前没有可停止的开放主题归并任务")
@@ -1473,7 +1405,7 @@ async def get_evidence_items(
 async def get_research_report(run_id: str) -> Dict[str, Any]:
     """Readable research markdown + structured analysis for evidence path."""
     try:
-        config = load_config(run_id)
+        load_config(run_id)  # 只为确认 run 存在（不存在抛 404）
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="任务不存在") from exc
     semantic = load_semantic_review(run_id)
@@ -1504,73 +1436,3 @@ async def get_research_report(run_id: str) -> Dict[str, Any]:
     }
 
 
-class ContentPlanRequest(BaseModel):
-    api_key: Optional[str] = None
-    use_mock: Optional[bool] = None
-    max_topics: int = Field(default=12, ge=1, le=50)
-    draft_topics: int = Field(default=5, ge=0, le=20)
-    with_hot: bool = Field(default=False, description="附加外部热点信号")
-    hot_boost: bool = Field(default=False, description="按「需求×热度」重排（需 with_hot）")
-
-
-@router.post("/runs/{run_id}/content/generate")
-async def post_generate_content(run_id: str, body: ContentPlanRequest) -> Dict[str, Any]:
-    """Build ranked content topics from insights and optionally AI-draft them."""
-    from api.services.insight.content_plan import build_content_plan, content_plan_markdown
-    from api.services.insight.storage import load_content_plan, save_content_plan, _run_dir
-
-    try:
-        config = load_config(run_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="任务不存在") from exc
-    use_mock = config.use_mock if body.use_mock is None else body.use_mock
-    doc = build_content_plan(
-        run_id,
-        use_mock=use_mock,
-        api_key=body.api_key or "",
-        max_topics=body.max_topics,
-        draft_topics=body.draft_topics,
-        with_hot=body.with_hot,
-        hot_boost=body.hot_boost,
-    )
-    payload = doc.model_dump()
-    save_content_plan(run_id, payload)
-    try:
-        (_run_dir(run_id) / "content_plan.md").write_text(
-            content_plan_markdown(doc), encoding="utf-8"
-        )
-    except OSError:
-        pass
-    return payload
-
-
-@router.get("/runs/{run_id}/content")
-async def get_content_plan(run_id: str) -> Dict[str, Any]:
-    from api.services.insight.storage import load_content_plan
-
-    try:
-        load_config(run_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="任务不存在") from exc
-    return load_content_plan(run_id)
-
-
-@router.get("/runs/{run_id}/export/content.md")
-async def export_content_markdown(run_id: str) -> Response:
-    from api.services.insight.content_plan import ContentPlanDocument, content_plan_markdown
-    from api.services.insight.storage import load_content_plan
-
-    try:
-        load_config(run_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="任务不存在") from exc
-    payload = load_content_plan(run_id)
-    if not payload:
-        raise HTTPException(status_code=404, detail="尚未生成内容选题")
-    doc = ContentPlanDocument.model_validate(payload)
-    markdown = content_plan_markdown(doc)
-    return Response(
-        content=markdown,
-        media_type="text/markdown; charset=utf-8",
-        headers=_attachment_headers(f"{run_id}_内容选题.md", "content_plan.md"),
-    )

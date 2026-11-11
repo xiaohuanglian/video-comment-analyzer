@@ -18,9 +18,19 @@ class LlmUsage:
 
 
 def build_openai_client(base_url: str, api_key: str, feature: str = "insight"):
+    """构造 OpenAI SDK 客户端。
+
+    2026-11-11 审计修复：SDK 会自动在 base_url 后追加 `/chat/completions`
+    而不是 `/v1/chat/completions`，所以这里必须传**含 `/v1` 的端点根**；
+    原先直接透传用户填的 base_url，用户若按设置页约定写成根地址就会 404。
+    统一用 `llm_config` 归一后再补一次 `/v1`，保证只有一个。
+    """
+    from api.services.llm_config import normalize_base_url
+
     kwargs: dict = {"api_key": api_key}
-    if base_url.strip():
-        kwargs["base_url"] = base_url.strip()
+    normalized = normalize_base_url(base_url)
+    if normalized:
+        kwargs["base_url"] = f"{normalized}/v1"
     return UsageRecordingClient(OpenAI(**kwargs), feature)
 
 
