@@ -22,225 +22,58 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import random
 import re
 import subprocess
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
-from .reply_style import check_reply_style, similarity_verdict
 from api.services import notify as notify_mod
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-STORE_PATH = PROJECT_ROOT / "data" / "automation" / "bili_reply.json"
-COMMENT_DIR = PROJECT_ROOT / "data" / "automation" / "comments"
-XHS_COMMENT_DIR = PROJECT_ROOT / "data" / "automation" / "comments_xhs"
-COOKIE_PATH = PROJECT_ROOT / "data" / "automation" / "bili_cookie.json"
-BILI_PROFILE_DIR = PROJECT_ROOT / "browser_data" / "cdp_bili_user_data_dir"
-
-# 自动化通道按平台分库：B 站(bili)保持原路径与行为不变，小红书(xhs)独立状态/配额/节奏
-PLATFORMS = ("bili", "xhs")
-
-
-def store_path_for(platform: str) -> Path:
-    if platform == "xhs":
-        return PROJECT_ROOT / "data" / "automation" / "xhs_reply.json"
-    return STORE_PATH
-
-
-def comment_dir_for(platform: str) -> Path:
-    """采集子进程的落盘目录。xhs 单独目录，避免与 bili 的 jsonl 混写同名文件。"""
-    return XHS_COMMENT_DIR if platform == "xhs" else COMMENT_DIR
-
-
-DEFAULT_CONFIG: dict[str, Any] = {
-    "enabled": False,
-    "keywords": ["AI工具", "AI实测", "AI工作流", "AI编程", "数字人", "一人公司", "独立开发", "超级个体", "AI副业"],
-    # 采集模式：auto=有竞品笔记清单走 detail，否则关键词 search；list/search 可强制
-    "collect_mode": "auto",
-    # 竞品笔记链接清单（小红书 detail 模式要求带 xsec_token 的完整链接）
-    "note_urls": [],
-    "collect_interval_hours": 6,
-    "max_notes_per_keyword": 20,  # B 站搜索按页 20 条，代码里低于 20 会被抬到 20
-    "max_comments_per_video": 100,
-    "collect_timeout_minutes": 100,
-    "freshness_a_hours": 48,
-    "freshness_b_hours": 168,
-    "max_new_candidates_per_cycle": 8,
-    "max_per_video_per_day": 1,
-    "daily_send_limit": 10,
-    "send_interval_seconds": 180,
-    "send_jitter_seconds": 240,
-    "send_window_start": "09:00",
-    "send_window_end": "22:00",
-    "auto_draft": True,
-    "llm_screen": True,
-    "llm_screen_threshold": 6,
-    "opinion_like_bypass": 50,
-    "user_cooldown_days": 14,
-    # 停损：发送撞风控后整条通道暂停的小时数（0=不启用停损）
-    "sender_pause_hours": 24,
-}
-
-# 小红书截流通道的收紧默认值（该账号曾被警告：读发两侧都压到"正常真人"量级）。
-# freshness_b_hours 放宽到 720(30天,2026-11-10 实测):B 站默认 168h 是按其评论区节奏
-# 设计的;小红书关键词搜出的笔记偏老(超龄组中位 164 天),但回复通知照样触达评论者,
-# 7 天窗口曾把 498 条内容过关的目标整层杀掉。已保存的用户配置始终优先于此默认。
-XHS_CONFIG_OVERRIDES: dict[str, Any] = {
-    "collect_interval_hours": 24,
-    "max_notes_per_keyword": 10,
-    "max_comments_per_video": 60,
-    "max_new_candidates_per_cycle": 6,
-    "freshness_b_hours": 720,
-    "daily_send_limit": 6,
-    "send_interval_seconds": 600,
-    "send_jitter_seconds": 900,
-    "user_cooldown_days": 21,
-}
-
-# ---------------------------------------------------------------------------
-# 筛选规则（与 docs/回复待审清单 及记分卡标准一致）
-# ---------------------------------------------------------------------------
-
-_RE_SPAM = re.compile(r"成品号|出售|低价出|代充|加[vV薇微]|微信号|带赚|稳赚|项目私|求关注|免费(分享|领取)|私我|滴滴")
-# 使用渠道类（用户规则：不碰）
-_RE_ACCESS = re.compile(
-    r"用上|怎么用gpt|怎么用claude|如何用gpt|注册|翻墙|科学上网|镜像|账号|会员|充值|买.{0,4}号|"
-    r"支付|报销|订阅|低价pro|直充|封了|封号|中转"
+# 路径常量、平台默认值、筛选规则与出站硬校验已拆到 automation_rules.py。
+# 这里原样转出，保持 `from ...reply_automation import X` 的既有写法可用。
+from .automation_rules import (  # noqa: F401
+    _RE_ACCESS,
+    _RE_AI_DECO,
+    _RE_AI_ENTITY,
+    _RE_AI_WATER,
+    _RE_DEBUG,
+    _RE_DIRECTOR,
+    _RE_EXCLAIM,
+    _RE_HOWTO,
+    _RE_NEWBIE,
+    _RE_OUTBOUND_CONTACT,
+    _RE_OUTBOUND_CTA,
+    _RE_OUTBOUND_LINK,
+    _RE_QUESTION_CUE,
+    _RE_RESOURCE_BEG,
+    _RE_RHETORIC,
+    _RE_SEEKING,
+    _RE_SPAM,
+    _RE_SPAM_NICK,
+    BILI_PROFILE_DIR,
+    COMMENT_DIR,
+    COOKIE_PATH,
+    DEFAULT_CONFIG,
+    DY_COMMENT_DIR,
+    DY_CONFIG_OVERRIDES,
+    PLATFORMS,
+    PROJECT_ROOT,
+    STORE_PATH,
+    XHS_COMMENT_DIR,
+    XHS_CONFIG_OVERRIDES,
+    classify_comment,
+    comment_dir_for,
+    dy_draft_violations,
+    store_path_for,
+    xhs_draft_violations,
 )
-# 变现类排除已删(2026-10-27 定位转向):想用AI赚钱的实干者是核心受众;
-# 卖课拉人头的行为由 _RE_SPAM 排除,焦虑/求带/实干之分交 LLM 精筛 persona 分层
-# 个案报错/调试（需个案验证，规则排除）
-_RE_DEBUG = re.compile(
-    r"报错|错误|崩了|闪退|无法|检测不到|安装失败|装不上|黑屏|白屏|内存不足|跑不动|"
-    r"加载器|工作流.{0,6}(失败|不行)|一直(卡|转|等)"
-)
-# 求 UP 主私有资源（漏斗礼让：自动化一律不碰，人工可加）
-_RE_RESOURCE_BEG = re.compile(
-    r"求skill|求知识库|求资源|求资料|球球skill|三连.{0,10}求|已?三连.{0,8}(求|蹲)|"
-    r"求(提示词|模板|打包|整合包|参数文档|操作手册)|蹲一波|求发|求分享|需要.{0,4}(skill|知识库|资料)"
-)
-# 导演式提问（问 UP 本人的做法/素材/参数——只有 UP 能答；不拦「您好/请您」这类礼貌用语）
-_RE_DIRECTOR = re.compile(r"您的|你的|你(这|那)个|up你|楼主你|老师你|k神|ksr桑")
-# AI 水评（B 站流行的 AI 生成总结式评论）
-_RE_AI_WATER = re.compile(r"值得琢磨|值得深思|这道选择题|也挺直观|从某种角度|某种意义|确实也")
-# AI 生成评论的装饰符签名(首尾包边口号体/✨;2026-10-27 实测三类全中)
-_RE_AI_DECO = re.compile(r"^[\u2756\u2740\u2726\u273f\u2746\u25c8\u2605\u2606].{4,}[\u2756\u2740\u2726\u273f\u2746\u25c8\u2605\u2606]$|\u2728|\ud83d\udcab")
-# 感叹/纯情绪（无提问内容）
-_RE_EXCLAIM = re.compile(
-    r"^(好的|谢谢|感谢|厉害|绝了|哇|牛|冲|收藏了|mark|马克|支持|好看|太|确实|哈哈|笑死|"
-    r"打卡|前排|来了|222|hhh|666|顶|赞)[!！。～~\s]*$|^\d+$"
-)
-
-# 反问/抒情/赞叹(纯修辞,无观点内容;「还要什么自行车」等习语常见于实质观点中,不再拦)
-_RE_RHETORIC = re.compile(r"没人(夸|说|提|注意)|我从没觉得|多愁善感|破防|泪目|哭死")
-# A 档：看得到学不会（问工具/怎么做;含商业动作:获客/接单/定价）
-_RE_HOWTO = re.compile(
-    r"什么(软件|工具|app|模型|程序|网站)|哪个(软件|工具|app|平台)|"
-    r"怎么(做|弄|用|生成|实现|做到|衔接|设置|入门|开始|学|获客|接单|定价|找客户|引流|成交|变现|赚钱)|"
-    r"如何(做|用|实现|生成|入门|获客|接单|定价)|"
-    r"用什么|求(教|指导|推荐)|怎么做同款|怎么才能"
-)
-# B 档：想动手缺路径（新手自述，需带提问感）
-_RE_NEWBIE = re.compile(r"新手|小白|零基础|入坑|萌新|手残|想学|想试|我也想|入门")
-_RE_QUESTION_CUE = re.compile(r"？|\?|吗|呢|什么|怎么|哪|求|请教|能不能|有没有")
-# 求助动词（弱疑问必须同时命中，否则视为现后讨论）
-_RE_SEEKING = re.compile(
-    r"想学|想做|想试|想用|想了解|想知道|好奇|请教|请问|求教|求助|打算|想上手|想入|"
-    r"能不能|可不可以|有没有办法|怎么才能|能实现|能做"
-)
-# C 档：AI×商业相关实体（观点/讨论评论的召回判据;2026-10-27 扩商业词）
-_RE_AI_ENTITY = re.compile(
-    r"(?<![a-zA-Z])[aA][iI](?![a-zA-Z])|人工智能|大模型|llm|智能体|agent|生成式|"
-    r"gpt|claude|gemini|opus|astra|deepseek|sora|veo|"
-    r"可灵|即梦|seedance|千问|qwen|豆包|智谱|nano banana|"
-    r"提示词|数字人|ai视频|ai动画|ai修图|ai绘图|ai画|ai配音|ai生成|"
-    r"副业|创业|做生意|生意|变现|搞钱|赚钱|接单|获客|一人公司|超级个体|独立开发",
-    re.IGNORECASE,
-)
-
-
-# 营销号昵称(卖号/代充/接单工作室——评论再像样也不值得回)
-_RE_SPAM_NICK = re.compile(r"订阅|可开票|低价|代充|出号|回收|接单|工作室|招商|代理")
-
-# ---------------------------------------------------------------------------
-# 小红书出站硬校验（发送侧红线：截流评论绝不能带链接/联系方式/引流话术）
-# ---------------------------------------------------------------------------
-
-_RE_OUTBOUND_LINK = re.compile(
-    r"https?://|www\.|[a-zA-Z0-9-]+\.(com|cn|net|org|io|me|xyz|top)\b|"
-    r"小红书号|抖音号|公众号|视频号|快手号|B站[号名]|知乎号"
-)
-_RE_OUTBOUND_CONTACT = re.compile(
-    r"加\s*[vV薇微❤]|微信号|[vVxX][：:]\s*[a-zA-Z0-9_-]{3,}|"
-    r"[qQ]{1,2}\s*[：: ]\s*\d{5,}|扣扣|企鹅号|飞机号"
-)
-_RE_OUTBOUND_CTA = re.compile(
-    r"私我|私信我|滴滴我|看我主页|主页有|简介有|关注我|带你(做|赚|飞)|收徒|上车|私聊"
-)
-
-
-def xhs_draft_violations(text: str) -> list[str]:
-    """小红书出站草稿硬校验。返回违禁原因列表，空列表=可发。
-
-    批准与发送两处都会调用：这是平台警告/举报的直接诱因，模型写得再好也不放行。
-    """
-    violations: list[str] = []
-    t = str(text or "")
-    if _RE_OUTBOUND_LINK.search(t):
-        violations.append("含链接或站外账号指向")
-    if _RE_OUTBOUND_CONTACT.search(t):
-        violations.append("含联系方式")
-    if _RE_OUTBOUND_CTA.search(t):
-        violations.append("含引流话术")
-    return violations
-
-
-def classify_comment(text: str, platform: str = "bili") -> tuple[str, str]:
-    """返回 (状态, 信号标签)。状态：target_a / target_b / excluded。"""
-    text = (text or "").strip()
-    is_short = len(text) < 8
-    # 小红书短问句例外(2026-11-10 实测):「要钱吗」「什么软件」是截流场景最优质的
-    # 购买/工具意图线索,且短问句是小红书评论常态;B 站该长度多为「哈哈哈哈」式
-    # 水评,维持排除。放行的短问句仍要过下方垃圾/渠道/报错等内容闸,再交 LLM 精筛。
-    if is_short and not (platform == "xhs" and _RE_QUESTION_CUE.search(text)):
-        return "excluded", "太短"
-    for pat, label in (
-        (_RE_SPAM, "垃圾广告"),
-        (_RE_ACCESS, "使用渠道类"),
-        (_RE_DEBUG, "个案报错"),
-        (_RE_RESOURCE_BEG, "求UP私有资源"),
-        (_RE_DIRECTOR, "导演式提问"),
-        (_RE_RHETORIC, "反问/抒情"),
-        (_RE_AI_WATER, "AI水评"),
-        (_RE_AI_DECO, "AI装饰符"),
-        (_RE_EXCLAIM, "纯感叹"),
-    ):
-        if pat.search(text):
-            return "excluded", label
-    if _RE_HOWTO.search(text):
-        return "target_a", "问工具/怎么做"
-    if _RE_NEWBIE.search(text) and _RE_QUESTION_CUE.search(text):
-        return "target_b", "新手求路径"
-    if (
-        _RE_QUESTION_CUE.search(text)
-        and _RE_SEEKING.search(text)
-        and re.search(r"提示词|skill|软件|工具|模型|视频|动画|修图|配音", text)
-    ):
-        # 弱疑问 + 明确求助意图 + 实体词，交给人工闸门细看
-        # (实体表已去掉 数学/学习/笔记——离域提问由 LLM 精筛判 lane=skip 拦下)
-        return "target_b", "想动手求路径"
-    if len(text) >= 12 and _RE_AI_ENTITY.search(text):
-        # C 档:AI 相关且有实质内容的观点/体验/讨论——不求助也值得互动接话
-        return "target_c", "AI相关观点/讨论"
-    if is_short and platform == "xhs":
-        # 走到这里 = xhs 短问句且未撞任何内容闸(HOWTO/新手类已在前面上档)
-        return "target_b", "短疑问(购买/工具线索)"
-    return "excluded", "无提问"
-
+from .reply_style import check_reply_style, similarity_verdict
 
 # ---------------------------------------------------------------------------
 # 状态存储
@@ -252,22 +85,34 @@ class AutomationStore:
     def __init__(self, path: Path = STORE_PATH, platform: str = "bili"):
         self.path = path
         self.platform = platform if platform in PLATFORMS else "bili"
-        self.lock = asyncio.Lock()
+        # 进程内可重入锁：保护 _state 的读改写与落盘（原先是 asyncio.Lock，
+        # 但从未被 await 使用——等于没有锁）。发送循环跑在 to_thread 里时，
+        # threading.Lock 才是对的。
+        import threading
+
+        self.lock = threading.RLock()
+        #: 待落盘的累计计数增量。计数器不能用「合并两份快照取 max」来救——
+        #: 两个实例各读到 0、各 +1，max 只会留下 1。这里记录「我加了多少」，
+        #: 落盘时在文件锁内叠加到磁盘最新值上，语义才正确。
+        self._pending_deltas: dict[str, float] = {}
         self._state: dict[str, Any] = self._load()
 
     # ---- 持久化 ----
     def _load(self) -> dict[str, Any]:
-        if self.path.exists():
-            try:
-                data = json.loads(self.path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                data = {}
-        else:
-            data = {}
-        # xhs 通道在通用默认值之上叠加收紧项；已保存的用户配置始终最优先
+        # 2026-11-11 审计修复：原先解析失败一律当 {}，下一次 save() 就把
+        # items / processed_comment_ids 全部抹掉——已回复用户名单丢失后，
+        # 同一批人会被重新回复一遍（这是最不能接受的一类数据损坏）。
+        # 现在：文件损坏 → 把坏文件改名留存并抛 JsonStoreCorruption，
+        # 由上层明确感知；只有文件真的不存在才走空状态。
+        from api.services.json_store import read_json
+
+        data = read_json(self.path, default={}, expect=dict)
+        # xhs/dy 通道在通用默认值之上叠加收紧项；已保存的用户配置始终最优先
         base_config = dict(DEFAULT_CONFIG)
         if self.platform == "xhs":
             base_config.update(XHS_CONFIG_OVERRIDES)
+        elif self.platform == "dy":
+            base_config.update(DY_CONFIG_OVERRIDES)
         state = {
             "config": {**base_config, **(data.get("config") or {})},
             "items": data.get("items") or [],
@@ -289,18 +134,82 @@ class AutomationStore:
         return state
 
     def save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "config": self._state["config"],
-            "items": self._state["items"],
-            "processed_comment_ids": sorted(self._state["processed_comment_ids"]),
-            "stats": self._state["stats"],
-            "cycle": self._state["cycle"],
-            "sender": self._state["sender"],
-        }
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
-        tmp.replace(self.path)
+        """原子写 + 锁内合并。
+
+        两处加固（2026-11-11）：
+        - 用**按文件路径共享**的锁（`json_store.lock_for`），而不是实例锁——
+          两个实例（CLI + Web、或测试里的多实例）各持一把锁等于没锁。
+        - 锁内先重读磁盘，把「别的实例新增的 items / 我这边不认识的
+          processed_comment_ids / sent_total 等累计计数」并回来，再落盘。
+          否则后写的那份旧快照会把先写的成果整体覆盖。
+        """
+        from api.services.json_store import atomic_write_text, lock_for, read_json
+
+        with lock_for(self.path):
+            try:
+                on_disk = read_json(self.path, default={}, expect=dict)
+            except Exception:  # noqa: BLE001 - 盘上已损坏时不要连累本次写入
+                on_disk = {}
+
+            with self.lock:
+                mine = {
+                    "config": self._state["config"],
+                    "items": self._state["items"],
+                    "processed_comment_ids": sorted(self._state["processed_comment_ids"]),
+                    "stats": self._state["stats"],
+                    "cycle": self._state["cycle"],
+                    "sender": self._state["sender"],
+                }
+
+            payload = dict(mine)
+            if on_disk:
+                disk_items = on_disk.get("items") or []
+                if isinstance(disk_items, list):
+                    known = {str(it.get("id")) for it in mine["items"] if isinstance(it, dict)}
+                    merged = list(mine["items"])
+                    for it in disk_items:
+                        if isinstance(it, dict) and str(it.get("id")) not in known:
+                            merged.append(it)
+                    payload["items"] = merged
+                payload["processed_comment_ids"] = sorted(
+                    set(mine["processed_comment_ids"])
+                    | {str(c) for c in (on_disk.get("processed_comment_ids") or [])}
+                )
+                disk_stats = on_disk.get("stats") or {}
+                if isinstance(disk_stats, dict):
+                    stats = dict(mine["stats"])
+                    with self.lock:
+                        deltas = dict(self._pending_deltas)
+                    for key, delta in deltas.items():
+                        base = disk_stats.get(key)
+                        if isinstance(base, (int, float)) and isinstance(stats.get(key), (int, float)):
+                            stats[key] = base + delta
+                        elif isinstance(base, (int, float)):
+                            stats[key] = base
+                    payload["stats"] = stats
+                disk_config = on_disk.get("config") or {}
+                if isinstance(disk_config, dict):
+                    payload["config"] = {**disk_config, **mine["config"]}
+
+            try:
+                text = json.dumps(payload, ensure_ascii=False, indent=1)
+            except (TypeError, ValueError) as exc:  # 状态里混入不可序列化对象
+                raise RuntimeError(f"自动化状态无法序列化，未写入：{exc}") from exc
+            atomic_write_text(self.path, text)
+
+            # 内存与磁盘对齐，避免下次又拿旧快照去覆盖
+            with self.lock:
+                self._state["items"] = payload["items"]
+                self._state["processed_comment_ids"] = set(payload["processed_comment_ids"])
+                self._state["stats"] = payload["stats"]
+                self._pending_deltas.clear()
+
+    def bump_stat(self, key: str, delta: float = 1) -> None:
+        """累计计数自增（跨实例安全）。计数一律走这里，别直接 `+= 1`。"""
+        with self.lock:
+            current = self._state["stats"].get(key, 0)
+            self._state["stats"][key] = (current if isinstance(current, (int, float)) else 0) + delta
+            self._pending_deltas[key] = self._pending_deltas.get(key, 0) + delta
 
     # ---- 访问 ----
     @property
@@ -366,7 +275,7 @@ class AutomationStore:
             self._state["processed_comment_ids"].add(it["comment_id"])
             self._state["items"].append(it)
             added += 1
-        self._state["stats"]["candidates_total"] += added
+        self.bump_stat("candidates_total", added)
         self.save()
         return added
 
@@ -548,13 +457,15 @@ class AutomationStore:
 
     def mark_sending(self, item: dict[str, Any]) -> None:
         item["status"] = "sending"
+        # 时间戳供启动时 reconcile_stuck_sending() 判断是否中断
+        item["sending_at"] = datetime.now().isoformat(timespec="seconds")
         self.save()
 
     def mark_sent(self, item: dict[str, Any], reply_id: str) -> None:
         item["status"] = "sent"
         item["sent_at"] = datetime.now().isoformat(timespec="seconds")
         item["reply_id"] = str(reply_id or "")
-        self._state["stats"]["sent_total"] += 1
+        self.bump_stat("sent_total", 1)
         s = self._state["sender"]
         s["last_send_at"] = item["sent_at"]
         interval = self._state["config"]["send_interval_seconds"]
@@ -806,15 +717,10 @@ def _screen_brief() -> str:
 
 
 def _extract_screen_json(reply: str) -> Optional[dict[str, Any]]:
-    text = (reply or "").strip()
-    m = re.search(r"\{.*\}", text, re.S)
-    if not m:
-        return None
-    try:
-        data = json.loads(m.group(0))
-    except json.JSONDecodeError:
-        return None
-    return data if isinstance(data, dict) else None
+    """统一走 api.services.llm_json（原先贪婪正则会跨对象乱切）。"""
+    from api.services.llm_json import extract_json_object
+
+    return extract_json_object(reply)
 
 
 async def llm_screen_candidates(
@@ -1006,6 +912,8 @@ def _system_prompt_for(item: dict[str, Any]) -> str:
     )
     if item.get("platform") == "xhs":
         return base + XHS_PROMPT_ADDENDUM
+    if item.get("platform") == "dy":
+        return base + DY_PROMPT_ADDENDUM
     return base
 
 
@@ -1018,9 +926,19 @@ XHS_PROMPT_ADDENDUM = """
 - 红线：绝不出现链接、任何平台账号名、联系方式、「看我主页/私信我」式引流——这是小红书封控主因，比语气问题严重得多"""
 
 
+# 抖音平台补充规则：拼接在 B 站基础 prompt 之后
+DY_PROMPT_ADDENDUM = """
+
+抖音补充规则（这是抖音评论区，不是B站）：
+- 语气比B站更口语更直接，像刷视频的人顺手回一句；可以用「哈哈」「确实」这类语气词，不堆 emoji（最多一个）
+- 篇幅短：20-60 字优先；抖音评论没人读长文，一两句说完就收
+- 红线：绝不出现链接、任何平台账号名、联系方式、「看我主页/私信我」式引流——抖音对引流评论降权重罚，比语气问题严重得多"""
+
+
 def _llm_user_message(item: dict[str, Any]) -> str:
+    _platform_label = {"xhs": "小红书", "dy": "抖音"}.get(item.get("platform"), "B站")
     payload = {
-        "平台": "小红书" if item.get("platform") == "xhs" else "B站",
+        "平台": _platform_label,
         "回复类型": "帮助型(给全答案)" if item.get("lane", "help") == "help" else "互动型(自然接话)",
         "对方评论": item["comment_text"],
         "视频标题": item["video_title"],
@@ -1115,15 +1033,17 @@ async def draft_with_llm(item: dict[str, Any]) -> str:
         if not issues:
             break
 
-        def _rewrite() -> str:
+        # 默认参数在定义时绑定当前轮的 draft/issues：
+        # 避免闭包读到下一轮循环的值（B023）。
+        def _rewrite(_draft: str = draft, _issues: list[str] = issues) -> str:
             completion = client.chat.completions.create(
                 model=settings.get("model_name") or "deepseek-chat",
                 messages=[
                     {"role": "system", "content": system_prompt
                      + "\n\n你现在修改自己的草稿。只修复下列问题,内容与长度大致保持,其余一字不动;输出修改后的完整回复正文,不要任何说明。"},
                     {"role": "user", "content": _llm_user_message(item)
-                     + f"\n\n我的草稿:\n{draft}\n\n必须修复的问题:\n"
-                       + "\n".join(f"- {w}" for w in issues)},
+                     + f"\n\n我的草稿:\n{_draft}\n\n必须修复的问题:\n"
+                       + "\n".join(f"- {w}" for w in _issues)},
                 ],
                 temperature=0.4,
                 max_tokens=2000,
@@ -1176,6 +1096,33 @@ def build_collect_command(config: dict[str, Any], platform: str = "bili") -> lis
         ]
         if use_list:
             cmd.extend(["--specified_id", ",".join(note_urls)])
+        else:
+            cmd.extend(["--keywords", keywords])
+        return cmd
+    if platform == "dy":
+        # 抖音：CDP 模式连本机已登录浏览器（client 直接从浏览器上下文取 cookie，
+        # 不需要注入 cookie env）。目标源同 xhs：对标视频清单(detail)或关键词搜索(search)。
+        # 注意 dy 搜索每页固定 10 条（crawler 内部会把 max_notes 强制抬到 ≥10），
+        # 配置里的 max_notes_per_keyword 按每词 10 条理解即可。
+        video_urls = [str(u).strip() for u in (config.get("note_urls") or []) if str(u).strip()]
+        mode = str(config.get("collect_mode") or "auto")
+        use_list = bool(video_urls) and mode in ("auto", "list")
+        cmd = [
+            "uv", "run", "python", "main.py",
+            "--platform", "dy",
+            "--lt", "qrcode",
+            "--type", "detail" if use_list else "search",
+            "--crawler_max_notes_count", str(config.get("max_notes_per_keyword", 10)),
+            "--max_comments_count_singlenotes", str(config.get("max_comments_per_video", 60)),
+            "--get_comment", "true",
+            "--get_sub_comment", sub_comment,
+            "--save_data_option", "jsonl",
+            "--save_data_path", str(comment_dir_for("dy").relative_to(PROJECT_ROOT)),
+            # 同 xhs 教训：不传 --split_by_video，保持平铺 contents_/comments_*.jsonl
+            "--headless", "false",
+        ]
+        if use_list:
+            cmd.extend(["--specified_id", ",".join(video_urls)])
         else:
             cmd.extend(["--keywords", keywords])
         return cmd
@@ -1241,13 +1188,57 @@ def _normalize_xhs_content(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _is_dy_comment_row(row: dict[str, Any]) -> bool:
+    """dy 存储层的判据：有 aweme_id 而无 video_id/note_id。"""
+    return bool(row.get("aweme_id")) and not row.get("video_id") and not row.get("note_id")
+
+
+def _normalize_dy_comment(row: dict[str, Any]) -> dict[str, Any]:
+    out = dict(row)
+    out["video_id"] = str(row.get("aweme_id") or "")
+    out["create_time"] = _normalize_ts(row.get("create_time"))
+    out["platform"] = "dy"
+    return out
+
+
+def _normalize_dy_content(row: dict[str, Any]) -> dict[str, Any]:
+    """dy 视频行归一成 bili 形状（video_id/video_url/title）。"""
+    out = dict(row)
+    out["video_id"] = str(row.get("aweme_id") or row.get("video_id") or "")
+    out["video_url"] = str(row.get("aweme_url") or row.get("video_url") or "")
+    if not str(out.get("title") or "").strip():
+        out["title"] = str(row.get("desc") or row.get("title") or "")[:80]
+    out["platform"] = "dy"
+    return out
+
+
+def _row_platform(row: dict[str, Any]) -> str:
+    """按行形状识别采集行属于哪个平台（归一化过的行带 platform 字段，优先读它）。"""
+    p = str(row.get("platform") or "").strip()
+    if p in ("xhs", "dy", "bili"):
+        return p
+    if row.get("note_id"):
+        return "xhs"
+    if row.get("aweme_id"):
+        return "dy"
+    return "bili" if row.get("video_id") or row.get("bvid") else ""
+
+
+def _fit_platform(row: dict[str, Any], platform: str) -> bool:
+    """该行是否属于当前通道。bili 通道放行未知形状行（历史行为），其余严格匹配。"""
+    rp = _row_platform(row)
+    if platform in ("xhs", "dy"):
+        return rp == platform
+    return rp in ("", "bili")
+
+
 def read_collected(
     comment_dir: Path = COMMENT_DIR, platform: str = "bili"
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """读自动化目录下全部 contents/comments jsonl（跨周期追加，靠 comment_id 去重）。
 
-    platform=xhs 时把 xhs 行(note_id/note_url)归一成 bili 形状并只保留 xhs 数据；
-    platform=bili 时跳过混进同一目录的 xhs 行，两条通道互不串数据。
+    platform=xhs/dy 时把该平台行归一成 bili 形状并只保留本平台数据；
+    platform=bili 时跳过混进同一目录的 xhs/dy 行，各通道互不串数据。
     """
     video_map: dict[str, dict[str, Any]] = {}
     rows: list[dict[str, Any]] = []
@@ -1261,12 +1252,12 @@ def read_collected(
             for line in path.read_text(encoding="utf-8").split("\n"):
                 if line.strip():
                     v = json.loads(line)
-                    if platform == "xhs":
-                        if not (v.get("note_id") or v.get("platform") == "xhs"):
-                            continue
-                        v = _normalize_xhs_content(v)
-                    elif _is_xhs_comment_row(v):
+                    if not _fit_platform(v, platform):
                         continue
+                    if platform == "xhs":
+                        v = _normalize_xhs_content(v)
+                    elif platform == "dy":
+                        v = _normalize_dy_content(v)
                     video_map[str(v.get("video_id"))] = v
         except (json.JSONDecodeError, OSError):
             continue
@@ -1275,12 +1266,12 @@ def read_collected(
             for line in path.read_text(encoding="utf-8").split("\n"):
                 if line.strip():
                     row = json.loads(line)
-                    if platform == "xhs":
-                        if not (row.get("note_id") or row.get("platform") == "xhs"):
-                            continue
-                        row = _normalize_xhs_comment(row)
-                    elif _is_xhs_comment_row(row):
+                    if not _fit_platform(row, platform):
                         continue
+                    if platform == "xhs":
+                        row = _normalize_xhs_comment(row)
+                    elif platform == "dy":
+                        row = _normalize_dy_comment(row)
                     rows.append(row)
         except (json.JSONDecodeError, OSError):
             continue
@@ -1374,9 +1365,10 @@ async def screen_collected(
 
 
 def _collect_env(platform: str, xhs_cookie: str = "") -> dict[str, str]:
-    """采集子进程环境。bili：自开浏览器(qrcode)；xhs：必须连已开的 9222 登录浏览器——
+    """采集子进程环境。bili：自开浏览器(qrcode)；xhs/dy：必须连已开的 9222 登录浏览器——
     若让子进程另开浏览器会抢同一 cdp 档案目录，kill_stale_browsers 还会把正在运行的
-    登录浏览器当残留杀掉，发送通道随之失效。"""
+    登录浏览器当残留杀掉，发送通道随之失效。dy 的 client 直接从浏览器上下文取
+    cookie，无需 VC_CRAWLER_COOKIES 注入。"""
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     env["CDP_CONNECT_EXISTING"] = "0" if platform == "bili" else "1"
     if platform == "xhs" and xhs_cookie:
@@ -1411,9 +1403,9 @@ async def run_cycle(store: AutomationStore, mode_override: str = "") -> dict[str
         timeout = int(store.config.get("collect_timeout_minutes", 100)) * 60
         try:
             await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as exc:
             proc.kill()
-            raise RuntimeError(f"采集超时（>{timeout // 60}分钟），已终止")
+            raise RuntimeError(f"采集超时（>{timeout // 60}分钟），已终止") from exc
 
         rows, video_map = read_collected(comment_dir_for(store.platform), platform=store.platform)
         cfg = dict(store.config)
@@ -1584,7 +1576,8 @@ async def login_bili_qrcode(wait_seconds: int = 180) -> dict[str, Any]:
             await context.close()
     if not logged_in:
         raise RuntimeError("等待扫码超时,登录未完成(可重试)")
-    cookie = await refresh_bili_cookie()  # 复用:headless 读档案+落盘+账号信息
+    # 只为触发副作用（headless 读档案 + 落盘 + 记录账号信息），返回值这里不用
+    await refresh_bili_cookie()
     return {"ok": True, "account": cached_account_info()}
 
 
@@ -1733,33 +1726,111 @@ async def refresh_sent_engagement(store: "AutomationStore") -> dict[str, Any]:
 # 发送循环
 # ---------------------------------------------------------------------------
 
-async def _sender_tick_xhs(store: AutomationStore, item: dict[str, Any]) -> str:
-    """小红书发送：CDP 浏览器内仿人工回复 + 发送前硬校验 + 风控停损。"""
+@dataclass(frozen=True)
+class PlatformSendAdapter:
+    """一个平台的受控发送差异点。
+
+    2026-11-11 重构背景：小红书的 `_sender_tick_xhs` 与抖音的
+    `_sender_tick_dy` 相似度 0.75（difflib 实测），骨架完全一致——
+    硬校验 → 前置条件 → mark_sending → 发送 → mark_sent/failed →
+    风控停损 → 飞书通知。按现状再接快手/微博/知乎/贴吧会变成 6 份拷贝。
+
+    现在把「骨架」收在 `_run_sender_tick()` 里，平台只声明差异：
+    - `name`：日志与通知文案用的中文名
+    - `violations`：出站硬校验函数
+    - `precondition`：发送前必须满足的条件（返回 None 表示通过）
+    - `send`：实际发送函数（同步，会在 to_thread 里跑）
+    - `needs_comment_url`：是否需要带 token 的评论直链
+    """
+
+    name: str
+    violations: Callable[[str], list[str]]
+    precondition: Optional[Callable[[dict[str, Any]], Optional[str]]]
+    send: Callable[..., Any]
+    needs_comment_url: bool = False
+
+
+def _xhs_adapter() -> PlatformSendAdapter:
+    from .xhs_reply_sender import send_xhs_reply
+
+    def _precondition(item: dict[str, Any]) -> Optional[str]:
+        # 带令牌的评论直链是定位评论的唯一可靠途径（直链无 token 会 404）
+        if not str(item.get("comment_url") or "").strip():
+            return "缺少带 xsec_token 的评论链接，无法受控回复；请重新采集该笔记"
+        return None
+
+    return PlatformSendAdapter(
+        name="小红书",
+        violations=xhs_draft_violations,
+        precondition=_precondition,
+        send=send_xhs_reply,
+        needs_comment_url=True,
+    )
+
+
+def _dy_adapter() -> PlatformSendAdapter:
+    from .dy_reply_sender import send_dy_reply
+
+    def _precondition(item: dict[str, Any]) -> Optional[str]:
+        # 抖音评论没有可定位的直链锚点（无 xsec_token 机制），
+        # 在视频页评论区按「昵称+评论内容」定位；comment_url 非必需。
+        if not str(item.get("video_id") or "").strip():
+            return "缺少视频 id，无法定位评论区；请重新采集该视频"
+        return None
+
+    return PlatformSendAdapter(
+        name="抖音",
+        violations=dy_draft_violations,
+        precondition=_precondition,
+        send=send_dy_reply,
+        needs_comment_url=False,
+    )
+
+
+async def _run_sender_tick(
+    store: AutomationStore,
+    item: dict[str, Any],
+    adapter: PlatformSendAdapter,
+) -> str:
+    """通用受控发送：所有平台共用这一条路径。
+
+    顺序不能变——硬校验必须在 mark_sending 之前（否则拦下的条目会卡在
+    sending），停损必须在 mark_failed 之后（否则无法判断该不该暂停通道）。
+    """
     # 发送前二次硬校验（防批准后改草稿/历史遗留条目绕过批准口校验）
-    violations = xhs_draft_violations(item.get("draft") or "")
+    violations = adapter.violations(item.get("draft") or "")
     if violations:
         item["status"] = "pending_review"
         item.setdefault("lint_warnings", []).append("硬校验拦截：" + "、".join(violations))
         item["note"] = "发送前硬校验拦截，退回待审"
         store.save()
         return f"条目退回待审（{'、'.join(violations)}）"
-    # 带令牌的评论直链是定位评论的唯一可靠途径（直链无 token 会 404）
-    if not str(item.get("comment_url") or "").strip():
-        item["status"] = "pending_review"
-        item["note"] = "缺少带 xsec_token 的评论链接，无法受控回复；请重新采集该笔记"
-        store.save()
-        return "条目退回待审（缺评论直链）"
+
+    if adapter.precondition is not None:
+        reason = adapter.precondition(item)
+        if reason:
+            item["status"] = "pending_review"
+            item["note"] = reason
+            store.save()
+            # 回显一句短的定位原因（沿用旧文案，用户已熟悉）
+            short = "缺评论直链" if adapter.needs_comment_url else reason[:16]
+            return f"条目退回待审（{short}）"
+
     store.mark_sending(item)
     try:
-        from .xhs_reply_sender import send_xhs_reply
+        kwargs: dict[str, Any] = {
+            "content_id": str(item.get("video_id") or ""),
+            "comment_id": str(item.get("comment_id") or ""),
+            "message": str(item.get("draft") or ""),
+        }
+        if adapter.name == "抖音":
+            # 抖音按「昵称 + 评论原文」定位评论，必须带上
+            kwargs["commenter"] = str(item.get("commenter") or "")
+            kwargs["comment_text"] = str(item.get("comment_text") or "")
+        else:
+            kwargs["url"] = str(item.get("comment_url") or "")
 
-        await asyncio.to_thread(
-            send_xhs_reply,
-            content_id=str(item.get("video_id") or ""),
-            comment_id=str(item.get("comment_id") or ""),
-            message=str(item.get("draft") or ""),
-            url=str(item.get("comment_url") or ""),
-        )
+        await asyncio.to_thread(adapter.send, **kwargs)
         store.mark_sent(item, "")
         store._state["sender"]["last_error"] = ""
         store.save()
@@ -1767,7 +1838,7 @@ async def _sender_tick_xhs(store: AutomationStore, item: dict[str, Any]) -> str:
             if notify_mod.should_notify(
                 store._state["sender"].setdefault("notified", {}), "queue_empty", "队列已清空"
             ):
-                await notify_mod.notify("小红书发送队列已清空", ["所有已批准回复均已发送完毕"])
+                await notify_mod.notify(f"{adapter.name}发送队列已清空", ["所有已批准回复均已发送完毕"])
         return f"已发送 → {item.get('commenter', '')}（《{str(item.get('video_title') or '')[:20]}》）"
     except Exception as exc:  # noqa: BLE001
         msg = str(exc)
@@ -1785,7 +1856,7 @@ async def _sender_tick_xhs(store: AutomationStore, item: dict[str, Any]) -> str:
                 store._state["sender"].setdefault("notified", {}), "risk_pause", msg[:120]
             ):
                 await notify_mod.notify(
-                    "小红书发送已停损暂停",
+                    f"{adapter.name}发送已停损暂停",
                     [
                         f"原因:{msg[:160]}",
                         f"暂停 {hours:g} 小时后自动恢复；可在设置页查看通道状态",
@@ -1793,6 +1864,16 @@ async def _sender_tick_xhs(store: AutomationStore, item: dict[str, Any]) -> str:
                     ],
                 )
         return f"发送失败：{msg[:120]}"
+
+
+async def _sender_tick_xhs(store: AutomationStore, item: dict[str, Any]) -> str:
+    """小红书发送：走通用 tick，差异在 _xhs_adapter()。"""
+    return await _run_sender_tick(store, item, _xhs_adapter())
+
+
+async def _sender_tick_dy(store: AutomationStore, item: dict[str, Any]) -> str:
+    """抖音发送：走通用 tick，差异在 _dy_adapter()。"""
+    return await _run_sender_tick(store, item, _dy_adapter())
 
 
 async def _sender_tick(store: AutomationStore) -> str:
@@ -1811,6 +1892,8 @@ async def _sender_tick(store: AutomationStore) -> str:
         return "无已批准待发条目"
     if store.platform == "xhs":
         return await _sender_tick_xhs(store, item)
+    if store.platform == "dy":
+        return await _sender_tick_dy(store, item)
     # Cookie 刷新需要独占 cdp_bili 档案，采集周期进行中不动浏览器，只发已缓存的
     cookie_cached = _cached_cookie()
     if not cookie_cached and store._state["cycle"].get("running"):
@@ -1881,6 +1964,9 @@ async def _sender_tick(store: AutomationStore) -> str:
 
 _stores: dict[str, AutomationStore] = {}
 _tasks: list[asyncio.Task] = []
+_stop_event: Optional[asyncio.Event] = None
+
+logger = logging.getLogger(__name__)
 
 
 def get_store(platform: str = "bili") -> AutomationStore:
@@ -1891,7 +1977,12 @@ def get_store(platform: str = "bili") -> AutomationStore:
     return _stores[platform]
 
 
-async def automation_loop() -> None:
+async def automation_loop(stop: Optional[asyncio.Event] = None) -> None:
+    """定时采集循环。
+
+    `stop` 用于优雅关闭：lifespan 退出时置位，循环在下一轮边界退出，
+    不会被直接 cancel 掉正在跑的采集。
+    """
     while True:
         for platform in PLATFORMS:
             try:
@@ -1910,25 +2001,88 @@ async def automation_loop() -> None:
                             due = True
                     if due:
                         await run_cycle(store)
+            except asyncio.CancelledError:
+                raise
             except Exception:  # noqa: BLE001
-                pass
+                # 原先是裸 `pass`：循环静默死掉也看不出来。至少留一条日志。
+                logger.exception("[automation] 采集循环 %s 出错", platform)
+        if stop is not None and stop.is_set():
+            return
         await asyncio.sleep(60)
 
 
-async def sender_loop() -> None:
+async def sender_loop(stop: Optional[asyncio.Event] = None) -> None:
+    """定时发送循环（受 can_send_now 的窗口/配额/冷却约束）。"""
     while True:
         for platform in PLATFORMS:
             try:
                 store = get_store(platform)
                 if store.config.get("enabled"):
                     await _sender_tick(store)
+            except asyncio.CancelledError:
+                raise
             except Exception:  # noqa: BLE001
-                pass
+                logger.exception("[automation] 发送循环 %s 出错", platform)
+        if stop is not None and stop.is_set():
+            return
         await asyncio.sleep(20)
 
 
+def reconcile_stuck_sending(store: AutomationStore, *, older_than_hours: float = 1.0) -> int:
+    """把卡在 `sending` 的条目救回来。
+
+    2026-11-11 审计：`mark_sending()` 之后如果进程被杀/浏览器崩溃，
+    条目会永远停在 `sending`——`next_approved()` 只挑 `approved`，
+    funnel 又只统计 5 种状态，于是这条既发不出去、在 UI 里也看不见。
+    这里在启动时把超时未完成的 sending 退回 `approved` 并标注原因。
+    """
+    recovered = 0
+    now = datetime.now()
+    with store.lock:
+        for item in store.items:
+            if item.get("status") != "sending":
+                continue
+            stamp = item.get("sending_at") or item.get("decided_at") or ""
+            stale = True
+            if stamp:
+                try:
+                    stale = (now - datetime.fromisoformat(stamp)).total_seconds() >= older_than_hours * 3600
+                except ValueError:
+                    stale = True
+            if not stale:
+                continue
+            item["status"] = "approved"
+            item["sending_at"] = ""
+            item["note"] = "上次发送中断（进程退出/浏览器崩溃），已退回待发并计数重置"
+            item["attempts"] = int(item.get("attempts", 0) or 0)
+            recovered += 1
+    if recovered:
+        store.save()
+    return recovered
+
+
 def start_background_tasks() -> None:
+    """启动后台循环（幂等）。lifespan 负责在退出时调用 stop_background_tasks()。"""
+    global _stop_event
     if _tasks:
         return
-    _tasks.append(asyncio.create_task(automation_loop()))
-    _tasks.append(asyncio.create_task(sender_loop()))
+    _stop_event = asyncio.Event()
+    _tasks.append(asyncio.create_task(automation_loop(_stop_event)))
+    _tasks.append(asyncio.create_task(sender_loop(_stop_event)))
+
+
+async def stop_background_tasks(timeout: float = 5.0) -> None:
+    """优雅关闭：先让循环在边界退出，超时才 cancel。"""
+    global _stop_event
+    if _stop_event is not None:
+        _stop_event.set()
+    tasks = list(_tasks)
+    _tasks.clear()
+    _stop_event = None
+    if not tasks:
+        return
+    done, pending = await asyncio.wait(tasks, timeout=timeout)
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)

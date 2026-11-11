@@ -250,9 +250,12 @@ def _minimal_opportunities(themes: Sequence[dict], profile=None) -> List[dict]:
         definition = str(theme.get("theme_definition") or theme.get("definition") or "")
         implication = str(theme.get("implication") or "")
         candidate: Optional[dict] = None
+        # 匹配同时看主题名与定义：只看 name 会漏掉「名字中性、定义里
+        # 才有真实信号」的主题（F841 提示的就是 definition 被算了没用）。
+        haystack = f"{name} {definition}"
         for tpl in templates:
             keywords = tpl.get("match") or []
-            if any(keyword in name for keyword in keywords):
+            if any(keyword in haystack for keyword in keywords):
                 candidate = {
                     "name": str(tpl.get("name") or f"围绕「{name}」的单点验证"),
                     "problem": str(tpl.get("problem") or _theme_summary(theme, profile)),

@@ -15,9 +15,7 @@ from .storage import (
     load_results,
     load_semantic_review,
     load_source_records,
-    save_semantic_review,
     save_open_theme_artifacts,
-    save_themes,
 )
 from .theme_clustering import BATCH_SIZE, collect_raw_signals, merge_theme_documents, run_theme_clustering
 from .theme_schemas import PROMPT_VERSION, ThemesDocument
@@ -319,6 +317,10 @@ def execute_theme_cluster(
             last_batch_started_at: Optional[datetime] = None
             last_reported_batch = 0
 
+            # B023 修复：`_write_running` 在循环内定义并引用 index/label/
+            # video_signals/video_batches/started_at。这些名字属于外层循环，
+            # 若回调被延迟执行（进度写入频率受节流控制），会读到后续迭代的值，
+            # 进度面板就会显示错乱的来源与序号。用默认参数在定义时绑定当前值。
             def _write_running(
                 *,
                 phase: str,
@@ -327,19 +329,24 @@ def execute_theme_cluster(
                 batch_total: int = 0,
                 remaining_batches: float,
                 remaining_videos: int,
+                _index: int = index,
+                _label: str = label,
+                _video_signals: int = video_signals,
+                _video_batches: int = video_batches,
+                _started_at: str = started_at,
             ) -> None:
                 save_theme_progress(
                     run_id,
                     {
                         "status": "running",
                         "phase": phase,
-                        "current": index,
+                        "current": _index,
                         "total": total,
-                        "current_source_label": label,
-                        "started_at": started_at,
+                        "current_source_label": _label,
+                        "started_at": _started_at,
                         "batch_current": batch_index,
                         "batch_total": batch_total,
-                        "signal_count": video_signals,
+                        "signal_count": _video_signals,
                         "signal_total": total_signals,
                         "eta_seconds": _eta_seconds(
                             remaining_batches=remaining_batches,
@@ -350,10 +357,10 @@ def execute_theme_cluster(
                         "progress_pct": round(
                             _progress_pct(
                                 source_files=source_files,
-                                completed_sources=index - 1,
+                                completed_sources=_index - 1,
                                 batch_counts=batch_counts,
-                                current_batch_index=batch_index if phase == "clustering" else video_batches,
-                                current_batch_total=batch_total if phase == "clustering" else video_batches,
+                                current_batch_index=batch_index if phase == "clustering" else _video_batches,
+                                current_batch_total=batch_total if phase == "clustering" else _video_batches,
                             ),
                             1,
                         ),
