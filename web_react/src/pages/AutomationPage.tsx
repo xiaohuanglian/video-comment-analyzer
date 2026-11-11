@@ -16,6 +16,7 @@ const TABS = [
 const PLATFORM_TABS = [
   { key: 'bili', label: 'B站' },
   { key: 'xhs', label: '小红书' },
+  { key: 'dy', label: '抖音' },
 ] as const
 
 export default function AutomationPage() {
@@ -150,7 +151,9 @@ export default function AutomationPage() {
           <p className="text-xs text-stone-400">
             {platform === 'xhs'
               ? '小红书通道：竞品笔记/关键词采集 → 筛选 → 起草 → 硬校验 → 人批 → CDP 受控发送（撞风控自动停损）'
-              : '存量评论 → 筛选目标 → LLM 起草 → lint → 人工批准 → 受控发送(采集在「采集」页)'}
+              : platform === 'dy'
+                ? '抖音通道：对标视频/关键词采集 → 筛选 → 起草 → 硬校验 → 人批 → CDP 受控发送（发送默认关闭，撞风控自动停损）'
+                : '存量评论 → 筛选目标 → LLM 起草 → lint → 人工批准 → 受控发送(采集在「采集」页)'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -165,13 +168,13 @@ export default function AutomationPage() {
               {status.enabled ? '发送队列:待命' : '发送队列:暂停'}
             </span>
           )}
-          {platform === 'xhs' && (
+          {(platform === 'xhs' || platform === 'dy') && (
             <button
               onClick={async () => {
                 try {
                   setNotice('采集周期已启动（后台运行），完成后自动刷新')
                   setScreening(true)
-                  await api.collectNow('xhs')
+                  await api.collectNow(platform)
                 } catch (e) {
                   setNotice(e instanceof Error ? e.message : String(e))
                   setScreening(false)
@@ -180,7 +183,7 @@ export default function AutomationPage() {
               disabled={screening}
               className="flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs hover:border-(--brand) disabled:opacity-50"
             >
-              立即采集小红书(按配置的清单/关键词)
+              {platform === 'xhs' ? '立即采集小红书(按配置的清单/关键词)' : '立即采集抖音(按配置的清单/关键词)'}
             </button>
           )}
           <button
@@ -245,6 +248,22 @@ export default function AutomationPage() {
         </div>
       )}
 
+      {/*
+        卡在 sending 的条目提示（2026-11-11）。
+        原先 funnel 只统计 5 种状态，sending 既不在列表里也没有标签页，
+        进程崩溃后留下的「发送中」条目在界面上完全消失——既发不出去，
+        用户也看不到它存在。后端启动时会自动退回 approved，这里给可见性。
+      */}
+      {(status?.funnel?.sending ?? 0) > 0 && (
+        <div className="flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50 px-4 py-2.5 text-xs text-sky-800">
+          <Loader2 size={14} className="mt-0.5 shrink-0 animate-spin" />
+          <span>
+            有 {status?.funnel?.sending} 条回复正在发送中。若长时间不动，说明上次发送被中断
+            （进程退出/浏览器崩溃）；重启服务会自动退回「待发」并说明原因。
+          </span>
+        </div>
+      )}
+
       {/* 发送通道状态:B站 Cookie 未就绪 / 小红书停损暂停 时显眼提醒 */}
       {status?.sender && platform === 'bili' && !status.sender.cookie_cached && (
         <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-700">
@@ -255,7 +274,7 @@ export default function AutomationPage() {
           </span>
         </div>
       )}
-      {status?.sender && platform === 'xhs' && status.sender.pause_until && (
+      {status?.sender && platform !== 'bili' && status.sender.pause_until && (
         <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-xs text-red-700">
           <AlertTriangle size={14} className="mt-0.5 shrink-0" />
           <span className="flex-1">
@@ -265,7 +284,7 @@ export default function AutomationPage() {
           <button
             onClick={async () => {
               try {
-                await api.senderResume('xhs')
+                await api.senderResume(platform)
                 setNotice('已解除发送暂停')
                 await refresh()
               } catch (e) {
@@ -282,6 +301,12 @@ export default function AutomationPage() {
         <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-2 text-xs text-stone-500">
           小红书发送通道:依赖本机已登录小红书的浏览器(CDP 调试端口 9222)保持开启;
           草稿经硬校验(链接/联系方式/引流话术一律拦)、逐条人工批准后才发送,日上限与间隔比B站更保守。
+        </div>
+      )}
+      {status?.sender && platform === 'dy' && !status.sender.pause_until && (
+        <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-2 text-xs text-stone-500">
+          抖音通道:采集/筛选/起草/人工批准已就绪;发送默认关闭——依赖本机已登录抖音的浏览器(CDP 9222),
+          且草稿经硬校验、逐条人批后才发送。要启用发送:设置页打开「抖音」通道的总开关。
         </div>
       )}
 

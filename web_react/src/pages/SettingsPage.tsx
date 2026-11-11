@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Save, Loader2, Check, Coins } from 'lucide-react'
+import { Save, Loader2, Check, Coins, KeyRound } from 'lucide-react'
 import clsx from 'clsx'
 import { api, type AutomationStatus, type Strategy, type CostSummary, type CostEntry, type AutomationPlatform } from '../lib/api'
 
@@ -27,6 +27,13 @@ export default function SettingsPage() {
   const [costs, setCosts] = useState<CostSummary | null>(null)
   const [recentCalls, setRecentCalls] = useState<CostEntry[]>([])
   const [loginBusy, setLoginBusy] = useState(false)
+  // 模型网关（服务端持久化；此前只有 growth 侧读它，llm.complete 只认环境变量）
+  const [modelBaseUrl, setModelBaseUrl] = useState('')
+  const [modelName, setModelName] = useState('')
+  const [modelKey, setModelKey] = useState('')
+  const [modelStatus, setModelStatus] = useState<{ configured: boolean; api_key_masked: string } | null>(null)
+  const [modelBusy, setModelBusy] = useState('')
+  const [modelMsg, setModelMsg] = useState('')
 
   const refreshStatus = useCallback(() => {
     api
@@ -67,6 +74,14 @@ export default function SettingsPage() {
       .costsLedger(8)
       .then(setRecentCalls)
       .catch(() => {})
+    api
+      .modelSettingsGet()
+      .then((m) => {
+        setModelBaseUrl(m.base_url)
+        setModelName(m.model_name)
+        setModelStatus({ configured: m.configured, api_key_masked: m.api_key_masked })
+      })
+      .catch(() => {})
   }, [])
 
   const save = useCallback(async () => {
@@ -82,7 +97,7 @@ export default function SettingsPage() {
         freshness_a_hours: freshnessA,
         freshness_b_hours: freshnessB,
       }
-      if (platform === 'xhs') {
+      if (platform === 'xhs' || platform === 'dy') {
         patch.note_urls = noteUrlsText.split('\n').map((u) => u.trim()).filter(Boolean)
         patch.collect_mode = collectMode
       }
@@ -95,6 +110,42 @@ export default function SettingsPage() {
       setBusy(false)
     }
   }, [platform, keywordsText, noteUrlsText, collectMode, dailySendLimit, sendInterval, sendWindowStart, sendWindowEnd, freshnessA, freshnessB])
+
+  const saveModel = async () => {
+    setModelBusy('save')
+    setModelMsg('')
+    try {
+      const res = await api.modelSettingsSave({
+        base_url: modelBaseUrl,
+        model_name: modelName,
+        api_key: modelKey || undefined, // 留空 = 保留原 key
+      })
+      setModelStatus({ configured: res.configured, api_key_masked: res.api_key_masked })
+      setModelKey('')
+      setModelMsg('已保存。之后新发起的对话/选题/写稿/洞察都会用它。')
+    } catch (e) {
+      setModelMsg(e instanceof Error ? e.message : String(e))
+    } finally {
+      setModelBusy('')
+    }
+  }
+
+  const testModel = async () => {
+    setModelBusy('test')
+    setModelMsg('')
+    try {
+      const res = await api.modelSettingsTest({
+        base_url: modelBaseUrl,
+        model_name: modelName,
+        api_key: modelKey || undefined,
+      })
+      setModelMsg(res.ok ? `连接正常：${res.reply ?? 'ok'}` : `连接失败：${res.error ?? '未知错误'}`)
+    } catch (e) {
+      setModelMsg(e instanceof Error ? e.message : String(e))
+    } finally {
+      setModelBusy('')
+    }
+  }
 
   const saveStrategy = async () => {
     setStrategyBusy(true)
@@ -127,10 +178,10 @@ export default function SettingsPage() {
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-sm font-semibold">回复自动化参数</h2>
-            <p className="text-xs text-stone-400">按平台独立配置(保存即生效);B站与小红书各有自己的队列、配额与节奏</p>
+            <p className="text-xs text-stone-400">按平台独立配置(保存即生效);B站/小红书/抖音各有自己的队列、配额与节奏</p>
           </div>
           <div className="flex rounded-lg border border-stone-200 bg-white p-0.5">
-            {(['bili', 'xhs'] as const).map((pf) => (
+            {(['bili', 'xhs', 'dy'] as const).map((pf) => (
               <button
                 key={pf}
                 onClick={() => setPlatform(pf)}
@@ -139,23 +190,25 @@ export default function SettingsPage() {
                   platform === pf ? 'bg-(--brand) text-white' : 'text-stone-500 hover:text-stone-700',
                 )}
               >
-                {pf === 'bili' ? 'B站' : '小红书'}
+                {pf === 'bili' ? 'B站' : pf === 'xhs' ? '小红书' : '抖音'}
               </button>
             ))}
           </div>
         </div>
 
-        {platform === 'xhs' && (
+        {(platform === 'xhs' || platform === 'dy') && (
           <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50/50 p-3">
             <div>
               <label className="text-xs text-stone-400">
-                竞品笔记清单(每行一条完整链接,需带 xsec_token——从浏览器地址栏复制;留空则只按关键词搜索)
+                {platform === 'xhs'
+                  ? '竞品笔记清单(每行一条完整链接,需带 xsec_token——从浏览器地址栏复制;留空则只按关键词搜索)'
+                  : '对标视频清单(每行一条抖音视频链接,如 https://www.douyin.com/video/xxxx;留空则只按关键词搜索)'}
               </label>
               <textarea
                 value={noteUrlsText}
                 onChange={(e) => setNoteUrlsText(e.target.value)}
                 rows={4}
-                placeholder="https://www.xiaohongshu.com/explore/xxxx?xsec_token=…"
+                placeholder={platform === 'xhs' ? 'https://www.xiaohongshu.com/explore/xxxx?xsec_token=…' : 'https://www.douyin.com/video/xxxx'}
                 className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs outline-none focus:border-(--brand)"
               />
             </div>
@@ -167,11 +220,13 @@ export default function SettingsPage() {
                 className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm outline-none focus:border-(--brand)"
               >
                 <option value="auto">自动(有清单爬清单,没清单按关键词)</option>
-                <option value="list">只爬竞品清单(读请求最少,推荐日常)</option>
-                <option value="search">只按关键词搜索(发现新爆笔记)</option>
+                <option value="list">只爬清单(读请求最少,推荐日常)</option>
+                <option value="search">只按关键词搜索(发现新内容)</option>
               </select>
               <p className="mt-1 text-xs text-amber-600">
-                建议:日常用清单模式固定盯重点竞品,每周手动跑一次关键词扫描补新笔记进清单
+                {platform === 'xhs'
+                  ? '建议:日常用清单模式固定盯重点竞品,每周手动跑一次关键词扫描补新笔记进清单'
+                  : '建议:日常用清单模式固定盯重点对标视频,每周手动跑一次关键词扫描补新视频进清单'}
               </p>
             </div>
           </div>
@@ -368,6 +423,76 @@ export default function SettingsPage() {
         </div>
       </section>
 
+      {/* 模型网关 */}
+      <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm space-y-3">
+        <div>
+          <h2 className="flex items-center gap-1.5 text-sm font-semibold">
+            <KeyRound size={14} /> 模型网关
+          </h2>
+          <p className="text-xs text-stone-400">
+            对话 / 选题 / 写稿 / 洞察 / 回复起草共用这一份配置。保存后写入服务端本地
+            (仅本机可读)，接口只返回脱敏形式。
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 text-xs">
+          <label className="space-y-1">
+            <span className="text-stone-500">Base URL（根地址，不用带 /v1）</span>
+            <input
+              value={modelBaseUrl}
+              onChange={(e) => setModelBaseUrl(e.target.value)}
+              placeholder="https://api.deepseek.com"
+              className="w-full rounded-lg border border-stone-200 px-2 py-1.5"
+            />
+          </label>
+          <label className="space-y-1">
+            <span className="text-stone-500">Model</span>
+            <input
+              value={modelName}
+              onChange={(e) => setModelName(e.target.value)}
+              placeholder="deepseek-v4-flash"
+              className="w-full rounded-lg border border-stone-200 px-2 py-1.5"
+            />
+          </label>
+        </div>
+
+        <label className="block space-y-1 text-xs">
+          <span className="text-stone-500">
+            API Key
+            {modelStatus?.configured && (
+              <span className="ml-2 text-emerald-600">已配置（{modelStatus.api_key_masked}）</span>
+            )}
+          </span>
+          <input
+            type="password"
+            value={modelKey}
+            onChange={(e) => setModelKey(e.target.value)}
+            placeholder={modelStatus?.configured ? '留空则保留原 Key' : 'sk-...'}
+            className="w-full rounded-lg border border-stone-200 px-2 py-1.5"
+          />
+        </label>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => void saveModel()}
+            disabled={modelBusy !== ''}
+            className="flex items-center gap-1.5 rounded-lg bg-(--brand) px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40"
+          >
+            {modelBusy === 'save' ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+            保存
+          </button>
+          <button
+            onClick={() => void testModel()}
+            disabled={modelBusy !== ''}
+            className="flex items-center gap-1.5 rounded-lg border border-stone-200 px-3 py-1.5 text-xs text-stone-600 hover:border-(--brand)"
+          >
+            {modelBusy === 'test' ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+            测试连接
+          </button>
+          {modelMsg && <span className="text-xs text-stone-500">{modelMsg}</span>}
+        </div>
+      </section>
+
       {/* 费用统计(只记账,不限流) */}
       <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm space-y-4">
         <div className="flex items-center justify-between">
@@ -470,13 +595,13 @@ export default function SettingsPage() {
         <ul className="text-xs text-stone-500 space-y-1 leading-relaxed">
           <li>· AI 只发现与起草,发送必须经人工批准</li>
           <li>· 草稿硬禁令:无产品名/链接/引流,禁说教腔与黑话(由 reply_style lint 强制执行)</li>
-          <li>· 小红书通道额外硬校验:链接/联系方式/引流话术在批准与发送两道口都会被拦;撞风控自动停损暂停</li>
+          <li>· 小红书/抖音通道额外硬校验:链接/联系方式/引流话术在批准与发送两道口都会被拦;撞风控自动停损暂停</li>
           <li>· 自动化不再自己定时扫描采集;采集走「采集」页手动批量或自动化页「立即采集」,再回来自动化页筛选</li>
         </ul>
         {status && (
           <p className="mt-3 text-xs text-stone-400">
-            当前状态({platform === 'xhs' ? '小红书' : 'B站'}):{status.enabled ? '自动化已启用' : '自动化已暂停'} ·{' '}
-            {platform === 'xhs'
+            当前状态({platform === 'xhs' ? '小红书' : platform === 'dy' ? '抖音' : 'B站'}):{status.enabled ? '自动化已启用' : '自动化已暂停'} ·{' '}
+            {platform === 'xhs' || platform === 'dy'
               ? status.sender.pause_until
                 ? `发送停损暂停中(${String(status.sender.pause_until).slice(5, 16)})`
                 : '发送通道正常(依赖已登录的浏览器)'

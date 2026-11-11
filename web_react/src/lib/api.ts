@@ -46,6 +46,8 @@ export interface AutomationStatus {
   funnel: {
     pending_review: number
     approved: number
+    /** 正在发送中；>0 且长时间不动说明有卡死条目 */
+    sending?: number
     sent: number
     failed: number
     rejected: number
@@ -383,6 +385,57 @@ export interface CommentReport {
 
 const BASE = '/api'
 
+/** 后端统一错误信封里的字段（见 api/services/error_handlers.py） */
+export interface ApiError extends Error {
+  status: number
+  /** 机器可读错误码，如 BAD_INPUT / NEED_LOGIN / RATE_LIMITED */
+  code?: string
+  /** 可执行建议 */
+  hint?: string
+  /** 限流/冷却时还需等待的秒数 */
+  retryAfterSeconds?: number | null
+}
+
+/**
+ * 把后端的错误体解析成人能看懂的一句话。
+ *
+ * 背景（2026-11-11）：后端把 HTTPException / 校验错误 / 未捕获异常
+ * 统一成 `{ ok: false, error: { code, message, hint, retry_after_seconds } }`。
+ * 前端原先只会抛 `${status} ${statusText}: ${原始 JSON 文本}`，
+ * 用户看到的是 200 个字符的 JSON——等于没提示。
+ */
+export function describeError(status: number, statusText: string, raw: string): ApiError {
+  let message = `${status} ${statusText}`
+  let code: string | undefined
+  let hint: string | undefined
+  let retryAfterSeconds: number | null | undefined
+
+  if (raw) {
+    try {
+      const body = JSON.parse(raw)
+      const envelope = body?.error
+      if (envelope && typeof envelope === 'object') {
+        message = String(envelope.message || message)
+        code = typeof envelope.code === 'string' ? envelope.code : undefined
+        hint = typeof envelope.hint === 'string' ? envelope.hint : undefined
+        retryAfterSeconds = envelope.retry_after_seconds ?? undefined
+      } else if (typeof body?.detail === 'string') {
+        message = body.detail
+      }
+    } catch {
+      // 非 JSON（如网关返回 HTML）：退回状态码 + 截断文本
+      message = `${status} ${statusText}: ${raw.slice(0, 200)}`
+    }
+  }
+
+  const error = new Error(hint ? `${message}（${hint}）` : message) as ApiError
+  error.status = status
+  error.code = code
+  error.hint = hint
+  error.retryAfterSeconds = retryAfterSeconds
+  return error
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: { 'Content-Type': 'application/json' },
@@ -390,7 +443,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
-    throw new Error(`${res.status} ${res.statusText}: ${text.slice(0, 200)}`)
+    throw describeError(res.status, res.statusText, text)
   }
   return res.json() as Promise<T>
 }
@@ -518,9 +571,91 @@ export interface YouTubeSummary {
   }[]
 }
 
-export type AutomationPlatform = 'bili' | 'xhs'
+export type AutomationPlatform = 'bili' | 'xhs' | 'dy'
 
 const p = (platform: AutomationPlatform) => `&platform=${platform}`
+
+
+// ---------------------------------------------------------------------------
+// 评论洞察（/api/analysis/*）
+//
+// 2026-11-11：这套后端一直存在（47 条路由），但 React 面板从未接入——
+// 旧的 web_static/insight.js 在移除旧前端时被删掉了，UI 没跟着重建。
+// 这里补齐最小可用的一套类型与调用。
+// ---------------------------------------------------------------------------
+
+export interface InsightSourceFile {
+  path: string
+  name?: string
+  comment_count?: number
+  category?: string
+  creator?: string
+  folder?: string
+  platform_hint?: string
+  video_label?: string
+  size?: number
+  modified_at?: number
+}
+
+export interface InsightSourceGroup {
+  category: string
+  file_count: number
+  comment_count: number
+  creators: { creator: string; files: InsightSourceFile[]; file_count: number; comment_count: number }[]
+}
+
+export interface InsightRunSummary {
+  run_id: string
+  name?: string
+  total_records?: number
+  created_at?: string
+  status?: string
+  completed?: number
+  failed?: number
+  analysis_limit?: number
+  use_mock?: boolean
+  profile_id?: string
+}
+
+export interface InsightPricing {
+  model_name: string
+  base_url: string
+  input_price: number
+  output_price: number
+  currency: string
+  provider_label?: string
+}
+
+export interface InsightProfile {
+  profile_id: string
+  name?: string
+  is_builtin?: boolean
+  [k: string]: unknown
+}
+
+export interface InsightCreateRunPayload {
+  name?: string
+  file_paths: string[]
+  analysis_limit?: number
+  use_mock?: boolean
+  research_targets?: string
+  profile_id?: string
+  model?: { model_name?: string; base_url?: string; budget_limit?: number }
+}
+
+export interface InsightRunDetail extends InsightRunSummary {
+  progress?: Record<string, unknown>
+  config?: Record<string, unknown>
+  estimate?: Record<string, unknown>
+}
+
+export interface InsightReport {
+  run_id: string
+  markdown?: string
+  research?: Record<string, unknown>
+  has_report?: boolean
+  waiting_for_open_themes?: boolean
+}
 
 export const api = {
   automationStatus: (platform: AutomationPlatform = 'bili') =>
@@ -604,6 +739,23 @@ export const api = {
     req<Strategy>('/strategy', { method: 'PUT', body: JSON.stringify(s) }),
   costsSummary: () => req<CostSummary>('/costs/summary'),
   costsLedger: (limit = 20) => req<CostEntry[]>(`/costs/ledger?limit=${limit}`),
+  // ---- 模型网关配置（服务端持久化，脱敏返回）----
+  modelSettingsGet: () =>
+    req<{ configured: boolean; base_url: string; model_name: string; api_key_masked: string }>(
+      '/growth/settings/model',
+    ),
+  modelSettingsSave: (payload: { base_url?: string; model_name?: string; api_key?: string }) =>
+    req<{ configured: boolean; base_url: string; model_name: string; api_key_masked: string }>(
+      '/growth/settings/model',
+      { method: 'POST', body: JSON.stringify(payload) },
+    ),
+  modelSettingsTest: (payload: { base_url?: string; model_name?: string; api_key?: string } = {}) =>
+    req<{ ok: boolean; error?: string; reply?: string }>('/growth/settings/model/test', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  modelSettingsClear: () => req<Record<string, unknown>>('/growth/settings/model', { method: 'DELETE' }),
+
 
   wechatLibrary: () => req<unknown[]>('/wechat/library'),
   wechatDelete: (id: string) => req(`/wechat/library/${id}`, { method: 'DELETE' }),
@@ -673,6 +825,35 @@ export const api = {
   publishRecords: () => req<PublishRecord[]>('/publish/records'),
   publishDrafts: () => req<UnregisteredDraft[]>('/publish/drafts'),
   publishAnalysis: () => req<PublishAnalysis>('/publish/analysis'),
+  // ---- 评论洞察 ----
+  insightSources: () =>
+    req<{ groups?: InsightSourceGroup[]; total_files?: number; total_comments?: number }>(
+      '/analysis/sources',
+    ),
+  insightRuns: () => req<{ runs: InsightRunSummary[] }>('/analysis/runs'),
+  insightProfiles: () => req<{ profiles: InsightProfile[] }>('/analysis/profiles'),
+  insightPricing: () => req<InsightPricing>('/analysis/pricing'),
+  insightCreateRun: (payload: InsightCreateRunPayload) =>
+    req<{ run_id: string; reused?: boolean; total_records?: number }>('/analysis/runs', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  insightRun: (runId: string) => req<InsightRunDetail>(`/analysis/runs/${runId}`),
+  insightAnalyze: (runId: string, payload: Record<string, unknown> = {}) =>
+    req<Record<string, unknown>>(`/analysis/runs/${runId}/analyze`, {
+      method: 'POST',
+      body: JSON.stringify({ background: true, ...payload }),
+    }),
+  insightReport: (runId: string) => req<InsightReport>(`/analysis/runs/${runId}/research-report`),
+  insightCancel: (runId: string) =>
+    req<Record<string, unknown>>(`/analysis/runs/${runId}/cancel`, { method: 'POST' }),
+  insightRetryFailed: (runId: string, payload: Record<string, unknown> = {}) =>
+    req<Record<string, unknown>>(`/analysis/runs/${runId}/retry-failed`, {
+      method: 'POST',
+      body: JSON.stringify({ background: true, ...payload }),
+    }),
+  insightNarrative: (runId: string) =>
+    req<{ narrative?: string; error?: string }>(`/analysis/runs/${runId}/insight-narrative`),
   publishCreate: (body: Record<string, unknown>) =>
     req<PublishRecord>('/publish/records', { method: 'POST', body: JSON.stringify(body) }),
   publishUpdate: (id: string, body: Record<string, unknown>) =>
@@ -967,4 +1148,5 @@ export interface TopicRewriteOnceResult {
   warning: string
   /** 撞了库里同名选题：成稿已存草稿箱，但没动旧选题的状态 */
   duplicate_warning?: string
+
 }
