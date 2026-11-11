@@ -8,8 +8,6 @@ dependencies = [
     "aiofiles~=23.2.1",
     "aiomysql==0.2.0",
     "aiosqlite>=0.21.0",
-    "alembic>=1.16.5",
-    "asyncmy>=0.2.10",
     "cryptography>=45.0.7",
     "fastapi==0.110.2",
     "httpx==0.28.1",
@@ -36,10 +34,8 @@ dependencies = [
     "openpyxl>=3.1.2",
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
-    "websockets>=15.0.1",
-    "asyncpg>=0.31.0",
+    "ruff>=0.6",
     "xhshow>=0.1.9",
-    "instructor>=1.6",
     "openai>=1.30",
     "yt-dlp>=2026.8.19",
     "html2text>=2025.4.15",
@@ -58,3 +54,43 @@ embedding = [
 [[tool.uv.index]]
 url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 default = true
+
+# ---------------------------------------------------------------------------
+# Lint（2026-11-11 引入）
+#
+# 口径：只开「真能抓到 bug」的规则；格式类（E501 行长）不进来——
+# 存量有 2000+ 行超长，纳入只会让人习惯性忽略输出。
+# `ruff check` 应该在 CI 里保持全绿；新增违规请就地修，不要加 noqa 掩盖。
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = ["web_react", "browser_data", "data", "docs", ".venv", "skills"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle 错误（含 bare except / 缩进等硬错误）
+    "F",    # pyflakes：未定义名、未用导入、未用变量
+    "I",    # import 排序
+    "B",    # bugbear：循环变量捕获、except 内 raise 丢链
+]
+ignore = [
+    "E501",   # 行长：存量过多且不影响正确性
+    "E402",   # 模块级 import 不在顶部：大量脚本需要先改 sys.path
+    "B008",   # 函数默认值里调用（FastAPI Depends/Query 的惯用法）
+    "B905",   # zip 不带 strict：存量较多，逐处改收益低
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tools/utils.py" = ["F403", "F405"]         # 既有星号转发，改动面大
+# theme_job 的进度回调在循环内定义，但只在同一轮里同步传给
+# run_theme_clustering（on_progress 内部同步调用），不会跨迭代存活，
+# 因此 B023 在此是误报；已用默认参数绑定了确实需要的几个变量。
+"api/services/insight/theme_job.py" = ["B023"]
+# 测试文件的既有写法：一行多语句、短变量名（l/r）在断言里很常见，
+# 这些不影响正确性；F 类（未定义名/未用导入）仍然生效，那才是真 bug。
+"tests/*" = ["F841", "B011", "E731", "E702", "E741"]
+"scripts/*" = ["F841"]                      # 一次性分析脚本
+
+[tool.ruff.lint.isort]
+known-first-party = ["api", "tools", "media_platform", "store", "database", "config", "base", "model", "proxy", "cmd_arg", "constant", "var", "scripts"]

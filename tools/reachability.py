@@ -188,6 +188,121 @@ def write_baseline(path: Path, modules: Iterable[str]) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+
+
+# ---------------------------------------------------------------------------
+# 路由 → UI 可达性
+#
+# 起因（2026-11-11 审计）：上面的 dangling() 只看 Python import，抓不到
+# 「后端有 47 条路由、前端一行都没调用」这种情况。/api/analysis/* 与
+# /api/growth/*（共 93 条）在移除旧前端后一直没有 React 入口，而
+# PROJECT_STATE 与 README 仍把它们写成已交付功能。
+# ---------------------------------------------------------------------------
+
+#: 明确声明「只给 CLI / 外部脚本用、不需要 Web UI」的前缀。
+#: 新增条目必须写清楚为什么，否则测试会把它当成缺口。
+UI_EXEMPT_PREFIXES = {
+    "growth": "增长引擎是独立子系统（产品/实验/机会），当前按 CLI+API 方式使用",
+    "data": "文件浏览接口服务于下载链接，页面内以 href 直接引用",
+    "bilibili": "B 站直连调试接口，由 CLI 使用",
+    "youvibe": "内部数据分析查询，随 skill 离线使用",
+    "creator": "创作者排行由采集页间接调用，主页暂无独立入口",
+    "hot-radar": "热点雷达尚未接前端",
+}
+
+
+def backend_prefixes(root: Path = ROOT) -> Dict[str, int]:
+    """从 APIRouter(prefix=...) 提取前缀与该前缀下的路由数。"""
+    import re
+
+    counts: Dict[str, int] = {}
+    routers = root / "api" / "routers"
+    if not routers.is_dir():
+        return counts
+    for path in sorted(routers.glob("*.py")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        match = re.search(r'APIRouter\(prefix="/([^"]+)"', text)
+        if not match:
+            continue
+        prefix = match.group(1).split("/")[0]
+        counts[prefix] = len(re.findall(r"@router\.(?:get|post|patch|put|delete)", text))
+    return counts
+
+
+#: 判定「这个前缀算不算接进 UI」的门槛：至少 3 条**核心**路由被调用。
+#:
+#: 不用「覆盖率比例」做门槛——真实页面只调用少数几条主干路由
+#: （洞察 47 条里 InsightPage 只用 6 条，这就是正常的）。
+#: 3 条的门槛足够挡掉「只调一条设置接口就宣称接入」的假阳性。
+UI_COVERAGE_MIN_ROUTES = 3
+
+
+def frontend_called_paths(root: Path = ROOT) -> Set[str]:
+    """前端 API 客户端里请求过的 `路径` 与 `方法 路径`（去掉 query）。
+
+    同时返回 `方法 路径` 形式，是因为同一路径可能对应多条路由
+    （如 `/strategy` 的 GET 与 PUT），只看路径会漏计。
+
+    实现上按 `req<...>('路径'` 逐处切分，并从该处往后到下一个 `req(`
+    之间找 method——不能跨语句贪婪匹配，否则会把下一条调用的
+    method 张冠李戴（这曾让 chat 被误判成没接入）。
+    """
+    import re
+
+    client = root / "web_react" / "src" / "lib" / "api.ts"
+    if not client.exists():
+        return set()
+    text = client.read_text(encoding="utf-8")
+
+    starts = [m.start() for m in re.finditer(r"req(?:<[^>]*>)?\(\s*[`'\"]", text)]
+    starts.append(len(text))
+    found: Set[str] = set()
+    for begin, nxt in zip(starts, starts[1:]):
+        chunk = text[begin:nxt]
+        path_match = re.search(r"req(?:<[^>]*>)?\(\s*[`'\"]([^`'\"]+)[`'\"]", chunk)
+        if not path_match:
+            continue
+        path = path_match.group(1).split("?")[0].strip("/")
+        if not path:
+            continue
+        found.add(path)
+        method_match = re.search(r"method:\s*[`'\"]([A-Za-z]+)[`'\"]", chunk)
+        method = (method_match.group(1) if method_match else "GET").upper()
+        found.add(f"{method} {path}")
+    return found
+
+
+def routes_without_ui(root: Path = ROOT) -> Dict[str, int]:
+    """后端有路由、前端基本没用的前缀（已排除 UI_EXEMPT_PREFIXES）。
+
+    判定「基本没用」：该前缀下被前端调用到的路由条数少于 UI_COVERAGE_MIN_ROUTES。
+    """
+    called_paths = frontend_called_paths(root)
+    missing: Dict[str, int] = {}
+    for prefix, count in backend_prefixes(root).items():
+        if prefix in UI_EXEMPT_PREFIXES:
+            continue
+        # 按「方法 + 路径」计数：`/strategy` 的 GET/PUT 是两条路由。
+        # 也兼容「前缀即全部路径」的写法（不能要求一定有两段）。
+        covered = sum(
+            1
+            for entry in called_paths
+            if entry.split("/")[0] == prefix
+            or (len(entry.split(" ")) == 2 and entry.split(" ", 1)[1].split("/")[0] == prefix)
+        )
+        # 小前缀（≤3 条路由）只要全部被调用就算接入了；
+        # 大前缀至少要接上 UI_COVERAGE_MIN_ROUTES 条主干路由。
+        needed = min(UI_COVERAGE_MIN_ROUTES, count)
+        if covered >= needed:
+            continue
+        missing[prefix] = count
+    return missing
+
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="悬空模块可达性分析")
     parser.add_argument("--write", action="store_true", help="把当前悬空模块写成基线")
@@ -210,6 +325,14 @@ def main() -> None:
     print(f"悬空模块 {len(modules)} 个，共 {total} 行：")
     for module in modules:
         print(f"  {module}  ({line_count(module)} 行)")
+
+    missing_ui = routes_without_ui()
+    if missing_ui:
+        print(f"\n后端有路由但没有前端调用的前缀 {len(missing_ui)} 个：")
+        for prefix, count in sorted(missing_ui.items()):
+            print(f"  /api/{prefix}  ({count} 条路由)")
+    else:
+        print("\n所有后端路由前缀都有前端调用方（或已在 UI_EXEMPT_PREFIXES 声明豁免）。")
 
 
 if __name__ == "__main__":

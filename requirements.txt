@@ -1,33 +1,15 @@
-httpx==0.28.1
-Pillow==12.1.0
-playwright==1.45.0
-tenacity==8.2.2
-typer>=0.12.3
-opencv-python
-aiomysql==0.2.0
-redis~=4.6.0
-instructor>=1.6
-openai>=1.30
-pydantic>=2.8
-aiofiles~=23.2.1
-fastapi==0.110.2
-uvicorn==0.29.0
-python-dotenv==1.0.1
-jieba==0.42.1
-wordcloud==1.9.3
-matplotlib==3.9.0
-requests==2.32.3
-parsel==1.9.1
-pyexecjs==1.5.1
-pandas==2.2.3
-aiosqlite==0.21.0
-pyhumps==3.8.0
-cryptography>=45.0.7
-alembic>=1.16.5
-asyncmy>=0.2.10
-sqlalchemy>=2.0.43
-motor>=3.3.0
-openpyxl>=3.1.2
-pytest>=7.4.0
-pytest-asyncio>=0.21.0
-xhshow>=0.1.9
+# ⚠️ 本文件不再是依赖的真相源。
+#
+# 2026-11-11 审计：这份 requirements.txt 与 pyproject.toml 长期分叉——
+# 条目数不同（33 vs 40）、版本冲突（Pillow 9.5.0 vs 12.1.0、
+# tenacity 8.2.2 vs >=9.0）。装哪个版本取决于用哪份清单，非常危险。
+#
+# 现在唯一真相源是 pyproject.toml + uv.lock：
+#     uv sync             # 装开发依赖
+#     uv sync --no-dev    # 只装运行时
+#
+# 需要给不装 uv 的环境导出扁平清单时，用生成的产物（不要手改）：
+#     uv export --no-hashes --format requirements-txt > requirements.txt
+#
+# 保留此文件只是为了避免旧脚本 / 文档里的 `pip install -r requirements.txt`
+# 直接报错；内容为运行时依赖的镜像，若与 pyproject 不一致以 pyproject 为准。

@@ -1,0 +1,77 @@
+name: CI
+
+# 2026-11-11 引入：此前项目有 941 个测试、tsc 与 oxlint，但全靠手动跑，
+# 没有 CI。这条流水线把「测试全绿 + 前端类型/构建通过 + lint 干净」
+# 变成 push 时的硬门禁。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Python 测试与 lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: 安装依赖
+        # 不装 optional-extra（embedding/torch），那是离线跑批才需要的
+        run: uv sync --frozen --no-dev
+
+      - name: Ruff
+        run: uv run ruff check api tools scripts tests
+
+      - name: Pytest
+        env:
+          # 测试不应触碰真实网关；CI 里显式置空，避免误连
+          LLM_BASE_URL: ""
+          LLM_API_KEY: ""
+          LLM_MODEL: ""
+          CRAWL_GUARD_STATE_DIR: ${{ runner.temp }}/crawl_guard
+        run: uv run pytest tests -q
+
+  frontend:
+    name: 前端类型检查 / lint / 构建
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web_react
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web_react/package-lock.json
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 类型检查
+        run: npx tsc -b --noEmit
+
+      - name: Lint
+        run: npx oxlint
+
+      - name: 单测（vitest）
+        run: npx vitest run
+
+      - name: 单测（Node 内置断言，兜底校验错误解析）
+        run: npm run test:node
+
+      - name: 构建
+        run: npm run build

@@ -1,5 +1,8 @@
 # Pre-commit hooks
 # See https://pre-commit.com for more information
+#
+# 2026-11-11：加入 ruff（`ruff check` 与 CI 同一份配置，见 pyproject.toml）
+# 与本地跑测试的提示。此前这里只有空白/YAML 检查，Python 侧完全没有静态检查。
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -15,6 +18,14 @@ repos:
       - id: check-merge-conflict
       - id: check-case-conflict
       - id: mixed-line-ending
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.4
+    hooks:
+      # 只跑 check（规则集在 pyproject.toml 里），不做自动格式化，
+      # 避免一次提交里混进大范围格式变更。
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
 
 default_language_version:
   python: python3
