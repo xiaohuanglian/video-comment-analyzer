@@ -40,6 +40,19 @@ async def _raise_structured() -> None:
     )
 
 
+@probe.get("/raise-cooldown")
+async def _raise_cooldown() -> None:
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "PLATFORM_BLOCKED",
+            "message": "xhs 平台冷却中：还需等待 12 小时",
+            "hint": "到官方页面人工处理",
+            "retry_after_seconds": 43200,
+        },
+    )
+
+
 @probe.get("/boom")
 async def _boom() -> None:
     raise RuntimeError("数据库密码是 hunter2")
@@ -119,3 +132,17 @@ def test_error_envelope_helper_shape():
 def test_status_code_map_covers_common_cases():
     assert error_code_for_status(400) == "BAD_INPUT"
     assert error_code_for_status(999) == "ERROR"
+
+
+def test_structured_detail_lifts_retry_after():
+    """采集撞平台风控时，409 信封要带出"还要等多久"。
+
+    状态码只能表达"冲突"，前端要显示倒计时就必须拿到 retry_after_seconds；
+    这里锁住它会从结构化 detail 抬到信封顶层（code 仍按状态码映射，不变）。
+    """
+
+    body = TestClient(app, raise_server_exceptions=False).get("/__test_errors/raise-cooldown").json()
+    assert body["error"]["code"] == "CONFLICT"
+    assert body["error"]["retry_after_seconds"] == 43200
+    assert body["error"]["hint"] == "到官方页面人工处理"
+    assert body["error_detail"]["code"] == "PLATFORM_BLOCKED"

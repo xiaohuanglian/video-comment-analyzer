@@ -17,14 +17,22 @@ async def start_crawler(request: CrawlerStartRequest):
     if not success:
         cooldown = platform_cooldown(request.platform.value)
         if cooldown:
-            # 平台冷却中：告诉用户"还需等多久"，比笼统的启动失败有用
+            # 平台冷却中：告诉用户"还需等多久"，比笼统的启动失败有用。
+            # 用结构化 detail，统一信封才会把 hint / retry_after_seconds 带出去
+            # （前端 describeError 读的就是这两个字段）。
+            code = str(cooldown.get("code") or "")
+            remaining = float(cooldown.get("retry_after_seconds") or 0)
             raise HTTPException(
                 status_code=409,
-                detail=(
-                    f"{request.platform.value} 平台冷却中：还需等待 "
-                    f"{format_duration(float(cooldown.get('retry_after_seconds') or 0))}。"
-                    f"{ERROR_HINTS.get(str(cooldown.get('code') or ''), '')}"
-                ),
+                detail={
+                    "code": code,
+                    "message": (
+                        f"{request.platform.value} 平台冷却中：还需等待 "
+                        f"{format_duration(remaining)}。{cooldown.get('message') or ''}"
+                    ).strip(),
+                    "hint": ERROR_HINTS.get(code, ""),
+                    "retry_after_seconds": int(round(remaining)),
+                },
             )
         active_operation = operation_coordinator.snapshot().kind
         if active_operation == "rank":

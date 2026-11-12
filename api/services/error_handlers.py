@@ -99,6 +99,20 @@ def _hint_from_detail(detail: Any) -> str:
     return ""
 
 
+def _retry_after_from_detail(detail: Any) -> Optional[int]:
+    """把结构化 detail 里的 ``retry_after_seconds`` 抬到信封顶层。
+
+    ``error.code`` 仍然按 HTTP 状态码映射（既有前端与测试依赖这个约定），
+    但"还要等多久"是状态码表达不了的信息：采集撞平台风控返回 409 时，
+    前端要靠它显示倒计时而不是笼统的"冲突"。
+    """
+    if isinstance(detail, dict):
+        value = detail.get("retry_after_seconds")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return int(value)
+    return None
+
+
 def install_error_handlers(app: FastAPI) -> None:
     """把 HTTPException / 校验错误统一成同一信封。"""
 
@@ -108,6 +122,7 @@ def install_error_handlers(app: FastAPI) -> None:
             code=error_code_for_status(exc.status_code),
             message=_as_text(exc.detail),
             hint=_hint_from_detail(exc.detail),
+            retry_after_seconds=_retry_after_from_detail(exc.detail),
             status_code=exc.status_code,
             # 透传结构化 detail 里的附加信息（如 retry_after_seconds）
             extra=(
