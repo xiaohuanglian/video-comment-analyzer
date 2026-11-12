@@ -508,3 +508,23 @@ def test_stale_cooldown_from_a_previous_run_is_cleared(isolated_cooldowns):
 def test_clear_stale_cooldown_is_noop_without_cooldown(isolated_cooldowns):
     assert cp.clear_stale_cooldown("xhs", 0.0) is False
     assert cp.clear_stale_cooldown("", 0.0) is False
+
+
+def test_manual_cooldown_survives_a_successful_run(isolated_cooldowns):
+    """人工挂的"账号没恢复之前都别跑"，程序无权替人判断账号已经好了。
+
+    2026-11-12 踩到：手工挂的 72 小时冷却，被一次成功的采集当成"上次遗留"
+    顺手清掉 —— 也就是说人工挂牌形同虚设。
+    """
+    import time
+
+    entry = cp.set_manual_cooldown("xhs", 3600, "账号异常，人工确认前禁止采集")
+    assert entry and entry["manual"] is True
+
+    # 即使这条冷却"早于"本次运行（模拟上次遗留），也不该被清
+    assert cp.clear_stale_cooldown("xhs", time.time() + 10) is False
+    assert cp.platform_cooldown("xhs") is not None
+
+    # 但人可以显式解除
+    cp.clear_platform_cooldown("xhs")
+    assert cp.platform_cooldown("xhs") is None

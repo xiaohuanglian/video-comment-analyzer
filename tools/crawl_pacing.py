@@ -503,11 +503,21 @@ def clear_stale_cooldown(platform: str, started_at: float) -> bool:
     晚于本次启动 = 刚发生的拦截，必须留着。
 
     返回是否真的清掉了。
+
+    例外：``manual: true`` 的条目不清——那是人手工挂上去的"账号没恢复之前
+    谁都别跑"，程序没有资格替人判断账号已经好了。（2026-11-12 踩到：手工挂的
+    72 小时冷却，被一次成功的采集当成"上次遗留"顺手清掉了。）
     """
     if not platform:
         return False
     active = platform_cooldown(platform)
     if not active:
+        return False
+    if active.get("manual"):
+        utils.logger.warning(
+            f"[CrawlGuard] {platform} 的人工冷却不清除"
+            f"（{active.get('message') or active.get('code')}）；确认恢复后请显式解除"
+        )
         return False
     try:
         recorded_at = float(active.get("at") or 0)
@@ -765,3 +775,31 @@ class CrawlPacer:
             return
         delay = (5 * (2**attempt)) + random.uniform(0, 2)
         await asyncio.sleep(delay)
+
+
+def set_manual_cooldown(platform: str, seconds: float, message: str = "") -> Optional[dict]:
+    """人工挂牌：由人决定"这个平台先别跑"，可用 ``clear_platform_cooldown`` 解除。
+
+    与 ``record_platform_failure`` 的区别只在 ``manual`` 标记：人工冷却不会被
+    "这次跑通了" 顺手清掉（``clear_stale_cooldown`` 会跳过它），因为判断账号
+    是否恢复是人的事，不是采集器的事。
+    """
+    if not platform or not guard_enabled():
+        return None
+    entry = {
+        "code": PLATFORM_BLOCKED,
+        "message": message or f"{platform} 正在人工停采",
+        "platform": platform,
+        "at": time.time(),
+        "retry_after_seconds": int(round(max(1.0, seconds))),
+        "fingerprint": platform_fingerprint(platform),
+        "manual": True,
+    }
+    store = cooldown_store()
+    data = store._load()
+    data.setdefault("platforms", {})[platform] = entry
+    store._save(data)
+    utils.logger.warning(
+        f"[CrawlGuard] {platform} 人工停采 {format_duration(entry['retry_after_seconds'])}：{entry['message']}"
+    )
+    return entry
