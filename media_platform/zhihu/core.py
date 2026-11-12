@@ -148,7 +148,9 @@ class ZhihuCrawler(AbstractCrawler):
                 raise
             except Exception as exc:  # noqa: BLE001 — 记账后原样抛出，不改调用方行为
                 failure = classify_failure(exc, platform="zhihu")
-                if failure.code in {"RATE_LIMITED", "PLATFORM_BLOCKED", "NEED_LOGIN"}:
+                # 只对「平台级」失败落冷却：浏览器启动超时之类的本地故障
+                # 曾被 classify 成 NEED_LOGIN，误挂 30 分钟冷却（2026-11-12 实测）。
+                if failure.code in {"RATE_LIMITED", "PLATFORM_BLOCKED"}:
                     record_platform_failure("zhihu", failure)
                 raise
 
@@ -209,7 +211,9 @@ class ZhihuCrawler(AbstractCrawler):
 
                     # Sleep after page navigation
                     await self._pace_sleep()
-                    utils.logger.info(f"[ZhihuCrawler.search] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
+                    utils.logger.info(
+                        f"[ZhihuCrawler.search] Slept {self._pace_interval():.1f}s (zhihu pacing) after page {page - 1}"
+                    )
 
                     page += 1
                     for content in content_list:
@@ -263,7 +267,9 @@ class ZhihuCrawler(AbstractCrawler):
 
             # Sleep before fetching comments
             await self._pace_sleep()
-            utils.logger.info(f"[ZhihuCrawler.get_comments] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds before fetching comments for content {content_item.content_id}")
+            utils.logger.info(
+                f"[ZhihuCrawler.get_comments] Slept (zhihu pacing) before comments of content {content_item.content_id}"
+            )
 
             await self.zhihu_client.get_note_all_comments(
                 content=content_item,
