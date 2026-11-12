@@ -45,7 +45,8 @@ config.CRAWLER_TYPE = "search"
 from tenacity import RetryError  # noqa: E402
 
 from media_platform.xhs.client import XiaoHongShuClient  # noqa: E402
-from media_platform.xhs.exception import CaptchaError  # noqa: E402
+from media_platform.xhs.exception import CaptchaError, PlatformAccessError  # noqa: E402
+from media_platform.xhs.fingerprint import read_browser_fingerprint  # noqa: E402
 from media_platform.xhs.help import get_search_id  # noqa: E402
 from tools import utils  # noqa: E402
 from tools.cdp_browser import CDPBrowserManager  # noqa: E402
@@ -55,7 +56,14 @@ from tools.crawl_pacing import (  # noqa: E402
     classify_failure,
     compute_crawl_interval,
     ensure_platform_available,
+    format_duration,
     record_platform_failure,
+)
+from tools.xhs_safety import (  # noqa: E402
+    SearchBudgetExceeded,
+    ensure_batch_allowed,
+    plan_keywords,
+    search_budget,
 )
 
 _INDEX_URL = "https://www.rednote.com" if config.XHS_INTERNATIONAL else "https://www.xiaohongshu.com"
@@ -133,25 +141,26 @@ async def _build_client(page: Any) -> XiaoHongShuClient:
     cookie_str, cookie_dict = await utils.convert_browser_context_cookies(
         page.context, urls=[_INDEX_URL]
     )
+    # UA / sec-ch-ua 从活着的浏览器读，别写常量：2026-11-11 事故复盘时发现
+    # 同一个会话里 UA 说 Chrome/137、sec-ch-ua 说 v=136、浏览器本身是别的版本，
+    # 这种自相矛盾比"间隔短"更容易被规则直接命中。
+    fingerprint = await read_browser_fingerprint(page)
+    headers = {
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "zh-CN,zh;q=0.9",
+        "cache-control": "no-cache",
+        "content-type": "application/json;charset=UTF-8",
+        "origin": _INDEX_URL,
+        "pragma": "no-cache",
+        "referer": f"{_INDEX_URL}/",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+        "Cookie": cookie_str,
+    }
+    headers.update(fingerprint.headers())
     return XiaoHongShuClient(
-        headers={
-            "accept": "application/json, text/plain, */*",
-            "accept-language": "zh-CN,zh;q=0.9",
-            "cache-control": "no-cache",
-            "content-type": "application/json;charset=UTF-8",
-            "origin": _INDEX_URL,
-            "pragma": "no-cache",
-            "referer": f"{_INDEX_URL}/",
-            "sec-ch-ua-mobile": "?0",
-            "sec-fetch-dest": "empty",
-            "sec-fetch-mode": "cors",
-            "sec-fetch-site": "same-site",
-            "user-agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
-            ),
-            "Cookie": cookie_str,
-        },
+        headers=headers,
         playwright_page=page,
         cookie_dict=cookie_dict,
     )
@@ -195,6 +204,16 @@ async def collect(
     out_dir: Path,
 ) -> Dict[str, Any]:
     ensure_platform_available("xhs")  # 平台冷却中直接抛 CrawlBlocked
+    # 单批上限是硬约束，但词表可能比上限长。不报错、也不永远只搜前 N 个，
+    # 而是按日期轮转取一批（`plan_keywords`），剩下的记进 manifest 下次再搜。
+    keywords, deferred = plan_keywords(keywords)
+    if deferred:
+        utils.logger.info(
+            f"[xhs_notes] 本次只搜 {len(keywords)} 个词（单批上限），其余 {len(deferred)} 个未执行：{deferred}"
+        )
+    # 批前拒绝：今日额度不够就在发第一个请求之前拒绝，而不是跑到一半才砍。
+    # （2026-11-11 就是打到第 10 个词才发现被拦，前面 9 次请求等于白送。）
+    ensure_batch_allowed(len(keywords))
 
     from playwright.async_api import async_playwright
 
@@ -234,9 +253,11 @@ async def collect(
                     pool[keyword] = []
                     continue
                 if i:
-                    base, jitter = compute_crawl_interval("xhs")
+                    base, jitter = compute_crawl_interval("xhs", "search")
                     await asyncio.sleep(base + random.uniform(0, jitter))
                 utils.logger.info(f"[xhs_notes] 搜索「{keyword}」")
+                # 记账要在请求**之前**：请求可能超时/被拦，但次数已经消耗了
+                search_budget().consume(1)
                 try:
                     res = await client.get_note_by_keyword(
                         keyword=keyword,
@@ -258,7 +279,7 @@ async def collect(
                     # 撞到平台风控就停手：已经证明平台在拦我们了，继续打剩下的
                     # 关键词只会加重标记（2026-11-11 那批就是这么把账号打异常的）。
                     if failure["error"]["code"] == PLATFORM_BLOCKED or isinstance(
-                        _root_cause(exc), CaptchaError
+                        _root_cause(exc), (CaptchaError, PlatformAccessError)
                     ):
                         record_platform_failure("xhs", _root_cause(exc))
                         rest = keywords[i + 1 :]
@@ -332,6 +353,7 @@ async def collect(
         "fetched_per_keyword": by_keyword,
         "logged_in": pong,
         "aborted": aborted,
+        "deferred_keywords": deferred,
         "failures": failures,
         "csv": str(csv_path),
     }
@@ -339,6 +361,28 @@ async def collect(
         json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8"
     )
     return manifest
+
+
+async def _run_collect(
+    keywords: List[str],
+    *,
+    per_keyword: int,
+    total: int,
+    out_dir: Path,
+) -> Dict[str, Any]:
+    """包一层，把「额度/单批超限」翻译成人话，而不是让异常直接冒到栈上。"""
+    try:
+        return await collect(
+            keywords,
+            per_keyword=per_keyword,
+            total=total,
+            out_dir=out_dir,
+        )
+    except SearchBudgetExceeded as exc:
+        print(f"\n[拒绝开工] {exc}")
+        if exc.retry_after_seconds:
+            print(f"（约 {format_duration(exc.retry_after_seconds)} 后恢复额度）")
+        sys.exit(3)
 
 
 def main() -> None:
@@ -354,7 +398,7 @@ def main() -> None:
     out_dir = Path(args.out) if args.out else Path("data") / "xhs_search" / time.strftime("%Y%m%d_%H%M%S")
 
     manifest = asyncio.run(
-        collect(
+        _run_collect(
             args.keyword,
             per_keyword=max(1, args.per_keyword),
             total=max(1, args.total),

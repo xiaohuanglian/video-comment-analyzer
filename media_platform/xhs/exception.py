@@ -24,3 +24,13 @@ class CaptchaError(DataFetchError):
        Verifytype，会判成 ``PLATFORM_BLOCKED``），从而写进跨进程平台冷却。
     3. 让调用方可以 ``except CaptchaError`` 明确停手，而不是笼统地吞掉所有异常。
     """
+
+
+class PlatformAccessError(DataFetchError):
+    """平台明确拒绝这次访问（HTTP 401/403/429，或业务码 300011 账号安全限制）。
+
+    和 ``CaptchaError`` 的区别：验证码是"让你证明自己是人"，这个是"我不让你进"。
+    ``300011`` 尤其要注意——它说的是**账号本身被限制**（异常/风控/权限），
+    不是 IP 问题（那是 300012 ``IPBlockError``）。账号级限制换 IP、换 UA 都没用，
+    唯一正确的反应是停手，等人工去官方页面处理。
+    """

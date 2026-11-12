@@ -17,11 +17,28 @@ from tools.crawl_pacing import CrawlPacer, platform_slot
 if TYPE_CHECKING:
     from proxy.proxy_ip_pool import ProxyIpPool
 
-from .exception import CaptchaError, DataFetchError, IPBlockError, NoteNotFoundError
+from .exception import (
+    CaptchaError,
+    DataFetchError,
+    IPBlockError,
+    NoteNotFoundError,
+    PlatformAccessError,
+)
 from .field import SearchNoteType, SearchSortType
 from .help import get_search_id
 from .extractor import XiaoHongShuExtractor
 from .playwright_sign import sign_with_xhshow
+
+#: 浏览器在 feed / search / 发布类接口上都会带 ``x-rap-param``；这几个接口
+#: 也是小红书风控最敏感的地方。少带它是个可观测差异，所以按 URI 前缀补上。
+_X_RAP_PREFIXES = (
+    "/api/sns/web/v1/search/",
+    "/api/sns/web/v1/feed",
+)
+
+
+def _needs_x_rap(uri: str) -> bool:
+    return any(str(uri or "").startswith(prefix) for prefix in _X_RAP_PREFIXES)
 
 
 class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
@@ -49,6 +66,12 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         self.cookie_urls = [self._domain]
         self.IP_ERROR_STR = "Network connection error, please check network settings or restart"
         self.IP_ERROR_CODE = 300012
+        # 300011 = 账号安全限制（账号异常/被限制），不是 IP 问题。上游也有这个码。
+        self.SECURITY_LIMIT_CODE = 300011
+        self.SECURITY_LIMIT_STR = (
+            "XHS account security restriction (code=300011)：账号被平台限制，"
+            "换 IP / 换 UA / 重试都无效，请人工到官方页面处理"
+        )
         self.NOTE_NOT_FOUND_CODE = -510000
         self.NOTE_ABNORMAL_STR = "Note status abnormal, please check later"
         self.NOTE_ABNORMAL_CODE = -510001
@@ -84,6 +107,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
             data=data,
             cookie_str=self.headers.get("Cookie", ""),
             method=method,
+            x_rap=_needs_x_rap(url),
         )
 
         headers = {
@@ -92,6 +116,16 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
             "x-S-Common": signs["x-s-common"],
             "X-B3-Traceid": signs["x-b3-traceid"],
         }
+        # xhshow 0.2.0 新增的头：浏览器在 feed / search / 发布接口上会带，
+        # 缺了就是个可观测差异。有就透传。
+        for key, header in (
+            ("x-xray-traceid", "X-Xray-Traceid"),
+            ("x-mns", "X-Mns"),
+            ("xy-direction", "XY-Direction"),
+            ("x-rap-param", "X-Rap-Param"),
+        ):
+            if signs.get(key):
+                headers[header] = signs[key]
         self.headers.update(headers)
         return self.headers
 
@@ -101,7 +135,9 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_fixed(1),
-        retry=retry_if_not_exception_type((NoteNotFoundError, CaptchaError, IPBlockError)),
+        retry=retry_if_not_exception_type(
+            (NoteNotFoundError, CaptchaError, IPBlockError, PlatformAccessError)
+        ),
     )
     async def request(self, method, url, **kwargs) -> Union[str, Any]:
         """
@@ -141,9 +177,30 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
 
         if return_response:
             return response.text
+
+        # 401/403/429：平台在 HTTP 层就把我们挡了。重试没有意义（429 是"太快了"，
+        # 401/403 是"不让你进"），继续打只会加深标记。
+        if response.status_code in (401, 403, 429):
+            msg = (
+                f"HTTP {response.status_code} 平台拒绝访问（{method} {url}）："
+                f"{response.text[:200]}"
+            )
+            utils.logger.error(msg)
+            exc = PlatformAccessError(msg)
+            self._pacer.on_failure(exc)
+            raise exc
+
         data: Dict = response.json()
         if data["success"]:
             return data.get("data", data.get("success", {}))
+        elif data["code"] == self.SECURITY_LIMIT_CODE:
+            # 账号级安全限制：不是 IP 问题，换代理/UA/重试全都无用。
+            exc = PlatformAccessError(self.SECURITY_LIMIT_STR)
+            utils.logger.error(
+                f"[XiaoHongShuClient] 账号被平台限制（code=300011），已写平台冷却并停手"
+            )
+            self._pacer.on_failure(exc)
+            raise exc
         elif data["code"] == self.IP_ERROR_CODE:
             exc = IPBlockError(self.IP_ERROR_STR)
             self._pacer.on_failure(exc)

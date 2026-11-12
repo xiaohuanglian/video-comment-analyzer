@@ -1,5 +1,6 @@
-import sys
 import io
+import sys
+import time
 
 # Force UTF-8 encoding for stdout/stderr to prevent encoding errors
 # when outputting Chinese characters in non-UTF-8 terminals
@@ -15,8 +16,8 @@ from typing import Optional, Type
 
 import cmd_arg
 import config
-from database import db
 from base.base_crawler import AbstractCrawler
+from database import db
 from media_platform.bilibili import BilibiliCrawler
 from media_platform.douyin import DouYinCrawler
 from media_platform.kuaishou import KuaishouCrawler
@@ -29,9 +30,10 @@ from tools.crawl_pacing import (
     BLOCKED_EXIT_CODE,
     CrawlBlocked,
     CrawlPacer,
-    clear_platform_cooldown,
+    clear_stale_cooldown,
     ensure_platform_available,
 )
+from tools.xhs_safety import SearchBudgetExceeded
 from var import crawler_type_var
 
 
@@ -103,18 +105,25 @@ async def main() -> None:
         raise SystemExit(BLOCKED_EXIT_CODE) from None
 
     crawler = CrawlerFactory.create_crawler(platform=platform)
+    started_at = time.time()
     try:
         await crawler.start()
     except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
         raise
+    except SearchBudgetExceeded as exc:
+        # 额度不够不是"平台出问题"，绝不能写平台冷却（那会让账号多静置几小时，
+        # 而真正该做的是明天再来 / 少给几个词）。用退出码 3 与"冷却中"区分开。
+        print(f"[XhsBudget] {exc}")
+        raise SystemExit(BLOCKED_EXIT_CODE) from None
     except Exception as exc:
         # 分类 + 落盘冷却：下一次采集会先被拦下，而不是重新撞墙
         failure = CrawlPacer(platform=platform).on_failure(exc)
         print(f"[CrawlGuard] {failure.to_text()}")
         raise
     else:
-        # 跑通了说明平台恢复正常，顺手解掉上一次留下的冷却
-        clear_platform_cooldown(platform)
+        # 跑通了才考虑解掉**上一次**留下的冷却。本次运行中途写下的冷却必须保留
+        # ——那说明撞过墙，只是被平台客户端内部的 break 吞成了正常返回。
+        clear_stale_cooldown(platform, started_at)
 
     _flush_excel_if_needed()
 

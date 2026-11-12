@@ -23,8 +23,9 @@ from tenacity import RetryError
 import config
 from media_platform.xhs import client as xhs_client_mod
 from media_platform.xhs.client import XiaoHongShuClient
-from media_platform.xhs.exception import CaptchaError, IPBlockError
+from media_platform.xhs.exception import CaptchaError, IPBlockError, PlatformAccessError
 from tools import crawl_pacing as cp
+from tools import xhs_safety as xs
 
 # ---------------------------------------------------------------------------
 # 1. 平台级间隔
@@ -90,8 +91,12 @@ def test_xhs_interval_is_much_slower_than_generic():
 @pytest.fixture
 def isolated_cooldowns(tmp_path):
     cp.reset_cooldown_store(cp.CooldownStore(tmp_path / "cooldowns.json"))
+    # 搜索额度也要隔离：否则跑几次测试就把「今天还能搜 6 次」用光，
+    # 而且会写到真实的 cache/crawl_guard/ 里污染开发机状态。
+    xs.reset_search_budget(xs.SearchBudget(tmp_path / "search_budget.json"))
     yield cp.cooldown_store()
     cp.reset_cooldown_store(None)
+    xs.reset_search_budget(None)
 
 
 def _make_client() -> XiaoHongShuClient:
@@ -321,7 +326,7 @@ def test_script_aborts_batch_on_captcha(isolated_cooldowns, monkeypatch, tmp_pat
 
     monkeypatch.setattr(pw_api, "async_playwright", lambda: _FakePlaywrightCtx())
     monkeypatch.setattr(script, "CDPBrowserManager", _FakeManager)
-    monkeypatch.setattr(script, "compute_crawl_interval", lambda platform="": (0.0, 0.0))
+    monkeypatch.setattr(script, "compute_crawl_interval", lambda *a, **kw: (0.0, 0.0))
 
     async def fake_build_client(page):
         return fake_client
@@ -356,7 +361,7 @@ def test_script_continues_on_non_blocking_error(isolated_cooldowns, monkeypatch,
     fake_client = _Client(raise_at=99)
     monkeypatch.setattr(pw_api, "async_playwright", lambda: _FakePlaywrightCtx())
     monkeypatch.setattr(script, "CDPBrowserManager", _FakeManager)
-    monkeypatch.setattr(script, "compute_crawl_interval", lambda platform="": (0.0, 0.0))
+    monkeypatch.setattr(script, "compute_crawl_interval", lambda *a, **kw: (0.0, 0.0))
 
     async def fake_build_client(page):
         return fake_client
@@ -370,3 +375,136 @@ def test_script_continues_on_non_blocking_error(isolated_cooldowns, monkeypatch,
     assert fake_client.calls == ["词一", "词二", "词三"]
     assert manifest["aborted"] is False
     assert cp.platform_cooldown("xhs") is None
+
+
+# ---------------------------------------------------------------------------
+# 5. 账号级限制（300011）与 HTTP 拒绝（401/403/429）
+# ---------------------------------------------------------------------------
+
+
+def test_security_limit_code_raises_platform_access_without_retry(isolated_cooldowns, fake_http):
+    """300011 是"账号被限制"，不是 IP 问题：重试/换 UA 都没用，必须立刻停手。
+
+    上游 MediaCrawler 也是这么认的（``SECURITY_LIMIT_CODE = 300011``），
+    我们之前只认 300012（IP 风控），账号级限制会被当成普通业务错误吞掉。
+    """
+    fake_http.response_factory = lambda: _FakeResponse(
+        200, payload={"success": False, "code": 300011, "msg": "account security restriction"}
+    )
+
+    async def run():
+        with pytest.raises(PlatformAccessError):
+            await _make_client().request("GET", "https://edith.xiaohongshu.com/api/sns/web/v1/feed")
+
+    asyncio.run(run())
+    assert fake_http.calls == 1
+    active = cp.platform_cooldown("xhs")
+    assert active is not None and active["code"] == cp.PLATFORM_BLOCKED
+    # 账号级问题比 IP 级更重，冷却必须够长
+    assert active["retry_after_seconds"] >= 3600
+
+
+@pytest.mark.parametrize("status", [401, 403, 429])
+def test_http_access_denied_raises_platform_access(isolated_cooldowns, fake_http, status):
+    """HTTP 层直接拒绝时也别重试——重试等于告诉对方"我还要来"。"""
+    fake_http.response_factory = lambda: _FakeResponse(status, text="denied")
+
+    async def run():
+        with pytest.raises(PlatformAccessError):
+            await _make_client().request("GET", "https://edith.xiaohongshu.com/api/sns/web/v1/feed")
+
+    asyncio.run(run())
+    assert fake_http.calls == 1
+    assert cp.platform_cooldown("xhs") is not None
+
+
+def test_platform_error_is_not_retried_by_tenacity(isolated_cooldowns, fake_http):
+    """PlatformAccessError 必须与 CaptchaError 一样只打一次（已由上面覆盖 401/403/429），
+    这里补一条：确认它确实在 tenacity 的排除名单里，而不是靠"恰好没触发重试"。"""
+    from tenacity import RetryError
+
+    from media_platform.xhs import client as mod
+
+    # tenacity 的 retry_if_not_exception_type 把排除名单放在 .exception_types
+    retry_obj = mod.XiaoHongShuClient.request.retry.retry
+    excluded = retry_obj.exception_types
+    assert PlatformAccessError in excluded
+    assert CaptchaError in excluded
+    assert IPBlockError in excluded
+    # 且真实行为确实是 3 次（别只信名单）
+    fake_http.response_factory = lambda: _FakeResponse(
+        200, payload={"success": False, "code": -1, "msg": "服务器开小差"}
+    )
+
+    async def run():
+        with pytest.raises(RetryError):
+            await _make_client().request("GET", "https://edith.xiaohongshu.com/api/sns/web/v1/feed")
+
+    asyncio.run(run())
+    assert fake_http.calls == 3
+
+
+def test_platform_access_error_is_not_downgraded_to_rate_limited():
+    """回归：``PlatformAccessError`` 的文案里带「限制」，曾被限流正则抢先命中。
+
+    后果很实际：账号级限制本该冷却 12 小时，被降级成"限流 15 分钟"，
+    等于告诉用户"再等等就好"，然后 15 分钟后账号又被撞一次。
+    """
+    failure = cp.classify_failure(
+        PlatformAccessError("账号被平台限制，换 IP / 换 UA / 重试都无效"),
+        platform="xhs",
+    )
+    assert failure.code == cp.PLATFORM_BLOCKED
+    assert cp._cooldown_seconds(failure.code, "xhs") >= 3600
+
+
+# ---------------------------------------------------------------------------
+# 6. 冷却不能被"跑完了"顺手清掉
+# ---------------------------------------------------------------------------
+
+
+def test_cooldown_written_during_run_survives_a_successful_finish(isolated_cooldowns, fake_http):
+    """爬虫吞掉拦截异常、正常返回后，main 的"跑通了"分支不能把冷却清掉。
+
+    这是 2026-11-12 复核发现的真洞：``XiaoHongShuCrawler.search()`` 曾经
+    ``except CaptchaError: break`` 后正常返回，``main`` 走 ``else`` 分支执行
+    ``clear_platform_cooldown``，客户端刚落的 12 小时冷却当场消失。
+    """
+    import time
+
+    started_at = time.time() - 1.0
+    fake_http.response_factory = lambda: _FakeResponse(
+        461, headers={"Verifytype": "217", "Verifyuuid": "uuid-3"}
+    )
+
+    async def run():
+        with pytest.raises(CaptchaError):
+            await _make_client().request("GET", "https://edith.xiaohongshu.com/api/sns/web/v1/search/notes")
+
+    asyncio.run(run())
+    assert cp.platform_cooldown("xhs") is not None
+
+    cleared = cp.clear_stale_cooldown("xhs", started_at)
+    assert cleared is False, "本次运行中写下的冷却必须保留"
+    assert cp.platform_cooldown("xhs") is not None
+
+
+def test_stale_cooldown_from_a_previous_run_is_cleared(isolated_cooldowns):
+    """上次遗留的冷却，本次跑通后可以清——否则账号恢复了还在拦自己。"""
+    import time
+
+    cp.record_platform_failure("xhs", cp.classify_failure(Exception("验证码"), platform="xhs"))
+    # 假装这条冷却是一小时前写的
+    store = cp.cooldown_store()
+    data = store._load()
+    data["platforms"]["xhs"]["at"] = time.time() - 3600
+    store._save(data)
+
+    started_at = time.time()
+    assert cp.clear_stale_cooldown("xhs", started_at) is True
+    assert cp.platform_cooldown("xhs") is None
+
+
+def test_clear_stale_cooldown_is_noop_without_cooldown(isolated_cooldowns):
+    assert cp.clear_stale_cooldown("xhs", 0.0) is False
+    assert cp.clear_stale_cooldown("", 0.0) is False

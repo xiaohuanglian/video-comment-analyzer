@@ -89,8 +89,24 @@ def _isolate_real_state_files(tmp_path, monkeypatch):
     那是真跑通了完整调用路径——包括 `costs.record()`，于是每跑一次全量测试，
     `data/costs/ledger.jsonl` 就多几行 `feature=unknown/model=m` 的假记录，
     混在真实消耗里。台账是「只记账不限制」的审计数据，被污染就看不出真实花费了。
+
+    同类的还有两个 crawl guard 状态文件（`cache/crawl_guard/` 已 gitignore，
+    但污染的是开发机真实状态）：
+    - `cooldowns.json`：测试撞一次 461 就会给 xhs 落 12 小时冷却，
+      跑完测试本地采集直接被自己的测试拦住。
+    - `xhs_search_budget.json`：每跑一次测试就消耗「今天还能搜 6 次」的额度。
     """
     from api.services import costs
+    from tools import crawl_pacing as cp
+    from tools import xhs_safety as xs
 
     monkeypatch.setattr(costs, "COSTS_DIR", tmp_path / "costs")
     monkeypatch.setattr(costs, "LEDGER_FILE", tmp_path / "costs" / "ledger.jsonl")
+
+    cp.reset_cooldown_store(cp.CooldownStore(tmp_path / "cooldowns.json"))
+    xs.reset_search_budget(xs.SearchBudget(tmp_path / "search_budget.json"))
+    try:
+        yield
+    finally:
+        cp.reset_cooldown_store(None)
+        xs.reset_search_budget(None)

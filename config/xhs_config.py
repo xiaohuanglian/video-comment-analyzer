@@ -23,6 +23,21 @@ XHS_CREATOR_ID_LIST = [
 XHS_CRAWL_SLEEP_SEC = 20
 XHS_CRAWL_SLEEP_JITTER_SEC = 12
 
+# ---- 搜索接口单独一档（2026-11-12 加）----
+# 同一天里：detail/feed 模式（2026-11-09，20 篇笔记 + 386 条评论）零风控信号；
+# search 模式（2026-11-11，12 个关键词）40 秒后吃到 12 小时验证码。
+# 差别不在签名——前 9 个词全部成功，说明签名是有效的——而在「主动搜库」这个动作。
+# 所以 search 单独用更慢的节奏：单次间隔 45–90 秒，接近人在搜索框里换词的速度。
+XHS_SEARCH_SLEEP_SEC = 45
+XHS_SEARCH_JITTER_SEC = 45
+
+# ---- 搜索的次数预算（2026-11-12 加，见 tools/xhs_safety.py）----
+# 间隔只能降低速率，治不了「一天问 12 个不相关的话题」这个形态本身。
+# 真人不会在 40 秒里连问 12 个话题；一天 6 次搜索、单批最多 4 个词，
+# 更接近正常使用，也给账号留出恢复余地。
+XHS_SEARCH_DAILY_LIMIT = 6
+XHS_MAX_KEYWORDS_PER_BATCH = 4
+
 # 账号级风控的冷却时长：平台封的是账号不是 IP，半小时不够降温。
 # 12 小时内该平台任何采集（含 Web 面板）都会被 crawl_guard 直接拦下。
 XHS_BLOCKED_COOLDOWN_SEC = 43200

@@ -134,9 +134,24 @@ _PLATFORM_PACING: Dict[str, Tuple[str, str]] = {
     "dy": ("DY_CRAWL_SLEEP_SEC", "DY_CRAWL_SLEEP_JITTER_SEC"),
 }
 
+#: 按「接口类型」再分一档：``(平台, 类型) -> (base 键, jitter 键)``。
+#:
+#: 为什么需要：小红书的 ``search`` 接口（``/api/sns/web/v1/search/notes``）
+#: 天生比 ``feed``/``detail`` 敏感——搜索是「主动在平台库里捞东西」，
+#: 而 feed 是「看一个已知的内容」。2026-11-09 用 detail 模式跑全链路零风控信号，
+#: 2026-11-11 换成 12 个关键词 search，40 秒后就被 461。同一个账号、同一套签名，
+#: 差别只在接口和频率，所以节奏必须分开配。
+_PACING_KINDS: Dict[Tuple[str, str], Tuple[str, str]] = {
+    ("xhs", "search"): ("XHS_SEARCH_SLEEP_SEC", "XHS_SEARCH_JITTER_SEC"),
+}
 
-def compute_crawl_interval(platform: str = "") -> Tuple[float, float]:
-    """Return (base_seconds, jitter_seconds) for crawl pacing."""
+
+def compute_crawl_interval(platform: str = "", kind: str = "") -> Tuple[float, float]:
+    """Return (base_seconds, jitter_seconds) for crawl pacing.
+
+    ``kind`` 用来区分同一平台下敏感度不同的接口（目前只有 ``xhs`` + ``search``）。
+    传了 kind 但没配覆盖时会回落到平台级配置——宁可慢，不要静默变快。
+    """
     base = float(getattr(config, "CRAWLER_MAX_SLEEP_SEC", 2))
     jitter = float(getattr(config, "CRAWLER_SLEEP_JITTER_SEC", 0))
 
@@ -150,6 +165,13 @@ def compute_crawl_interval(platform: str = "") -> Tuple[float, float]:
         p_jitter = float(getattr(config, keys[1], jitter))
         base = max(base, p_base)
         jitter = max(jitter, p_jitter)
+
+    kind_keys = _PACING_KINDS.get((platform, kind))
+    if kind_keys and getattr(config, "ENABLE_SAFE_CRAWL_MODE", False):
+        k_base = float(getattr(config, kind_keys[0], base))
+        k_jitter = float(getattr(config, kind_keys[1], jitter))
+        base = max(base, k_base)
+        jitter = max(jitter, k_jitter)
 
     return base, jitter
 
@@ -199,6 +221,19 @@ class CrawlFailure:
         return " ".join(parts)
 
 
+#: 平台客户端里表示「风控 / 拒绝访问」的异常类名。命中即判 PLATFORM_BLOCKED，
+#: 不参与后面的正则匹配——它们的文案里常带「限制」「频繁」等词，会被误判成限流。
+_BLOCKING_EXC_NAMES = frozenset(
+    {
+        "CaptchaError",
+        "IPBlockError",
+        "PlatformAccessError",
+        "LoginError",
+        "NeedLoginError",
+    }
+)
+
+
 class CrawlBlocked(RuntimeError):
     """采集被 guard 拦下（平台冷却中 / 并发已满）。携带结构化 failure。"""
 
@@ -243,6 +278,12 @@ def classify_failure(
             hint=ERROR_HINTS.get(failure_code, ""),
         )
 
+    # 平台客户端自己已经认准的"风控/拒绝"类型，直接采信，不再靠文本猜。
+    # 反例（2026-11-12 踩到）：``PlatformAccessError`` 的文案里带「限制」二字，
+    # 会被下面的限流正则命中，于是「账号被限制 12 小时」被降级成「限流 15 分钟」。
+    # 用类名判断而不是 isinstance，避免 tools/ 反过来依赖 media_platform。
+    if name in _BLOCKING_EXC_NAMES:
+        return make(PLATFORM_BLOCKED)
     if is_rate_limited(code, f"{name} {text}"):
         return make(RATE_LIMITED)
     if _BLOCKED_PATTERN.search(f"{name} {text}"):
@@ -450,6 +491,37 @@ def record_platform_failure(
 def clear_platform_cooldown(platform: str) -> None:
     if platform:
         cooldown_store().clear(platform)
+
+
+def clear_stale_cooldown(platform: str, started_at: float) -> bool:
+    """跑完一次采集后调用：只在冷却**不是本次运行写下的**时候才清掉。
+
+    为什么不能直接 ``clear_platform_cooldown``：爬虫把「撞风控」的异常吞掉后
+    正常返回（``xhs`` 的 search 曾经就是这样），``main`` 会当成跑通并清冷却，
+    于是客户端刚落的 12 小时冷却当场被抹掉，下一次采集照样放行。
+    用"这条冷却是什么时候写的"来判：早于本次启动 = 上次遗留，可以清；
+    晚于本次启动 = 刚发生的拦截，必须留着。
+
+    返回是否真的清掉了。
+    """
+    if not platform:
+        return False
+    active = platform_cooldown(platform)
+    if not active:
+        return False
+    try:
+        recorded_at = float(active.get("at") or 0)
+    except (TypeError, ValueError):
+        recorded_at = 0.0
+    if recorded_at >= started_at - 1.0:
+        # 本次运行中途刚写的：说明撞过墙，别清
+        utils.logger.warning(
+            f"[CrawlGuard] {platform} 冷却是在本次运行中写下的，保留"
+            f"（{active.get('code')}，还需 {format_duration(active.get('retry_after_seconds') or 0)}）"
+        )
+        return False
+    clear_platform_cooldown(platform)
+    return True
 
 
 def ensure_platform_available(platform: str) -> None:

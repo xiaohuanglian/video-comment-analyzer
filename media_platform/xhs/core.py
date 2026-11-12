@@ -15,29 +15,35 @@ from tenacity import RetryError
 
 import config
 from base.base_crawler import AbstractCrawler
-from model.m_xiaohongshu import NoteUrlInfo, CreatorUrlInfo
+from model.m_xiaohongshu import CreatorUrlInfo, NoteUrlInfo
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import xhs as xhs_store
 from tools import utils
 from tools.cdp_browser import CDPBrowserManager
 from tools.crawl_pacing import compute_crawl_interval
+from tools.xhs_safety import ensure_batch_allowed, plan_keywords, search_budget
 from var import crawler_type_var, source_keyword_var
 
 from .client import XiaoHongShuClient
-from .exception import CaptchaError, DataFetchError, NoteNotFoundError
+from .exception import CaptchaError, DataFetchError, NoteNotFoundError, PlatformAccessError
 from .field import SearchSortType
-from .help import parse_note_info_from_note_url, parse_creator_info_from_url, get_search_id
+from .fingerprint import BrowserFingerprint, read_browser_fingerprint
+from .help import get_search_id, parse_creator_info_from_url, parse_note_info_from_note_url
 from .login import XiaoHongShuLogin
 
 
-async def _pace_sleep(reason: str = "") -> None:
+async def _pace_sleep(reason: str = "", *, kind: str = "") -> None:
     """按平台真实间隔睡一觉。
 
     以前这里直接 ``asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)``（通用 3s），
     把 ``XHS_CRAWL_SLEEP_SEC`` 的平台级覆盖绕过去了——12 个关键词 40 秒打完
     就是这么来的（2026-11-11 账号异常）。所有平台相关等待都必须走这个函数。
+
+    ``kind="search"`` 时用更慢的搜索档（``XHS_SEARCH_SLEEP_SEC``）：搜索接口
+    比 feed/detail 敏感得多，同一账号在 detail 模式零风控、在 search 模式 40 秒
+    就被拦，差别只在接口。
     """
-    base, jitter = compute_crawl_interval("xhs")
+    base, jitter = compute_crawl_interval("xhs", kind)
     delay = base + (random.uniform(0, jitter) if jitter > 0 else 0)
     if reason:
         utils.logger.info(f"[XiaoHongShuCrawler] sleeping {delay:.1f}s ({reason})")
@@ -53,8 +59,13 @@ class XiaoHongShuCrawler(AbstractCrawler):
     def __init__(self) -> None:
         self.index_url = "https://www.rednote.com" if config.XHS_INTERNATIONAL else "https://www.xiaohongshu.com"
         self.cookie_urls = [self.index_url]
-        # self.user_agent = utils.get_user_agent()
-        self.user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        # **不要**再写死 UA 常量。传 None 让浏览器用它自己的 UA，随后从活着的
+        # 页面读 navigator.userAgent / userAgentData 填 HTTP 头——这样浏览器与
+        # HTTP 客户端说的是同一台机器（2026-11-11 事故里是 126/136/137 三个版本
+        # 号 + Mac/Windows 互相矛盾，见 media_platform/xhs/fingerprint.py）。
+        self.user_agent: Optional[str] = None
+        #: 打开首页后从浏览器读出的指纹，create_xhs_client 用它填请求头
+        self.fingerprint: Optional[BrowserFingerprint] = None
         self.cdp_manager = None
         self.ip_proxy_pool = None  # Proxy IP pool for automatic proxy refresh
 
@@ -90,6 +101,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
             self.context_page = await self.browser_context.new_page()
             await self.context_page.goto(self.index_url)
+
+            # 指纹必须从「已经开始跑的浏览器」里读：这才是平台看到的那个客户端。
+            self.fingerprint = await read_browser_fingerprint(self.context_page)
 
             # Create a client to interact with the Xiaohongshu website.
             self.xhs_client = await self.create_xhs_client(httpx_proxy_format)
@@ -129,11 +143,31 @@ class XiaoHongShuCrawler(AbstractCrawler):
         if config.CRAWLER_MAX_NOTES_COUNT < xhs_limit_count:
             config.CRAWLER_MAX_NOTES_COUNT = xhs_limit_count
         start_page = config.START_PAGE
+        # 搜索是有配额的：一次最多几个词、一天最多几次。Web 面板的「立即采集」
+        # 也走这条路径（``main.py --type search``），所以预算必须在这里也拦一道，
+        # 不能只拦独立脚本。2026-11-11 的事故就是 12 个词一口气打完。
+        _all_keywords = [k.strip() for k in str(config.KEYWORDS or "").split(",") if k.strip()]
+        # 词数超过单批上限时不报错，而是按日期轮转取一批、其余的留到下次：
+        # 报错会让"配了 9 个词"的自动采集每天都失败，而固定取前 4 个又让后排
+        # 的词永远轮不到。轮转既守住上限，也保证每个词迟早被搜到。
+        _keywords, _deferred = plan_keywords(_all_keywords)
+        if _deferred:
+            utils.logger.info(
+                f"[XiaoHongShuCrawler.search] 本次只搜 {len(_keywords)} 个词"
+                f"（单批上限），其余 {len(_deferred)} 个下次轮转：{_deferred}"
+            )
+        ensure_batch_allowed(len(_keywords))
         # 撞到验证码就整批停：继续换关键词只会拿同一个已被标记的账号反复试探。
+        # 注意**不能把异常吞掉**——吞掉后 start() 正常返回，main.py 会走
+        # `else: clear_platform_cooldown(...)`，把客户端刚写的冷却当场抹掉。
+        # （2026-11-12 复核发现：这会让整个 guard 在 search 模式下形同虚设。）
         captcha_hit = False
-        for keyword in config.KEYWORDS.split(","):
+        blocker: Optional[BaseException] = None
+        for keyword in _keywords:
             source_keyword_var.set(keyword)
             utils.logger.info(f"[XiaoHongShuCrawler.search] Current search keyword: {keyword}")
+            # 每开一个新词就记一次额度（在发请求之前记账：被拦也算用掉了次数）
+            search_budget().consume(1)
             page = 1
             search_id = get_search_id()
             while (page - start_page + 1) * xhs_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
@@ -177,18 +211,24 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     await self.batch_get_note_comments(note_ids, xsec_tokens)
 
                     # Sleep after each page navigation
-                    await _pace_sleep(f"page {page - 1} of 「{keyword}」")
-                except CaptchaError as ex:
+                    await _pace_sleep(f"page {page - 1} of 「{keyword}」", kind="search")
+                except (CaptchaError, PlatformAccessError) as ex:
                     utils.logger.error(
-                        f"[XiaoHongShuCrawler.search] 撞到平台验证码，中止本批全部关键词：{ex}"
+                        f"[XiaoHongShuCrawler.search] 撞到平台拦截（验证码/账号限制），"
+                        f"中止本批全部关键词：{ex}"
                     )
                     captcha_hit = True
+                    blocker = ex
                     break
                 except DataFetchError:
                     utils.logger.error("[XiaoHongShuCrawler.search] Get note detail error")
                     break
             if captcha_hit:
                 break
+        # 把拦截异常抛回去：让 main.py 走失败分支（不 clear 冷却），
+        # 也让调用方（Web 面板 / CLI）拿到退出码与非零状态。
+        if blocker is not None:
+            raise blocker
 
     async def get_creators_and_notes(self) -> None:
         """Get creator's notes and retrieve their comment information."""
@@ -372,26 +412,31 @@ class XiaoHongShuCrawler(AbstractCrawler):
             self.browser_context,
             urls=self.cookie_urls,
         )
+        # 指纹一律取浏览器自报值（start() 里读好放在 self.fingerprint）；
+        # 万一没读到就现场读一次，绝不回落成写死的常量。
+        fingerprint = self.fingerprint
+        if fingerprint is None:
+            fingerprint = await read_browser_fingerprint(self.context_page)
+            self.fingerprint = fingerprint
+        headers = {
+            "accept": "application/json, text/plain, */*",
+            "accept-language": "zh-CN,zh;q=0.9",
+            "cache-control": "no-cache",
+            "content-type": "application/json;charset=UTF-8",
+            "origin": self.index_url,
+            "pragma": "no-cache",
+            "priority": "u=1, i",
+            "referer": f"{self.index_url}/",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-site",
+            "Cookie": cookie_str,
+        }
+        # UA / sec-ch-ua / sec-ch-ua-platform / sec-ch-ua-mobile 全部同源
+        headers.update(fingerprint.headers())
         xhs_client_obj = XiaoHongShuClient(
             proxy=httpx_proxy,
-            headers={
-                "accept": "application/json, text/plain, */*",
-                "accept-language": "zh-CN,zh;q=0.9",
-                "cache-control": "no-cache",
-                "content-type": "application/json;charset=UTF-8",
-                "origin": self.index_url,
-                "pragma": "no-cache",
-                "priority": "u=1, i",
-                "referer": f"{self.index_url}/",
-                "sec-ch-ua": '"Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"',
-                "sec-ch-ua-mobile": "?0",
-                "sec-ch-ua-platform": '"Windows"',
-                "sec-fetch-dest": "empty",
-                "sec-fetch-mode": "cors",
-                "sec-fetch-site": "same-site",
-                "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
-                "Cookie": cookie_str,
-            },
+            headers=headers,
             playwright_page=self.context_page,
             cookie_dict=cookie_dict,
             proxy_ip_pool=self.ip_proxy_pool,  # Pass proxy pool for automatic refresh
