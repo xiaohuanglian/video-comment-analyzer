@@ -24,10 +24,24 @@ from tools.crawl_pacing import compute_crawl_interval
 from var import crawler_type_var, source_keyword_var
 
 from .client import XiaoHongShuClient
-from .exception import DataFetchError, NoteNotFoundError
+from .exception import CaptchaError, DataFetchError, NoteNotFoundError
 from .field import SearchSortType
 from .help import parse_note_info_from_note_url, parse_creator_info_from_url, get_search_id
 from .login import XiaoHongShuLogin
+
+
+async def _pace_sleep(reason: str = "") -> None:
+    """按平台真实间隔睡一觉。
+
+    以前这里直接 ``asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)``（通用 3s），
+    把 ``XHS_CRAWL_SLEEP_SEC`` 的平台级覆盖绕过去了——12 个关键词 40 秒打完
+    就是这么来的（2026-11-11 账号异常）。所有平台相关等待都必须走这个函数。
+    """
+    base, jitter = compute_crawl_interval("xhs")
+    delay = base + (random.uniform(0, jitter) if jitter > 0 else 0)
+    if reason:
+        utils.logger.info(f"[XiaoHongShuCrawler] sleeping {delay:.1f}s ({reason})")
+    await asyncio.sleep(delay)
 
 
 class XiaoHongShuCrawler(AbstractCrawler):
@@ -115,6 +129,8 @@ class XiaoHongShuCrawler(AbstractCrawler):
         if config.CRAWLER_MAX_NOTES_COUNT < xhs_limit_count:
             config.CRAWLER_MAX_NOTES_COUNT = xhs_limit_count
         start_page = config.START_PAGE
+        # 撞到验证码就整批停：继续换关键词只会拿同一个已被标记的账号反复试探。
+        captcha_hit = False
         for keyword in config.KEYWORDS.split(","):
             source_keyword_var.set(keyword)
             utils.logger.info(f"[XiaoHongShuCrawler.search] Current search keyword: {keyword}")
@@ -161,11 +177,18 @@ class XiaoHongShuCrawler(AbstractCrawler):
                     await self.batch_get_note_comments(note_ids, xsec_tokens)
 
                     # Sleep after each page navigation
-                    await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
-                    utils.logger.info(f"[XiaoHongShuCrawler.search] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
+                    await _pace_sleep(f"page {page - 1} of 「{keyword}」")
+                except CaptchaError as ex:
+                    utils.logger.error(
+                        f"[XiaoHongShuCrawler.search] 撞到平台验证码，中止本批全部关键词：{ex}"
+                    )
+                    captcha_hit = True
+                    break
                 except DataFetchError:
                     utils.logger.error("[XiaoHongShuCrawler.search] Get note detail error")
                     break
+            if captcha_hit:
+                break
 
     async def get_creators_and_notes(self) -> None:
         """Get creator's notes and retrieve their comment information."""
@@ -189,8 +212,8 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 utils.logger.error(f"[XiaoHongShuCrawler.get_creators_and_notes] Failed to parse creator URL: {e}")
                 continue
 
-            # Use fixed crawling interval
-            crawl_interval = config.CRAWLER_MAX_SLEEP_SEC
+            # Use the platform-level interval (XHS_CRAWL_SLEEP_SEC), not the generic one
+            crawl_interval = compute_crawl_interval("xhs")[0]
             # Get all note information of the creator
             all_notes_list = await self.xhs_client.get_all_notes_by_creator(
                 user_id=user_id,
@@ -289,8 +312,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 note_detail.update({"xsec_token": xsec_token, "xsec_source": xsec_source})
 
                 # Sleep after fetching note detail
-                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
-                utils.logger.info(f"[get_note_detail_async_task] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching note {note_id}")
+                await _pace_sleep(f"note {note_id}")
 
                 return note_detail
 

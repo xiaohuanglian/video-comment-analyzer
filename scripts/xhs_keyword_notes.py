@@ -45,13 +45,17 @@ config.CRAWLER_TYPE = "search"
 from tenacity import RetryError  # noqa: E402
 
 from media_platform.xhs.client import XiaoHongShuClient  # noqa: E402
+from media_platform.xhs.exception import CaptchaError  # noqa: E402
 from media_platform.xhs.help import get_search_id  # noqa: E402
 from tools import utils  # noqa: E402
 from tools.cdp_browser import CDPBrowserManager  # noqa: E402
 from tools.crawl_pacing import (  # noqa: E402
+    ERROR_HINTS,
+    PLATFORM_BLOCKED,
     classify_failure,
     compute_crawl_interval,
     ensure_platform_available,
+    record_platform_failure,
 )
 
 _INDEX_URL = "https://www.rednote.com" if config.XHS_INTERNATIONAL else "https://www.xiaohongshu.com"
@@ -197,6 +201,7 @@ async def collect(
     manager = CDPBrowserManager()
     pool: Dict[str, List[Dict[str, Any]]] = {}
     failures: List[Dict[str, Any]] = []
+    aborted = False
     pong = False
 
     async with async_playwright() as playwright:
@@ -250,6 +255,32 @@ async def collect(
                     utils.logger.warning(
                         f"[xhs_notes] 「{keyword}」失败：{failure['error']['message']}"
                     )
+                    # 撞到平台风控就停手：已经证明平台在拦我们了，继续打剩下的
+                    # 关键词只会加重标记（2026-11-11 那批就是这么把账号打异常的）。
+                    if failure["error"]["code"] == PLATFORM_BLOCKED or isinstance(
+                        _root_cause(exc), CaptchaError
+                    ):
+                        record_platform_failure("xhs", _root_cause(exc))
+                        rest = keywords[i + 1 :]
+                        failures.append(
+                            {
+                                "stage": "aborted",
+                                "code": PLATFORM_BLOCKED,
+                                "message": (
+                                    f"「{keyword}」撞到平台风控验证码，已中止本批；"
+                                    f"剩余 {len(rest)} 个关键词未执行"
+                                ),
+                                "hint": ERROR_HINTS[PLATFORM_BLOCKED],
+                                "skipped_keywords": rest,
+                            }
+                        )
+                        for skipped in rest:
+                            pool[skipped] = []
+                        aborted = True
+                        utils.logger.error(
+                            f"[xhs_notes] 平台风控拦截，中止本批（剩 {len(rest)} 个关键词未执行）"
+                        )
+                        break
         finally:
             try:
                 await page.close()
@@ -300,6 +331,7 @@ async def collect(
         "saved_total": len(picked),
         "fetched_per_keyword": by_keyword,
         "logged_in": pong,
+        "aborted": aborted,
         "failures": failures,
         "csv": str(csv_path),
     }
@@ -344,6 +376,8 @@ def main() -> None:
             if error.get("hint"):
                 print(f"       → {error['hint']}")
         sys.exit(3)
+    if manifest.get("aborted"):
+        print("\n本批因平台风控中止，剩余关键词未执行；冷却已写入 cache/crawl_guard/cooldowns.json。")
     if manifest["saved_total"] == 0:
         print("\n一条都没拿到：多半是登录态失效，请先在该 profile 里登录小红书后重跑。")
         sys.exit(3)

@@ -25,3 +25,11 @@ DY_CREATOR_ID_LIST = [
     "MS4wLjABAAAATJPY7LAlaa5X-c8uNdWkvz0jUGgpw4eeXIwu_8BhvqE"
     # ........................
 ]
+
+# ---- 采集节奏（2026-11-12 与小红书同步收紧）----
+# 抖音同样走浏览器签名 + 单一账号，沿用通用 3s 是同一类风险。
+DY_CRAWL_SLEEP_SEC = 12
+DY_CRAWL_SLEEP_JITTER_SEC = 8
+
+# 账号级风控的冷却时长（与小红书同理，抖音同样只能用单一登录态）
+DY_BLOCKED_COOLDOWN_SEC = 21600

@@ -17,7 +17,7 @@ from tools.crawl_pacing import CrawlPacer, platform_slot
 if TYPE_CHECKING:
     from proxy.proxy_ip_pool import ProxyIpPool
 
-from .exception import DataFetchError, IPBlockError, NoteNotFoundError
+from .exception import CaptchaError, DataFetchError, IPBlockError, NoteNotFoundError
 from .field import SearchNoteType, SearchSortType
 from .help import get_search_id
 from .extractor import XiaoHongShuExtractor
@@ -95,7 +95,14 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         self.headers.update(headers)
         return self.headers
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(1), retry=retry_if_not_exception_type(NoteNotFoundError))
+    # CaptchaError / IPBlockError 必须排除在重试名单之外：撞验证码或 IP 被封时
+    # 再打一次只会加重风控，而且重试前的冷却等待会白等 20 秒。
+    # 2026-11-11 事故：3 个关键词各撞 461，被重试 3 次 = 对已标记账号又补 9 次请求。
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_fixed(1),
+        retry=retry_if_not_exception_type((NoteNotFoundError, CaptchaError, IPBlockError)),
+    )
     async def request(self, method, url, **kwargs) -> Union[str, Any]:
         """
         Wrapper for httpx common request method, processes request response
@@ -124,7 +131,13 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
             verify_uuid = response.headers["Verifyuuid"]
             msg = f"CAPTCHA appeared, request failed, Verifytype: {verify_type}, Verifyuuid: {verify_uuid}, Response: {response}"
             utils.logger.error(msg)
-            raise Exception(msg)
+            exc = CaptchaError(msg)
+            # 写进跨进程平台冷却（PLATFORM_BLOCKED → XHS_BLOCKED_COOLDOWN_SEC，
+            # 默认 12 小时）：下一次采集（哪怕是新进程、Web 面板点「立即采集」）
+            # 会在 ensure_platform_available 处被直接拦下，而不是继续拿同一个
+            # 已被标记的账号去试探。
+            self._pacer.on_failure(exc)
+            raise exc
 
         if return_response:
             return response.text
@@ -132,7 +145,9 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         if data["success"]:
             return data.get("data", data.get("success", {}))
         elif data["code"] == self.IP_ERROR_CODE:
-            raise IPBlockError(self.IP_ERROR_STR)
+            exc = IPBlockError(self.IP_ERROR_STR)
+            self._pacer.on_failure(exc)
+            raise exc
         elif data["code"] in (self.NOTE_NOT_FOUND_CODE, self.NOTE_ABNORMAL_CODE):
             raise NoteNotFoundError(f"Note not found or abnormal, code: {data['code']}")
         else:

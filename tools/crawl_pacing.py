@@ -76,6 +76,14 @@ _COOLDOWN_CONFIG: Dict[str, Tuple[str, float]] = {
     TIMEOUT: ("CRAWL_GUARD_TIMEOUT_COOLDOWN_SEC", 120.0),
 }
 
+#: 平台级冷却时长覆盖。B 站封的是 IP，半小时后就该再试；小红书封的是**账号**
+#: （2026-11-11 撞验证码后账号直接进异常状态），半小时根本不够它降温，
+#: 而且继续用同一账号试探只会把"临时风控"升级成"永久限制"。
+_PLATFORM_COOLDOWN_OVERRIDES: Dict[str, Dict[str, str]] = {
+    "xhs": {PLATFORM_BLOCKED: "XHS_BLOCKED_COOLDOWN_SEC"},
+    "dy": {PLATFORM_BLOCKED: "DY_BLOCKED_COOLDOWN_SEC"},
+}
+
 _RATE_LIMIT_CODES = {-799, -412, -352, 412, 429}
 _RATE_LIMIT_PATTERN = re.compile(
     r"频繁|风控|过快|限制|拦截|稍后再试|操作太|try again|rate.?limit",
@@ -112,6 +120,21 @@ def is_rate_limited(code: Optional[int], message: str = "") -> bool:
     return bool(message and _RATE_LIMIT_PATTERN.search(message))
 
 
+#: 平台级采集间隔覆盖：``<平台>_CRAWL_SLEEP_SEC`` / ``<平台>_CRAWL_SLEEP_JITTER_SEC``。
+#:
+#: 为什么必须按平台分开：通用的 ``CRAWLER_MAX_SLEEP_SEC=3`` 是为 B 站调的，
+#: 而 B 站有 ``BILI_CRAWL_SLEEP_SEC`` 覆盖到 4s；小红书**曾经没有覆盖**，
+#: 于是 12 个搜索词以 3–4.5 秒的间隔在 40 秒内打完，直接吃到风控验证码
+#: （2026-11-11，`data/xhs_search/20261111_200159/manifest.json` 里 3 个词
+#: 连续返回 461 CAPTCHA）。小红书的风控比 B 站敏感得多，且账号不可替换，
+#: 所以它的默认间隔必须比通用值大一个量级。
+_PLATFORM_PACING: Dict[str, Tuple[str, str]] = {
+    "bili": ("BILI_CRAWL_SLEEP_SEC", "BILI_CRAWL_SLEEP_JITTER_SEC"),
+    "xhs": ("XHS_CRAWL_SLEEP_SEC", "XHS_CRAWL_SLEEP_JITTER_SEC"),
+    "dy": ("DY_CRAWL_SLEEP_SEC", "DY_CRAWL_SLEEP_JITTER_SEC"),
+}
+
+
 def compute_crawl_interval(platform: str = "") -> Tuple[float, float]:
     """Return (base_seconds, jitter_seconds) for crawl pacing."""
     base = float(getattr(config, "CRAWLER_MAX_SLEEP_SEC", 2))
@@ -121,12 +144,12 @@ def compute_crawl_interval(platform: str = "") -> Tuple[float, float]:
         base = max(base, 3.0)
         jitter = max(jitter, 1.5)
 
-    if platform == "bili":
-        bili_base = float(getattr(config, "BILI_CRAWL_SLEEP_SEC", base))
-        bili_jitter = float(getattr(config, "BILI_CRAWL_SLEEP_JITTER_SEC", jitter))
-        if getattr(config, "ENABLE_SAFE_CRAWL_MODE", False):
-            base = max(base, bili_base)
-            jitter = max(jitter, bili_jitter)
+    keys = _PLATFORM_PACING.get(platform)
+    if keys and getattr(config, "ENABLE_SAFE_CRAWL_MODE", False):
+        p_base = float(getattr(config, keys[0], base))
+        p_jitter = float(getattr(config, keys[1], jitter))
+        base = max(base, p_base)
+        jitter = max(jitter, p_jitter)
 
     return base, jitter
 
@@ -273,7 +296,14 @@ def platform_fingerprint(platform: str) -> str:
     return sha1(f"{platform}|{GUARD_STATE_VERSION}".encode("utf-8")).hexdigest()[:12]
 
 
-def _cooldown_seconds(code: str) -> float:
+def _cooldown_seconds(code: str, platform: str = "") -> float:
+    platform_key = _PLATFORM_COOLDOWN_OVERRIDES.get(platform, {}).get(code)
+    if platform_key:
+        base = _COOLDOWN_CONFIG.get(code, ("", 0.0))[1]
+        try:
+            return float(getattr(config, platform_key, base))
+        except (TypeError, ValueError):
+            return base
     key, default = _COOLDOWN_CONFIG.get(code, ("", 0.0))
     if not key:
         return 0.0
@@ -321,7 +351,11 @@ class CooldownStore:
     def record(self, platform: str, failure: CrawlFailure, *, cooldown_seconds: Optional[float] = None) -> Optional[dict]:
         if not platform:
             return None
-        cooldown = float(cooldown_seconds) if cooldown_seconds is not None else _cooldown_seconds(failure.code)
+        cooldown = (
+            float(cooldown_seconds)
+            if cooldown_seconds is not None
+            else _cooldown_seconds(failure.code, platform)
+        )
         if cooldown <= 0:
             self.clear(platform)
             return None
