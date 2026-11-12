@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from proxy.proxy_ip_pool import ProxyIpPool
 
 from .exception import (
+    BLOCKING_EXCEPTIONS,
     CaptchaError,
     DataFetchError,
     IPBlockError,
@@ -577,6 +578,10 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                             await callback(note_id, comments)
                         await self._pacer.sleep("after sub-comment page")
                         result.extend(comments)
+                    except BLOCKING_EXCEPTIONS:
+                        # 账号已经被拦了：继续翻下一条评论的楼中楼等于接着撞，
+                        # 必须让异常穿出去，由 main.py 写冷却并停手。
+                        raise
                     except DataFetchError as e:
                         utils.logger.warning(
                             f"[XiaoHongShuClient.get_comments_all_sub_comments] Failed to get sub-comments for note_id: {note_id}, root_comment_id: {root_comment_id}, error: {e}. Skipping this comment's sub-comments."
@@ -587,6 +592,9 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                             f"[XiaoHongShuClient.get_comments_all_sub_comments] Unexpected error when getting sub-comments for note_id: {note_id}, root_comment_id: {root_comment_id}, error: {e}"
                         )
                         break
+            except BLOCKING_EXCEPTIONS:
+                # 同上：单条评论的失败可以跳过，平台级拦截不行。
+                raise
             except Exception as e:
                 utils.logger.error(
                     f"[XiaoHongShuClient.get_comments_all_sub_comments] Error processing comment: {comment.get('id', 'unknown')}, error: {e}. Continuing with next comment."

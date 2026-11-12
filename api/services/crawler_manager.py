@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
+from tools.browser_profile import crawl_profile_env
 from tools.crawl_pacing import (
     BLOCKED_EXIT_CODE,
     ERROR_HINTS,
@@ -174,6 +175,9 @@ class CrawlerManager:
                         # Web UI always auto-launches its own Chrome; do NOT make the
                         # crawler subprocess wait for a manually-opened browser on 9222.
                         "CDP_CONNECT_EXISTING": "0",
+                        # 采集档（独立档案 + 独立端口）：开启后这次采集不会碰发送侧的
+                        # 浏览器档案，也不会把正在登录/发送的主档浏览器当残留杀掉。
+                        **crawl_profile_env(),
                     }
                 )
 

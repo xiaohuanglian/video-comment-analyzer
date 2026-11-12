@@ -25,7 +25,7 @@ import config
 from base.base_crawler import AbstractCrawler
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import bilibili as bilibili_store
-from tools import utils
+from tools import browser_profile, utils
 from tools.cdp_browser import CDPBrowserManager
 from tools.crawler_util import get_working_page
 from var import crawler_type_var, source_keyword_var
@@ -657,7 +657,7 @@ class BilibiliCrawler(AbstractCrawler):
         if config.SAVE_LOGIN_STATE:
             # feat issue #14
             # we will save login state to avoid login every time
-            user_data_dir = os.path.join(os.getcwd(), "browser_data", config.USER_DATA_DIR % config.PLATFORM)  # type: ignore
+            user_data_dir = browser_profile.resolve_user_data_dir()
             launch_args = ["--disable-breakpad"]
             if platform.system() != "Darwin":
                 launch_args.append("--no-sandbox")

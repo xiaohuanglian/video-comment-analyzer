@@ -9,7 +9,7 @@ import httpx
 from playwright.async_api import Browser, BrowserContext, Playwright
 
 import config
-from tools import utils
+from tools import browser_profile, utils
 from tools.browser_launcher import BrowserLauncher
 
 
@@ -103,7 +103,7 @@ class CDPBrowserManager:
                 self.launcher.clear_stale_profile_locks(user_data_dir)
 
             # 3. Get available port (after cleanup, so 9222 is reusable)
-            self.debug_port = self.launcher.find_available_port(config.CDP_DEBUG_PORT)
+            self.debug_port = self.launcher.find_available_port(browser_profile.crawl_debug_port())
 
             # 4. Launch browser
             await self._launch_browser(browser_path, headless, user_data_dir)
@@ -138,7 +138,7 @@ class CDPBrowserManager:
         User needs to enable remote debugging via chrome://inspect/#remote-debugging
         or launch Chrome with --remote-debugging-port flag.
         """
-        self.debug_port = config.CDP_DEBUG_PORT
+        self.debug_port = browser_profile.crawl_debug_port()
         utils.logger.info(
             f"[CDPBrowserManager] Connecting to existing browser on port {self.debug_port}..."
         )
@@ -238,16 +238,15 @@ class CDPBrowserManager:
             return False
 
     def _resolve_user_data_dir(self) -> Optional[str]:
-        """Persistent profile directory, shared by cleanup and launch."""
+        """Persistent profile directory, shared by cleanup and launch.
+
+        统一走 `tools.browser_profile`——采集档（CRAWL_PROFILE_SUFFIX）与主档就是在这里分开的。
+        """
         if not config.SAVE_LOGIN_STATE:
             return None
-        user_data_dir = os.path.join(
-            os.getcwd(),
-            "browser_data",
-            f"cdp_{config.USER_DATA_DIR % config.PLATFORM}",
-        )
-        os.makedirs(user_data_dir, exist_ok=True)
-        utils.logger.info(f"[CDPBrowserManager] User data directory: {user_data_dir}")
+        user_data_dir = browser_profile.resolve_user_data_dir()
+        if user_data_dir:
+            utils.logger.info(f"[CDPBrowserManager] User data directory: {user_data_dir}")
         return user_data_dir
 
     async def _launch_browser(self, browser_path: str, headless: bool, user_data_dir: Optional[str] = None):

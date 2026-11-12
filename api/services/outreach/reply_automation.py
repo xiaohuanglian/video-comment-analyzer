@@ -1590,12 +1590,35 @@ async def screen_collected(
         store.save()
 
 
+def _crawl_profile_env() -> dict[str, str]:
+    """采集档（独立浏览器档案）的环境变量；未启用时返回空 dict。
+
+    启用条件：`CRAWL_PROFILE_SUFFIX` 非空（见 `tools/browser_profile.py` 的说明）。
+    """
+    from tools.browser_profile import crawl_profile_env
+
+    return crawl_profile_env()
+
+
 def _collect_env(platform: str, xhs_cookie: str = "") -> dict[str, str]:
-    """采集子进程环境。bili：自开浏览器(qrcode)；xhs/dy：必须连已开的 9222 登录浏览器——
+    """采集子进程环境。
+
+    默认（未启用采集档）：bili 自开浏览器(qrcode)；xhs/dy 连已开的 9222 登录浏览器——
     若让子进程另开浏览器会抢同一 cdp 档案目录，kill_stale_browsers 还会把正在运行的
     登录浏览器当残留杀掉，发送通道随之失效。dy 的 client 直接从浏览器上下文取
-    cookie，无需 VC_CRAWLER_COOKIES 注入。"""
+    cookie，无需 VC_CRAWLER_COOKIES 注入。
+
+    启用采集档（CRAWL_PROFILE_SUFFIX）后：采集一律自己开浏览器用独立档案 + 独立端口，
+    也不再借用发送侧的 Cookie——那正是「读侧拖垮写侧」的技术根因。代价是采集档要单独
+    登录一次（登录态存在它自己的 profile 里）。
+    """
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    profile_env = _crawl_profile_env()
+    if profile_env:
+        env.update(profile_env)
+        env["CDP_CONNECT_EXISTING"] = "0"
+        env.pop("VC_CRAWLER_COOKIES", None)
+        return env
     env["CDP_CONNECT_EXISTING"] = "0" if platform == "bili" else "1"
     if platform == "xhs" and xhs_cookie:
         env["VC_CRAWLER_COOKIES"] = xhs_cookie
@@ -1617,7 +1640,11 @@ async def run_cycle(store: AutomationStore, mode_override: str = "") -> dict[str
         if mode_override in ("list", "search"):
             cmd_config["collect_mode"] = mode_override
         cmd = build_collect_command(cmd_config, store.platform)
-        xhs_cookie = await _xhs_crawl_cookie() if store.platform == "xhs" else ""
+        # 启用采集档时不向发送侧借 Cookie：那会把「读侧撞风控」直接传导到写侧，
+        # 采集档用自己的档案登录（登录一次，之后存在它自己的 profile 里）。
+        xhs_cookie = ""
+        if store.platform == "xhs" and not _crawl_profile_env():
+            xhs_cookie = await _xhs_crawl_cookie()
         env = _collect_env(store.platform, xhs_cookie)
         proc = await asyncio.create_subprocess_exec(
             *cmd,

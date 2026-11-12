@@ -18,7 +18,7 @@ from base.base_crawler import AbstractCrawler
 from model.m_kuaishou import VideoUrlInfo, CreatorUrlInfo
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import kuaishou as kuaishou_store
-from tools import utils
+from tools import browser_profile, utils
 from tools.cdp_browser import CDPBrowserManager
 from var import comment_tasks_var, crawler_type_var, source_keyword_var
 
@@ -318,9 +318,7 @@ class KuaishouCrawler(AbstractCrawler):
             "[KuaishouCrawler.launch_browser] Begin create browser context ..."
         )
         if config.SAVE_LOGIN_STATE:
-            user_data_dir = os.path.join(
-                os.getcwd(), "browser_data", config.USER_DATA_DIR % config.PLATFORM
-            )  # type: ignore
+            user_data_dir = browser_profile.resolve_user_data_dir()  # type: ignore
             browser_context = await chromium.launch_persistent_context(
                 user_data_dir=user_data_dir,
                 accept_downloads=True,

@@ -33,7 +33,7 @@ from tools.crawl_pacing import (
     clear_stale_cooldown,
     ensure_platform_available,
 )
-from tools.xhs_safety import SearchBudgetExceeded
+from tools.xhs_safety import SearchBudgetExceeded, ensure_not_quiet_hours
 from var import crawler_type_var
 
 
@@ -103,6 +103,15 @@ async def main() -> None:
         # 平台还在冷却里：直接告诉用户要等多久，不启动浏览器、不发请求
         print(f"[CrawlGuard] {blocked.failure.to_text()}")
         raise SystemExit(BLOCKED_EXIT_CODE) from None
+
+    if platform == "xhs":
+        # 夜间静默：真人要睡觉。凌晨三点搜六个不相关话题是最明显的机器人特征。
+        # 放在启动浏览器之前拒绝，一个请求都不发。
+        try:
+            ensure_not_quiet_hours()
+        except SearchBudgetExceeded as quiet:
+            print(f"[XhsQuiet] {quiet}")
+            raise SystemExit(BLOCKED_EXIT_CODE) from None
 
     crawler = CrawlerFactory.create_crawler(platform=platform)
     started_at = time.time()

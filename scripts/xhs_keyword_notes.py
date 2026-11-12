@@ -62,6 +62,7 @@ from tools.crawl_pacing import (  # noqa: E402
 from tools.xhs_safety import (  # noqa: E402
     SearchBudgetExceeded,
     ensure_batch_allowed,
+    ensure_not_quiet_hours,
     plan_keywords,
     search_budget,
 )
@@ -213,6 +214,7 @@ async def collect(
         )
     # 批前拒绝：今日额度不够就在发第一个请求之前拒绝，而不是跑到一半才砍。
     # （2026-11-11 就是打到第 10 个词才发现被拦，前面 9 次请求等于白送。）
+    ensure_not_quiet_hours()
     ensure_batch_allowed(len(keywords))
 
     from playwright.async_api import async_playwright

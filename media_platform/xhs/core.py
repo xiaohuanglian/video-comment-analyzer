@@ -18,14 +18,25 @@ from base.base_crawler import AbstractCrawler
 from model.m_xiaohongshu import CreatorUrlInfo, NoteUrlInfo
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import xhs as xhs_store
-from tools import utils
+from tools import browser_profile, utils
 from tools.cdp_browser import CDPBrowserManager
 from tools.crawl_pacing import compute_crawl_interval
-from tools.xhs_safety import ensure_batch_allowed, plan_keywords, search_budget
+from tools.xhs_safety import (
+    ensure_batch_allowed,
+    ensure_not_quiet_hours,
+    plan_keywords,
+    search_budget,
+)
 from var import crawler_type_var, source_keyword_var
 
 from .client import XiaoHongShuClient
-from .exception import CaptchaError, DataFetchError, NoteNotFoundError, PlatformAccessError
+from .exception import (
+    BLOCKING_EXCEPTIONS,
+    CaptchaError,
+    DataFetchError,
+    NoteNotFoundError,
+    PlatformAccessError,
+)
 from .field import SearchSortType
 from .fingerprint import BrowserFingerprint, read_browser_fingerprint
 from .help import get_search_id, parse_creator_info_from_url, parse_note_info_from_note_url
@@ -156,6 +167,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 f"[XiaoHongShuCrawler.search] 本次只搜 {len(_keywords)} 个词"
                 f"（单批上限），其余 {len(_deferred)} 个下次轮转：{_deferred}"
             )
+        ensure_not_quiet_hours()
         ensure_batch_allowed(len(_keywords))
         # 撞到验证码就整批停：继续换关键词只会拿同一个已被标记的账号反复试探。
         # 注意**不能把异常吞掉**——吞掉后 start() 正常返回，main.py 会走
@@ -359,6 +371,11 @@ class XiaoHongShuCrawler(AbstractCrawler):
             except NoteNotFoundError as ex:
                 utils.logger.warning(f"[XiaoHongShuCrawler.get_note_detail_async_task] Note not found: {note_id}, {ex}")
                 return None
+            except BLOCKING_EXCEPTIONS:
+                # 账号级拦截（验证码 / 平台拒绝 / IP 封）必须往上穿：
+                # 在这里 return None 等于「这一篇跳过，接着打下一篇」，
+                # 正是被风控时的错误反应。detail 模式此前就吞在这儿。
+                raise
             except DataFetchError as ex:
                 utils.logger.error(f"[XiaoHongShuCrawler.get_note_detail_async_task] Get note detail error: {ex}")
                 return None
@@ -455,7 +472,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         if config.SAVE_LOGIN_STATE:
             # feat issue #14
             # we will save login state to avoid login every time
-            user_data_dir = os.path.join(os.getcwd(), "browser_data", config.USER_DATA_DIR % config.PLATFORM)  # type: ignore
+            user_data_dir = browser_profile.resolve_user_data_dir()
             browser_context = await chromium.launch_persistent_context(
                 user_data_dir=user_data_dir,
                 accept_downloads=True,

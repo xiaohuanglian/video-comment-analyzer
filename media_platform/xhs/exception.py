@@ -34,3 +34,15 @@ class PlatformAccessError(DataFetchError):
     不是 IP 问题（那是 300012 ``IPBlockError``）。账号级限制换 IP、换 UA 都没用，
     唯一正确的反应是停手，等人工去官方页面处理。
     """
+
+
+#: 「必须立刻停手」的异常：账号级拦截，重试/换词/换页都没用。
+#: 各处的 ``except DataFetchError`` 必须先让它们穿过去，否则会出现
+#: 「日志里记了一条 error，然后继续乖乖把剩下的词/笔记全打完」——正是
+#: 2026-11-11 那次事故的行为。
+BLOCKING_EXCEPTIONS = (CaptchaError, PlatformAccessError, IPBlockError)
+
+
+def is_blocking(exc: BaseException) -> bool:
+    """这个异常是不是「平台已经拦你了，别再试」那一类。"""
+    return isinstance(exc, BLOCKING_EXCEPTIONS)

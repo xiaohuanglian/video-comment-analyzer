@@ -9,6 +9,21 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_str(name: str, default: str) -> str:
+    raw = _os.environ.get(name)
+    return default if raw is None else raw.strip()
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = _os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        return default
+
+
 PLATFORM = "dy"  # Platform, xhs | dy | ks | bili | wb | tieba | zhihu
 
 # 是否使用海外版小红书 (rednote.com)
@@ -59,6 +74,17 @@ DISABLE_CDP_FALLBACK = _env_bool("DISABLE_CDP_FALLBACK", DISABLE_CDP_FALLBACK)
 # CDP 调试端口，用于与浏览器通信
 # 如果端口被占用，系统会自动尝试下一个可用端口
 CDP_DEBUG_PORT = 9222
+
+# ==================== 采集档 / 发送档分离（2026-11-12） ====================
+# 采集（读侧）与发送（写侧）默认共用同一个浏览器档案：读侧撞一次风控，写侧跟着废掉。
+# 设 CRAWL_PROFILE_SUFFIX=_collect 可让**采集进程**用独立档案 + 独立端口，
+# 主档（发送侧，连 CDP_DEBUG_PORT）不受影响。默认关闭——只有确实另有一个账号时才有意义，
+# 同一账号开两个档案反而像两台设备轮流登录。
+# 解析逻辑见 tools/browser_profile.py。
+CRAWL_PROFILE_SUFFIX = _env_str("CRAWL_PROFILE_SUFFIX", "")
+
+# 采集进程用的调试端口；0 表示沿用 CDP_DEBUG_PORT
+CRAWL_DEBUG_PORT = _env_int("CRAWL_DEBUG_PORT", 0)
 
 # 自定义浏览器路径（可选）
 # 如果为空，系统会自动检测 Chrome/Edge 的安装路径

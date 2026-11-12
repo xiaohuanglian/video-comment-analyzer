@@ -47,6 +47,14 @@ class SearchBudgetExceeded(RuntimeError):
         super().__init__(message)
 
 
+class QuietHoursActive(SearchBudgetExceeded):
+    """现在是夜里，采集不该开工。
+
+    单列一个子类只为让上层能说人话（「现在是夜间静默时段」而不是「额度不够」）；
+    调用方 ``except SearchBudgetExceeded`` 依然能统一接住。
+    """
+
+
 def _project_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
@@ -216,3 +224,84 @@ def _seconds_until_tomorrow() -> float:
         )
     )
     return max(0.0, tomorrow - time.time())
+
+
+# ---------------------------------------------------------------------------
+# 夜间静默
+# ---------------------------------------------------------------------------
+
+
+def quiet_hours() -> Tuple[int, int]:
+    """返回 ``(开始小时, 结束小时)``，读配置，默认 01:00–06:00。"""
+    start = int(getattr(config, "XHS_QUIET_HOURS_START", 1)) % 24
+    end = int(getattr(config, "XHS_QUIET_HOURS_END", 6)) % 24
+    return start, end
+
+
+def in_quiet_hours(now: Optional[float] = None) -> bool:
+    """现在是不是夜间静默时段。
+
+    用「真人要睡觉」这条最朴素的拟人化：凌晨三点爬起来搜六个不相关话题的
+    账号，和白天通勤时顺手搜一下的账号，风险不是一个量级。间隔、预算都治
+    不了「作息」这一个维度。
+
+    支持跨零点（``23 → 7``）。起止相同视为不启用。
+    """
+    start, end = quiet_hours()
+    if start == end:
+        return False
+    stamp = time.localtime(now if now is not None else time.time())
+    hour = stamp.tm_hour
+    if start < end:
+        return start <= hour < end
+    return hour >= start or hour < end
+
+
+def seconds_until_quiet_end(now: Optional[float] = None) -> float:
+    """距离静默结束还有多少秒（用于告诉人「几小时后可以来」）。"""
+    start, end = quiet_hours()
+    if start == end:
+        return 0.0
+    current = now if now is not None else time.time()
+    stamp = time.localtime(current)
+    target = time.mktime(
+        (stamp.tm_year, stamp.tm_mon, stamp.tm_mday, end, 0, 0, 0, 0, -1)
+    )
+    if target <= current:
+        target += 86400
+    return max(0.0, target - current)
+
+
+def ensure_not_quiet_hours(now: Optional[float] = None) -> None:
+    """夜间开工前硬拦；白天什么都不做。
+
+    放在批前检查里而不是 ``ensure_batch_allowed`` 里，是为了让额度相关的测试
+    与运行时刻无关：额度是确定性的，作息不是。两个入口各自显式调用它。
+    """
+    if not in_quiet_hours(now):
+        return
+    start, end = quiet_hours()
+    wait = seconds_until_quiet_end(now)
+    raise QuietHoursActive(
+        f"现在是夜间静默时段（{start:02d}:00–{end:02d}:00），采集不在这时开工。"
+        f"真人不会凌晨三点爬起来搜六个不相关的话题——这正是最容易被判定为机器人的行为。"
+        f"约 {format_seconds(wait)}后（{end:02d}:00）再来。",
+        retry_after_seconds=wait,
+    )
+
+
+def format_seconds(seconds: float) -> str:
+    """把秒数说成人话：``3 小时 12 分``。"""
+    try:
+        total = int(max(0, round(float(seconds))))
+    except (TypeError, ValueError):
+        return "0 分钟"
+    hours, rem = divmod(total, 3600)
+    minutes = rem // 60
+    if hours and minutes:
+        return f"{hours} 小时 {minutes} 分"
+    if hours:
+        return f"{hours} 小时"
+    if minutes:
+        return f"{minutes} 分钟"
+    return f"{total} 秒"
