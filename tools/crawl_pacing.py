@@ -132,6 +132,9 @@ _PLATFORM_PACING: Dict[str, Tuple[str, str]] = {
     "bili": ("BILI_CRAWL_SLEEP_SEC", "BILI_CRAWL_SLEEP_JITTER_SEC"),
     "xhs": ("XHS_CRAWL_SLEEP_SEC", "XHS_CRAWL_SLEEP_JITTER_SEC"),
     "dy": ("DY_CRAWL_SLEEP_SEC", "DY_CRAWL_SLEEP_JITTER_SEC"),
+    # 知乎：接入前是「每请求固定 sleep 3s + 无冷却 + 无并发槽」，403 也不记账。
+    # 它的风控比 B 站敏感、比小红书温和，取 8s + 0–4s 抖动。
+    "zhihu": ("ZHIHU_CRAWL_SLEEP_SEC", "ZHIHU_CRAWL_SLEEP_JITTER_SEC"),
 }
 
 #: 按「接口类型」再分一档：``(平台, 类型) -> (base 键, jitter 键)``。

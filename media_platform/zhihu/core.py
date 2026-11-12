@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import asyncio
 import os
-# import random  # Removed as we now use fixed config.CRAWLER_MAX_SLEEP_SEC intervals
+import random
 from asyncio import Task
 from typing import Dict, List, Optional, Tuple, cast
 
@@ -21,10 +21,17 @@ from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import zhihu as zhihu_store
 from tools import browser_profile, utils
 from tools.cdp_browser import CDPBrowserManager
+from tools.crawl_pacing import (
+    CrawlFailure,
+    classify_failure,
+    compute_crawl_interval,
+    ensure_platform_available,
+    record_platform_failure,
+)
 from var import crawler_type_var, source_keyword_var
 
 from .client import ZhiHuClient
-from .exception import DataFetchError
+from .exception import DataFetchError, ForbiddenError
 from .help import ZhihuExtractor, judge_zhihu_url
 from .login import ZhiHuLogin
 
@@ -50,6 +57,9 @@ class ZhihuCrawler(AbstractCrawler):
         Returns:
 
         """
+        # 平台冷却中直接抛 CrawlBlocked（CLI 退出码 3 / 接口 409）
+        ensure_platform_available("zhihu")
+
         playwright_proxy_format, httpx_proxy_format = None, None
         if config.ENABLE_IP_PROXY:
             self.ip_proxy_pool = await create_ip_pool(
@@ -113,19 +123,51 @@ class ZhihuCrawler(AbstractCrawler):
             )
 
             crawler_type_var.set(config.CRAWLER_TYPE)
-            if config.CRAWLER_TYPE == "search":
-                # Search for notes and retrieve their comment information.
-                await self.search()
-            elif config.CRAWLER_TYPE == "detail":
-                # Get the information and comments of the specified post
-                await self.get_specified_notes()
-            elif config.CRAWLER_TYPE == "creator":
-                # Get creator's information and their notes and comments
-                await self.get_creators_and_notes()
-            else:
-                pass
+            try:
+                if config.CRAWLER_TYPE == "search":
+                    # Search for notes and retrieve their comment information.
+                    await self.search()
+                elif config.CRAWLER_TYPE == "detail":
+                    # Get the information and comments of the specified post
+                    await self.get_specified_notes()
+                elif config.CRAWLER_TYPE == "creator":
+                    # Get creator's information and their notes and comments
+                    await self.get_creators_and_notes()
+                else:
+                    pass
+            except ForbiddenError as exc:
+                # 403 = 被拦。知乎原来只抛异常不记账，下一轮照样打——这里要落冷却。
+                record_platform_failure(
+                    "zhihu",
+                    CrawlFailure(
+                        code="PLATFORM_BLOCKED",
+                        message=f"知乎返回 403：{str(exc)[:200]}",
+                        platform="zhihu",
+                    ),
+                )
+                raise
+            except Exception as exc:  # noqa: BLE001 — 记账后原样抛出，不改调用方行为
+                failure = classify_failure(exc, platform="zhihu")
+                if failure.code in {"RATE_LIMITED", "PLATFORM_BLOCKED", "NEED_LOGIN"}:
+                    record_platform_failure("zhihu", failure)
+                raise
 
             utils.logger.info("[ZhihuCrawler.start] Zhihu Crawler finished ...")
+
+    async def _pace_sleep(self) -> None:
+        """平台级节奏：知乎默认 8s + 0–4s 抖动（见 config/zhihu_config.py）。
+
+        原来是固定 ``config.CRAWLER_MAX_SLEEP_SEC``（3s），等于拿 B 站的标准去打知乎，
+        而且完全不抖动——机器节奏比人更像机器。
+        """
+        base, jitter = compute_crawl_interval("zhihu")
+        await asyncio.sleep(base + random.uniform(0, jitter))
+
+    @staticmethod
+    def _pace_interval() -> float:
+        """给 client 内部逐页 sleep 用的间隔（取 base + 抖动中位）。"""
+        base, jitter = compute_crawl_interval("zhihu")
+        return base + jitter / 2
 
     async def search(self) -> None:
         """Search for notes and retrieve their comment information."""
@@ -166,7 +208,7 @@ class ZhihuCrawler(AbstractCrawler):
                         break
 
                     # Sleep after page navigation
-                    await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                    await self._pace_sleep()
                     utils.logger.info(f"[ZhihuCrawler.search] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
 
                     page += 1
@@ -220,12 +262,12 @@ class ZhihuCrawler(AbstractCrawler):
             )
 
             # Sleep before fetching comments
-            await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+            await self._pace_sleep()
             utils.logger.info(f"[ZhihuCrawler.get_comments] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds before fetching comments for content {content_item.content_id}")
 
             await self.zhihu_client.get_note_all_comments(
                 content=content_item,
-                crawl_interval=config.CRAWLER_MAX_SLEEP_SEC,
+                crawl_interval=self._pace_interval(),
                 callback=zhihu_store.batch_update_zhihu_note_comments,
             )
 
@@ -263,21 +305,21 @@ class ZhihuCrawler(AbstractCrawler):
             # Get all anwser information of the creator
             all_content_list = await self.zhihu_client.get_all_anwser_by_creator(
                 creator=createor_info,
-                crawl_interval=config.CRAWLER_MAX_SLEEP_SEC,
+                crawl_interval=self._pace_interval(),
                 callback=zhihu_store.batch_update_zhihu_contents,
             )
 
             # Get all articles of the creator's contents
             # all_content_list = await self.zhihu_client.get_all_articles_by_creator(
             #     creator=createor_info,
-            #     crawl_interval=config.CRAWLER_MAX_SLEEP_SEC,
+            #     crawl_interval=self._pace_interval(),
             #     callback=zhihu_store.batch_update_zhihu_contents
             # )
 
             # Get all videos of the creator's contents
             # all_content_list = await self.zhihu_client.get_all_videos_by_creator(
             #     creator=createor_info,
-            #     crawl_interval=config.CRAWLER_MAX_SLEEP_SEC,
+            #     crawl_interval=self._pace_interval(),
             #     callback=zhihu_store.batch_update_zhihu_contents
             # )
 
@@ -311,7 +353,7 @@ class ZhihuCrawler(AbstractCrawler):
                 result = await self.zhihu_client.get_answer_info(question_id, answer_id)
 
                 # Sleep after fetching answer details
-                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                await self._pace_sleep()
                 utils.logger.info(f"[ZhihuCrawler.get_note_detail] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching answer details {answer_id}")
 
                 return result
@@ -324,7 +366,7 @@ class ZhihuCrawler(AbstractCrawler):
                 result = await self.zhihu_client.get_article_info(article_id)
 
                 # Sleep after fetching article details
-                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                await self._pace_sleep()
                 utils.logger.info(f"[ZhihuCrawler.get_note_detail] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching article details {article_id}")
 
                 return result
@@ -337,7 +379,7 @@ class ZhihuCrawler(AbstractCrawler):
                 result = await self.zhihu_client.get_video_info(video_id)
 
                 # Sleep after fetching video details
-                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
+                await self._pace_sleep()
                 utils.logger.info(f"[ZhihuCrawler.get_note_detail] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching video details {video_id}")
 
                 return result
