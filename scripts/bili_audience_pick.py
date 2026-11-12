@@ -13,9 +13,13 @@
 
 ## 三类关键词（对应三类「可能坐着我们用户」的视频）
 
-1. `pain`  痛点自述：戒短视频 / 刷手机焦虑 / 信息过载 / 注意力涣散 / 错过热点
-2. `scene` 场景需求：通勤路上 / 早八 / 开车上班 / 做家务 / 睡前听
-3. `alt`   替代方案：播客推荐 / 听新闻 / AI日报 / 新闻速递（已有产品的人在骂或用）
+1. `audio` 音频替代品：播客推荐 / 播客App / 听书推荐 / 音频软件
+2. `brief` 短资讯产品：新闻早报 / 一分钟新闻 / AI播报 / 新闻简报
+3. `voice` 语音问答：AI语音助手 / 语音对话AI / AI问答 / 智能音箱
+4. `habit` 信息获取方式：高效获取信息 / 信息差 / 行业资讯 / 每天看新闻
+
+**不含泛痛点词**（戒手机/注意力/信息过载）——那类大盘的评论者是在陈述自己的问题，
+不是在找一个「每天几分钟听完资讯」的入口；用它选片会把样本带偏到"注意力困难人群"。
 
 ## 输出（`data/bili_audience/<时间戳>/`）
 
@@ -67,30 +71,63 @@ _USER_AGENT = (
     "(KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
 )
 
-#: 三族关键词。都是「人会说出口的话」，不是品类名词——品类名词招来围观者，
-#: 这些词招来的是正在被这个问题困扰的人。
-KEYWORD_FAMILIES: Dict[str, List[str]] = {
-    "pain": ["戒短视频", "刷手机焦虑", "信息过载", "注意力涣散", "错过热点"],
-    "scene": ["通勤路上", "早八", "开车上班", "做家务", "睡前听"],
-    "alt": ["播客推荐", "听新闻", "AI日报", "新闻速递"],
+#: 关键词族与需求语言按 preset 切换：
+#: - `tool`   ：资讯/新闻类**工具**的测评与吐槽。评论区才会出现"哪个好用/能推送吗/会员多少钱/
+#:              我卸了"，也就是真的在产品层面比较的人（本轮采用）
+#: - `product`：音频/短资讯/AI 助手这类产品内容（上一轮跑过，评论区多聊内容本身，命中率低）
+PRESETS: Dict[str, Dict[str, Any]] = {
+    "tool": {
+        "keywords": {
+            "newsapp": ["新闻App", "资讯App", "新闻聚合", "早报App"],
+            "tool": ["RSS订阅", "资讯订阅", "稍后读", "信息管理工具"],
+            "voiceapp": ["语音助手App", "AI简报", "AI播报App", "听新闻App"],
+        },
+        "need": {
+            "产品评价": (
+                r"(好用|难用|卸载|广告|会员|推送|多端|同步|锁屏|离线|占用|卡顿|界面|体验|"
+                r"在哪下|怎么下|支持|功能|免费|收费|付费|替代|换掉|弃用|不更新)"
+            ),
+            "场景": r"(通勤|上下班|路上|开车|地铁|公交|骑车|做家务|洗碗|做饭|睡前|洗漱|散步|走路)",
+            "形式偏好": (
+                r"(几分钟|一分钟|三分钟|5分钟|五分钟|十分钟|太长|太吵|倍速|语速|短一点|短点|"
+                r"不要看|不用看|只听|光听|连续播放|自动播放|自动更新|背景音)"
+            ),
+        },
+    },
+    "product": {
+        "keywords": {
+            "audio": ["播客推荐", "播客App", "听书推荐", "音频软件"],
+            "brief": ["新闻早报", "一分钟新闻", "AI播报", "新闻简报"],
+            "voice": ["AI语音助手", "语音对话AI", "AI问答", "智能音箱"],
+            "habit": ["高效获取信息", "信息差", "行业资讯", "每天看新闻"],
+        },
+        "need": {
+            "求产品": (
+                r"((求|想|有没有|推荐|哪个|什么|在哪|用啥|用什么).{0,8}"
+                r"(app|软件|播客|栏目|频道|节目|工具|小程序|平台|网站))"
+            ),
+            "场景": r"(通勤|上下班|路上|开车|地铁|公交|骑车|做家务|洗碗|做饭|睡前|洗漱|散步|走路)",
+            "形式偏好": (
+                r"(几分钟|一分钟|三分钟|5分钟|五分钟|十分钟|太长|太吵|倍速|语速|"
+                r"短一点|短点|不要看|不用看|只听|光听|连续播放|自动播放|自动更新|背景音)"
+            ),
+            "付费获取": r"(多少钱|免费|会员|在哪下|怎么下|求链接|求个链接)",
+        },
+    },
 }
 
-#: 需求语言（判定「这个评论区有我们的人」）。刻意避开单独一个「听」字——
-#: 「好听/听哭了/听懂了」这类和需求无关，会把所有评论区都判成命中。
-_NEED_GROUPS: Dict[str, str] = {
-    "场景": r"(通勤|上下班|路上|地铁|公交|开车|骑车|走路|做家务|洗碗|做饭|睡前|上床|排队|通勤党)",
-    "痛点": (
-        r"(戒(了|掉|短视频|手机)|刷手机|短视频.{0,8}(上瘾|停不下|浪费时间)|信息过载|"
-        r"注意力.{0,4}(差|涣散|不集中)|碎片(时间|化)|没时间(看|读|追)|怕(错过|落后)|"
-        r"跟不上|记不住|看不下去|刷到凌晨|无意识刷)"
-    ),
-    "替代": (
-        r"((求|想|有没有|推荐|找).{0,8}(听|播客|节目|栏目|音频|频道))|"
-        r"((听到|听完|用听|改听).{0,6}(新闻|播报|日报|资讯))|"
-        r"(太长|太吵|语速|倍速|缩短|几分钟|在哪听|用什么听|听不下去)"
-    ),
-}
-_NEED_RE = re.compile("|".join(f"(?P<g{i}>{p})" for i, p in enumerate(_NEED_GROUPS.values())))
+_NEED_GROUPS: Dict[str, str] = {}
+_NEED_RE = re.compile(r"$^")  # 空正则，_use_preset 之后才有内容
+
+
+def _use_preset(name: str) -> Dict[str, List[str]]:
+    """切换 preset：返回关键词族，并把需求语言写进模块级供 _hit_groups 使用。"""
+    global _NEED_GROUPS, _NEED_RE
+    preset = PRESETS[name]
+    _NEED_GROUPS = dict(preset["need"])
+    _NEED_RE = re.compile("|".join(f"(?P<g{i}>{p})" for i, p in enumerate(_NEED_GROUPS.values())))
+    return {k: list(v) for k, v in preset["keywords"].items()}
+
 
 #: 明显跑题的标题（音乐/游戏/鬼畜），探针前就丢掉，省请求
 _DROP_TITLE = ("minecraft", "我的世界", "歌单", "bgm", "鬼畜", "游戏实况", "直播回放")
@@ -102,8 +139,11 @@ def _clean_title(raw: Any) -> str:
 
 def _hit_groups(text: str) -> List[str]:
     names = list(_NEED_GROUPS.keys())
+    if not names:
+        return []
     out = set()
-    for m in _NEED_RE.finditer(text or ""):
+    # 评论里 App/APP/app 混着写，正则用小写，这里统一降成小写再匹配
+    for m in _NEED_RE.finditer((text or "").lower()):
         for i, name in enumerate(names):
             if m.group(f"g{i}"):
                 out.add(name)
@@ -391,7 +431,13 @@ async def run(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="B 站「用户在哪里」选片：探针判定评论区是否坐着我们的用户")
-    parser.add_argument("--extra-keyword", action="append", default=[], help="额外关键词（可多次，归入 alt 族）")
+    parser.add_argument(
+        "--preset",
+        choices=sorted(PRESETS),
+        default="tool",
+        help="关键词族组合：tool=资讯工具测评（默认）/ product=音频与短资讯产品",
+    )
+    parser.add_argument("--extra-keyword", action="append", default=[], help="额外关键词（可多次，归入第一族）")
     parser.add_argument("--per-family-hot", type=int, default=3, help="每族取几个高赞（默认 3）")
     parser.add_argument("--per-family-recent", type=int, default=3, help="每族取几个最近（默认 3）")
     parser.add_argument("--recent-min-play", type=int, default=20000, help="最近组播放门槛（默认 2 万）")
@@ -402,9 +448,10 @@ def main() -> None:
     parser.add_argument("--out", type=str, default="", help="输出目录（默认 data/bili_audience/<时间戳>）")
     args = parser.parse_args()
 
-    keywords = {k: list(v) for k, v in KEYWORD_FAMILIES.items()}
+    keywords = _use_preset(args.preset)
     if args.extra_keyword:
-        keywords["alt"] = keywords["alt"] + list(args.extra_keyword)
+        first = next(iter(keywords))
+        keywords[first] = keywords[first] + list(args.extra_keyword)
 
     out_dir = Path(args.out) if args.out else Path("data") / "bili_audience" / time.strftime("%Y%m%d_%H%M%S")
     result = asyncio.run(

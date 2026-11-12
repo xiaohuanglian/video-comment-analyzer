@@ -8,14 +8,15 @@
 四个检查项，任何一项没过都会打印出来并让退出码为 1：
 
 1. ``check_reply_style`` 硬禁令（破折号/提示性冒号/翻案腔/黑话/结尾反问…）
-2. 长度 ≤ ``MAX_CHARS``（默认 60，对应真实评论 p97 附近）
+2. 长度 ≤ ``MAX_CHARS``（默认 260，**只是糊弄不过去的兜底，不是发布标准** ——
+   官方号回复本来就比普通评论长，真实评论 p99 是 164 字，260 是「明显失控」的线）
 3. ``assess_content`` 无 high 风险项（绝对化用语/导流/医疗金融越界）
 4. 档案 ``forbidden`` 里的效果承诺词（弱承诺句式，见 README 说明）
 
 用法：
     uv run python scripts/zaobo_talk_check.py
     uv run python scripts/zaobo_talk_check.py --text "随手写的一条"
-    uv run python scripts/zaobo_talk_check.py --max-chars 80
+    uv run python scripts/zaobo_talk_check.py --max-chars 300
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ from api.services.outreach.reply_style import check_reply_style  # noqa: E402
 DOC = ROOT / "docs/早播/评论区话术库_2026-11-12.md"
 PROFILES = ROOT / "data/project_profiles.json"
 
-MAX_CHARS = 60
+MAX_CHARS = 260
 PROFILE_ID = "早播"
 
 # 条目形如：
