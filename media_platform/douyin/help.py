@@ -4,21 +4,23 @@
 
 import random
 import re
-from typing import Optional
 
 import execjs
 from playwright.async_api import Page
 
-from model.m_douyin import VideoUrlInfo, CreatorUrlInfo
+from model.m_douyin import CreatorUrlInfo, VideoUrlInfo
 from tools.crawler_util import extract_url_params_to_dict
 
 douyin_sign_obj = execjs.compile(open('libs/douyin.js', encoding='utf-8-sig').read())
 
 def get_web_id():
-    """
-    Generate random webid
-    Returns:
+    """生成一个**随机**的 webid。
 
+    这是"实在拿不到真 webid 时"的兜底，调用方必须自己把它缓存住。
+    抖音的 webid 是一台设备的身份：同一会话里每个请求换一次，等于每秒换
+    一台设备，比任何 header 错误都更显眼。``DouYinClient._resolve_webid()``
+    是唯一调用点，它优先用浏览器里真实存在的那一个，兜底才调这里并把结果
+    记在 ``self.webid`` 上。
     """
 
     def e(t):

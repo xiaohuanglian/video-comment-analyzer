@@ -1,5 +1,4 @@
 import asyncio
-import functools
 from typing import Optional
 
 from playwright.async_api import BrowserContext, Page
@@ -10,12 +9,15 @@ import config
 from base.base_crawler import AbstractLogin
 from cache.cache_factory import CacheFactory
 from tools import utils
+from tools.crawl_pacing import CrawlPacer
 from tools.login_helper import (
     DEFAULT_LOGIN_TIMEOUT,
     has_login_cookie,
     show_qrcode_best_effort,
     wait_for_login,
 )
+
+from .exception import CaptchaError
 
 
 class DouYinLogin(AbstractLogin):
@@ -52,7 +54,16 @@ class DouYinLogin(AbstractLogin):
                 continue
         return False
 
-    @retry(stop=stop_after_attempt(600), wait=wait_fixed(1), retry=retry_if_result(lambda value: value is False))
+    # 600 次 × 每秒一次 = 10 分钟的轮询。这个包装从来没有被调用过（begin() 用的是
+    # login_helper.wait_for_login，超时自己带），但留着就是一颗"谁 import 谁中招"
+    # 的雷：对一个已经被标记的账号每分钟打 60 次登录态检查，是最标准的机器特征。
+    # 改成与 wait_for_login 同量级的次数，并且每次间隔 2s。
+    @retry(
+        stop=stop_after_attempt(150),
+        wait=wait_fixed(2),
+        retry=retry_if_result(lambda value: value is False),
+        reraise=True,
+    )
     async def check_login_state(self) -> bool:
         return await self._login_confirmed()
 
@@ -90,6 +101,13 @@ class DouYinLogin(AbstractLogin):
             current_page_title = await self.context_page.title()
             if "验证码中间页" in current_page_title:
                 await self.check_page_display_slider(move_step=3, slider_level="hard")
+        except CaptchaError:
+            # 验证码过不去 = 平台明确拒绝这个账号：落冷却并抛回去，
+            # 让 main.py 走失败分支（不 clear 冷却、退出码 3）。
+            CrawlPacer(platform="dy").on_failure(
+                CaptchaError("登录时遇到滑块验证且自动尝试未通过")
+            )
+            raise
         except Exception as exc:
             utils.logger.warning(f"[DouYinLogin.begin] slider check skipped: {exc}")
 
@@ -154,7 +172,18 @@ class DouYinLogin(AbstractLogin):
             break
 
     async def check_page_display_slider(self, move_step: int = 10, slider_level: str = "easy"):
-        """Solve the slider verification if it appears."""
+        """遇到滑块验证时尝试通过；过不去就**停手**，不要反复刷。
+
+        旧实现有三个问题叠在一起：20 次尝试、失败后点"刷新验证码"、
+        而刷新**不扣尝试次数**——等于可以无限刷。对已经被标记的账号，
+        每多刷一次都是在给平台补一条"这是机器"的证据。
+
+        现在的规则：
+        - 主动尝试 ``DY_SLIDER_MAX_ATTEMPTS`` 次；
+        - 刷新验证码最多 ``DY_SLIDER_MAX_REFRESH`` 次，并且**计入**尝试次数；
+        - 仍然过不去就抛 :class:`CaptchaError`（会走平台冷却），
+          提示人去浏览器窗口里手动过。
+        """
         back_selector = "#captcha-verify-image"
         try:
             await self.context_page.wait_for_selector(selector=back_selector, state="visible", timeout=20 * 1000)
@@ -162,28 +191,48 @@ class DouYinLogin(AbstractLogin):
             return
 
         gap_selector = 'xpath=//*[@id="captcha_container"]/div/div[2]/img[2]'
-        max_slider_try_times = 20
-        slider_verify_success = False
-        while not slider_verify_success:
-            if max_slider_try_times <= 0:
-                raise RuntimeError("抖音滑块验证失败：请在浏览器窗口中手动完成验证后重试")
+        max_attempts = max(1, int(getattr(config, "DY_SLIDER_MAX_ATTEMPTS", 3)))
+        max_refresh = max(0, int(getattr(config, "DY_SLIDER_MAX_REFRESH", 1)))
+        attempts = 0
+        refreshed = 0
+        while True:
+            if attempts >= max_attempts:
+                # 抛 CaptchaError 而不是 RuntimeError：调用方能按"平台拦截"处理
+                # （落冷却、停批、退出码 3），而不是当成一个普通 bug 继续跑。
+                raise CaptchaError(
+                    f"抖音滑块验证连续 {attempts} 次未通过：请在浏览器窗口中手动完成验证后重试。"
+                    f"（已停止自动重试，避免对已被标记的账号继续加压）"
+                )
+            attempts += 1
             try:
                 await self.move_slider(back_selector, gap_selector, move_step, slider_level)
                 await asyncio.sleep(1)
 
                 page_content = await self.context_page.content()
                 if "操作过慢" in page_content or "提示重新操作" in page_content:
-                    utils.logger.info("[DouYinLogin.check_page_display_slider] slider verify failed, retry ...")
-                    await self.context_page.click(selector="//a[contains(@class, 'secsdk_captcha_refresh')]")
+                    if refreshed < max_refresh:
+                        refreshed += 1
+                        utils.logger.info(
+                            f"[DouYinLogin.check_page_display_slider] 验证失败，刷新验证码"
+                            f"（{refreshed}/{max_refresh}，计入尝试次数）..."
+                        )
+                        await self.context_page.click(selector="//a[contains(@class, 'secsdk_captcha_refresh')]")
+                    else:
+                        utils.logger.warning(
+                            "[DouYinLogin.check_page_display_slider] 验证失败且刷新次数已用尽"
+                        )
                     continue
 
                 await self.context_page.wait_for_selector(selector=back_selector, state="hidden", timeout=1000)
                 utils.logger.info("[DouYinLogin.check_page_display_slider] slider verify success ...")
-                slider_verify_success = True
+                return
+            except CaptchaError:
+                raise
             except Exception as e:
-                utils.logger.error(f"[DouYinLogin.check_page_display_slider] slider verify failed, error: {e}")
+                utils.logger.error(
+                    f"[DouYinLogin.check_page_display_slider] 第 {attempts}/{max_attempts} 次失败：{e}"
+                )
                 await asyncio.sleep(1)
-                max_slider_try_times -= 1
                 continue
 
     async def move_slider(self, back_selector: str, gap_selector: str, move_step: int = 10, slider_level="easy"):

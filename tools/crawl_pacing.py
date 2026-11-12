@@ -146,6 +146,9 @@ _PLATFORM_PACING: Dict[str, Tuple[str, str]] = {
 #: 差别只在接口和频率，所以节奏必须分开配。
 _PACING_KINDS: Dict[Tuple[str, str], Tuple[str, str]] = {
     ("xhs", "search"): ("XHS_SEARCH_SLEEP_SEC", "XHS_SEARCH_JITTER_SEC"),
+    # 抖音同理，而且更该分：此前 dy 的 search 用的是 ``config.CRAWLER_MAX_SLEEP_SEC``
+    # 的原始 3s（不走平台档），比 detail 档的 12s 还快四倍——整条链路上最裸的一段。
+    ("dy", "search"): ("DY_SEARCH_SLEEP_SEC", "DY_SEARCH_JITTER_SEC"),
 }
 
 
@@ -233,6 +236,11 @@ _BLOCKING_EXC_NAMES = frozenset(
         "PlatformAccessError",
         "LoginError",
         "NeedLoginError",
+        # 抖音没有"验证码"这一步（它的查验走 secsdk 中间页），被拦时平台
+        # 直接回空 body 或 blocked，所以单列了这个类型。不进这个集合的话，
+        # "account blocked" 的文案会先命中 _BLOCKED_PATTERN 之外的限流正则，
+        # 把 6 小时的账号冷却降级成 15 分钟。
+        "DouYinAccountBlockedError",
     }
 )
 

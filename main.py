@@ -104,14 +104,17 @@ async def main() -> None:
         print(f"[CrawlGuard] {blocked.failure.to_text()}")
         raise SystemExit(BLOCKED_EXIT_CODE) from None
 
-    if platform == "xhs":
-        # 夜间静默：真人要睡觉。凌晨三点搜六个不相关话题是最明显的机器人特征。
-        # 放在启动浏览器之前拒绝，一个请求都不发。
-        try:
-            ensure_not_quiet_hours()
-        except SearchBudgetExceeded as quiet:
-            print(f"[XhsQuiet] {quiet}")
-            raise SystemExit(BLOCKED_EXIT_CODE) from None
+    # 夜间静默：真人要睡觉。凌晨三点搜六个不相关话题是最明显的机器人特征。
+    # 放在启动浏览器之前拒绝，一个请求都不发。
+    #
+    # 从 2026-11-12 起不再只拦小红书：抖音同样是"账号不可替换"的平台，通宵采集
+    # 的代价一样是账号。时段由各自的 <PLATFORM>_QUIET_HOURS_START/END 决定，
+    # 没配的平台走通用值（默认也是 1-6 点）。
+    try:
+        ensure_not_quiet_hours(platform=platform)
+    except SearchBudgetExceeded as quiet:
+        print(f"[QuietHours] {quiet}")
+        raise SystemExit(BLOCKED_EXIT_CODE) from None
 
     crawler = CrawlerFactory.create_crawler(platform=platform)
     started_at = time.time()

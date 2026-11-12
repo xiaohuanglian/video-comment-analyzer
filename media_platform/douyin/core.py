@@ -1,8 +1,7 @@
 import asyncio
-import os
 import random
 from asyncio import Task
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from playwright.async_api import (
     BrowserContext,
@@ -17,15 +16,42 @@ from base.base_crawler import AbstractCrawler
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import douyin as douyin_store
 from tools import browser_profile, utils
+from tools.browser_fingerprint import (
+    BrowserFingerprint,
+    DeviceProfile,
+    read_browser_fingerprint,
+    read_device_profile,
+)
 from tools.cdp_browser import CDPBrowserManager
 from tools.crawl_pacing import compute_crawl_interval
+from tools.crawl_safety import (
+    ensure_batch_allowed,
+    ensure_not_quiet_hours,
+    plan_keywords,
+    search_budget,
+)
 from var import crawler_type_var, source_keyword_var
 
 from .client import DouYinClient
-from .exception import DataFetchError
+from .exception import ABORT_EXCEPTIONS, DataFetchError, DouYinAccountBlockedError
 from .field import PublishTimeType
-from .help import parse_video_info_from_url, parse_creator_info_from_url
+from .help import parse_creator_info_from_url, parse_video_info_from_url
 from .login import DouYinLogin
+
+
+async def _pace_sleep(reason: str = "", *, kind: str = "") -> None:
+    """按抖音真实间隔睡一觉。
+
+    以前这里写的是 ``asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)``（通用 3s），
+    把 ``DY_CRAWL_SLEEP_SEC``（12s+8s）绕过去了。**detail 与 search 是两档**：
+    搜索是主动去平台库里捞东西，比按 ID 取详情敏感得多，用 ``kind="search"``
+    走 ``DY_SEARCH_SLEEP_SEC``（45s+45s）。
+    """
+    base, jitter = compute_crawl_interval("dy", kind)
+    delay = base + (random.uniform(0, jitter) if jitter > 0 else 0)
+    if reason:
+        utils.logger.info(f"[DouYinCrawler] sleeping {delay:.1f}s ({reason})")
+    await asyncio.sleep(delay)
 
 
 class DouYinCrawler(AbstractCrawler):
@@ -45,6 +71,11 @@ class DouYinCrawler(AbstractCrawler):
         ]
         self.cdp_manager = None
         self.ip_proxy_pool = None  # Proxy IP pool for automatic proxy refresh
+        # 指纹与设备参数一律从跑着的浏览器读（见 tools/browser_fingerprint.py）：
+        # client 里以前硬写 Chrome 125 / 2560×1440 / 8 核，与真实机器和 cookie
+        # 里的 stream_recommend_feed_params 全都对不上。
+        self.fingerprint: Optional[BrowserFingerprint] = None
+        self.device_profile: Optional[DeviceProfile] = None
 
     async def start(self) -> None:
         playwright_proxy_format, httpx_proxy_format = None, None
@@ -79,6 +110,15 @@ class DouYinCrawler(AbstractCrawler):
             self.context_page = await self.browser_context.new_page()
             await self.context_page.goto(self.index_url)
 
+            # 指纹必须在取 cookie/建 client 之前读：它决定请求里报的浏览器版本、
+            # 屏幕尺寸、核数、内存。读不到就退回 UA 反推（不抛异常），
+            # 但绝不退回写死的常量。
+            self.fingerprint = await read_browser_fingerprint(self.context_page, label="DouYinCrawler")
+            self.device_profile = await read_device_profile(self.context_page, label="DouYinCrawler")
+            utils.logger.info(
+                f"[DouYinCrawler] 指纹：{self.fingerprint.describe()}；设备：{self.device_profile.describe()}"
+            )
+
             self.dy_client = await self.create_douyin_client(httpx_proxy_format)
             if not await self.dy_client.pong(browser_context=self.browser_context):
                 login_obj = DouYinLogin(
@@ -112,12 +152,29 @@ class DouYinCrawler(AbstractCrawler):
         if config.CRAWLER_MAX_NOTES_COUNT < dy_limit_count:
             config.CRAWLER_MAX_NOTES_COUNT = dy_limit_count
         start_page = config.START_PAGE  # start page number
-        for keyword in config.KEYWORDS.split(","):
+        # 搜索是有配额的：一次最多几个词、一天最多几次。Web 面板的「立即采集」
+        # 也走这条路径，所以预算必须在这里拦一道，不能只拦独立脚本。
+        _all_keywords = [k.strip() for k in str(config.KEYWORDS or "").split(",") if k.strip()]
+        _keywords, _deferred = plan_keywords(_all_keywords, platform="dy")
+        if _deferred:
+            utils.logger.info(
+                f"[DouYinCrawler.search] 本次只搜 {len(_keywords)} 个词"
+                f"（单批上限），其余 {len(_deferred)} 个下次轮转：{_deferred}"
+            )
+        ensure_not_quiet_hours(platform="dy")
+        ensure_batch_allowed(len(_keywords), platform="dy")
+        # 撞到拦截就整批停：继续换关键词只会拿同一个已被标记的账号反复试探。
+        # 异常**必须抛回去**——吞掉后 start() 正常返回，main.py 会以为跑通了
+        # 并清掉客户端刚写的冷却（2026-11-12 复核出的洞）。
+        blocker: Optional[BaseException] = None
+        for keyword in _keywords:
             source_keyword_var.set(keyword)
             utils.logger.info(f"[DouYinCrawler.search] Current keyword: {keyword}")
             aweme_list: List[str] = []
             page = 0
             dy_search_id = ""
+            # 在发请求之前记账：被拦也算用掉了次数
+            search_budget(platform="dy").consume(1)
             while (page - start_page + 1) * dy_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
                 if page < start_page:
                     utils.logger.info(f"[DouYinCrawler.search] Skip {page}")
@@ -132,35 +189,58 @@ class DouYinCrawler(AbstractCrawler):
                         search_id=dy_search_id,
                     )
                     if posts_res.get("data") is None or posts_res.get("data") == []:
-                        utils.logger.info(f"[DouYinCrawler.search] search douyin keyword: {keyword}, page: {page} is empty,{posts_res.get('data')}`")
+                        utils.logger.info(
+                            f"[DouYinCrawler.search] keyword: {keyword}, page: {page} is empty, break"
+                        )
                         break
+                except ABORT_EXCEPTIONS as ex:
+                    utils.logger.error(
+                        f"[DouYinCrawler.search] 撞到平台拦截（账号/验证码/限流），"
+                        f"中止本批全部关键词：{ex}"
+                    )
+                    blocker = ex
+                    break
                 except DataFetchError:
                     utils.logger.error(f"[DouYinCrawler.search] search douyin keyword: {keyword} failed")
                     break
 
                 page += 1
                 if "data" not in posts_res:
-                    utils.logger.error(f"[DouYinCrawler.search] search douyin keyword: {keyword} failed，账号也许被风控了。")
+                    utils.logger.error(
+                        f"[DouYinCrawler.search] keyword: {keyword} failed，账号也许被风控了。"
+                    )
+                    blocker = DouYinAccountBlockedError(
+                        f"搜索接口没有返回 data 字段（keyword={keyword}, page={page - 1}）"
+                    )
+                    # 这种情况客户端没来得及判断（HTTP 200 + 结构不完整），
+                    # 在这里补一次冷却，否则"账号也许被风控"只是条日志。
+                    self.dy_client._pacer.on_failure(blocker)
                     break
                 dy_search_id = posts_res.get("extra", {}).get("logid", "")
                 page_aweme_list = []
                 for post_item in posts_res.get("data"):
                     try:
-                        aweme_info: Dict = (post_item.get("aweme_info") or post_item.get("aweme_mix_info", {}).get("mix_items")[0])
+                        aweme_info: Dict = (
+                            post_item.get("aweme_info")
+                            or post_item.get("aweme_mix_info", {}).get("mix_items")[0]
+                        )
                     except TypeError:
                         continue
                     aweme_list.append(aweme_info.get("aweme_id", ""))
                     page_aweme_list.append(aweme_info.get("aweme_id", ""))
                     await douyin_store.update_douyin_aweme(aweme_item=aweme_info)
                     await self.get_aweme_media(aweme_item=aweme_info)
-                
+
                 # Batch get note comments for the current page
                 await self.batch_get_note_comments(page_aweme_list)
 
-                # Sleep after each page navigation
-                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
-                utils.logger.info(f"[DouYinCrawler.search] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
+                # 搜索档节奏：45s+0~45s，不是通用 3s，也不是 detail 的 12s
+                await _pace_sleep(f"page {page - 1} of 「{keyword}」", kind="search")
             utils.logger.info(f"[DouYinCrawler.search] keyword:{keyword}, aweme_list:{aweme_list}")
+            if blocker is not None:
+                break
+        if blocker is not None:
+            raise blocker
 
     async def get_specified_awemes(self):
         """Get the information and comments of the specified post from URLs or IDs"""
@@ -203,9 +283,12 @@ class DouYinCrawler(AbstractCrawler):
             try:
                 result = await self.dy_client.get_video_by_id(aweme_id)
                 # Sleep after fetching aweme detail
-                await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
-                utils.logger.info(f"[DouYinCrawler.get_aweme_detail] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after fetching aweme {aweme_id}")
+                await _pace_sleep(f"after detail {aweme_id}")
                 return result
+            except ABORT_EXCEPTIONS:
+                # 账号级异常不许被宽容分支吞掉：这里 return None 会让上层把
+                # 一整批视频都"正常"跑完，冷却写了也会被当成跑通清掉。
+                raise
             except DataFetchError as ex:
                 utils.logger.error(f"[DouYinCrawler.get_aweme_detail] Get aweme detail error: {ex}")
                 return None
@@ -218,7 +301,7 @@ class DouYinCrawler(AbstractCrawler):
         Batch get note comments
         """
         if not config.ENABLE_GET_COMMENTS:
-            utils.logger.info(f"[DouYinCrawler.batch_get_note_comments] Crawling comment mode is not enabled")
+            utils.logger.info("[DouYinCrawler.batch_get_note_comments] Crawling comment mode is not enabled")
             return
 
         task_list: List[Task] = []
@@ -246,6 +329,8 @@ class DouYinCrawler(AbstractCrawler):
                 await asyncio.sleep(base + random.uniform(0, jitter))
                 utils.logger.info(f"[DouYinCrawler.get_comments] Sleeping {base:.1f}s after aweme {aweme_id}")
                 utils.logger.info(f"[DouYinCrawler.get_comments] aweme_id: {aweme_id} comments have all been obtained and filtered ...")
+            except ABORT_EXCEPTIONS:
+                raise
             except DataFetchError as e:
                 utils.logger.error(f"[DouYinCrawler.get_comments] aweme_id: {aweme_id} get comments failed, error: {e}")
 
@@ -294,19 +379,32 @@ class DouYinCrawler(AbstractCrawler):
             self.browser_context,
             urls=self.cookie_urls,
         )  # type: ignore
+        fingerprint = self.fingerprint
+        if fingerprint is None:
+            fingerprint = await read_browser_fingerprint(self.context_page, label="DouYinCrawler")
+            self.fingerprint = fingerprint
+        device_profile = self.device_profile
+        if device_profile is None:
+            device_profile = await read_device_profile(self.context_page, label="DouYinCrawler")
+            self.device_profile = device_profile
+        headers = {
+            "User-Agent": fingerprint.user_agent or await self.context_page.evaluate("() => navigator.userAgent"),
+            "Cookie": cookie_str,
+            "Host": "www.douyin.com",
+            "Origin": "https://www.douyin.com/",
+            "Referer": "https://www.douyin.com/",
+            "Content-Type": "application/json;charset=UTF-8",
+        }
+        # sec-ch-ua 系必须与 UA 同源，否则同一台"设备"自我矛盾（小红书那次的教训）
+        headers.update(fingerprint.headers())
         douyin_client = DouYinClient(
             proxy=httpx_proxy,
-            headers={
-                "User-Agent": await self.context_page.evaluate("() => navigator.userAgent"),
-                "Cookie": cookie_str,
-                "Host": "www.douyin.com",
-                "Origin": "https://www.douyin.com/",
-                "Referer": "https://www.douyin.com/",
-                "Content-Type": "application/json;charset=UTF-8",
-            },
+            headers=headers,
             playwright_page=self.context_page,
             cookie_dict=cookie_dict,
             proxy_ip_pool=self.ip_proxy_pool,  # Pass proxy pool for automatic refresh
+            fingerprint=fingerprint,
+            device_profile=device_profile,
         )
         return douyin_client
 
@@ -329,12 +427,21 @@ class DouYinCrawler(AbstractCrawler):
                     "width": 1920,
                     "height": 1080
                 },
+                # 只声明语言与本地时区，不伪造 UA：UA 由浏览器自报，
+                # client 侧再从 navigator 读同一个值，两边天然一致。
+                locale="zh-CN",
+                timezone_id="Asia/Shanghai",
                 user_agent=user_agent,
             )  # type: ignore
             return browser_context
         else:
             browser = await chromium.launch(headless=headless, proxy=playwright_proxy)  # type: ignore
-            browser_context = await browser.new_context(viewport={"width": 1920, "height": 1080}, user_agent=user_agent)
+            browser_context = await browser.new_context(
+                viewport={"width": 1920, "height": 1080},
+                locale="zh-CN",
+                timezone_id="Asia/Shanghai",
+                user_agent=user_agent,
+            )
             return browser_context
 
     async def launch_browser_with_cdp(
@@ -389,7 +496,7 @@ class DouYinCrawler(AbstractCrawler):
             aweme_item (Dict): 抖音作品详情
         """
         if not config.ENABLE_GET_MEIDAS:
-            utils.logger.info(f"[DouYinCrawler.get_aweme_media] Crawling image mode is not enabled")
+            utils.logger.info("[DouYinCrawler.get_aweme_media] Crawling image mode is not enabled")
             return
         # List of note urls. If it is a short video type, an empty list will be returned.
         note_download_url: List[str] = douyin_store._extract_note_image_list(aweme_item)
@@ -448,5 +555,5 @@ class DouYinCrawler(AbstractCrawler):
         await asyncio.sleep(random.random())
         if content is None:
             return
-        extension_file_name = f"video.mp4"
+        extension_file_name = "video.mp4"
         await douyin_store.update_dy_aweme_video(aweme_id, content, extension_file_name)

@@ -145,7 +145,7 @@ async def _build_client(page: Any) -> XiaoHongShuClient:
     # UA / sec-ch-ua 从活着的浏览器读，别写常量：2026-11-11 事故复盘时发现
     # 同一个会话里 UA 说 Chrome/137、sec-ch-ua 说 v=136、浏览器本身是别的版本，
     # 这种自相矛盾比"间隔短"更容易被规则直接命中。
-    fingerprint = await read_browser_fingerprint(page)
+    fingerprint = await read_browser_fingerprint(page, label="XhsFingerprint")
     headers = {
         "accept": "application/json, text/plain, */*",
         "accept-language": "zh-CN,zh;q=0.9",

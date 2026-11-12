@@ -2,16 +2,18 @@ import asyncio
 import copy
 import json
 import urllib.parse
-from typing import TYPE_CHECKING, Any, Callable, Dict, Union, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Union
 
 import httpx
-from playwright.async_api import BrowserContext
+from playwright.async_api import BrowserContext, Page
 
+import config
 from base.base_crawler import AbstractApiClient
 from proxy.proxy_mixin import ProxyRefreshMixin
 from tools import utils
+from tools.browser_fingerprint import BrowserFingerprint, DeviceProfile, read_browser_webid
 from tools.crawl_pacing import CrawlPacer, platform_slot
-from tools.httpx_util import make_async_client
+from tools.httpx_util import make_async_client, make_impersonated_client
 from var import request_keyword_var
 
 if TYPE_CHECKING:
@@ -21,25 +23,36 @@ from .exception import *
 from .field import *
 from .help import *
 
-
 # 抖音 Argus 网关占位头值；网关当前只校验"存在"，不校验内容。
 DOUYIN_ARGUS_HEADER_VALUE = "1"
+
+#: 媒体下载（CDN 上的视频/图集）的超时下限。业务接口 20s 足够，但一个 50MB
+#: 的视频在慢网络上 20s 下不来——两者不能共用一个值，否则要么接口等太久、
+#: 要么视频永远下不完。
+MEDIA_MIN_TIMEOUT_SEC = 60
 
 
 class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
 
     def __init__(
         self,
-        timeout=60,  # If the crawl media option is turned on, Douyin’s short videos will require a longer timeout.
+        timeout: Optional[float] = None,
         proxy=None,
         *,
         headers: Dict,
         playwright_page: Optional[Page],
         cookie_dict: Dict,
         proxy_ip_pool: Optional["ProxyIpPool"] = None,
+        fingerprint: Optional[BrowserFingerprint] = None,
+        device_profile: Optional[DeviceProfile] = None,
+        webid: str = "",
     ):
         self.proxy = proxy
-        self.timeout = timeout
+        # 业务接口超时来自配置（DY_REQUEST_TIMEOUT_SEC）。以前这里硬编码 60，
+        # 一个挂住的请求要占着浏览器整整一分钟，期间 pacer 也没法往下走。
+        self.timeout = float(timeout if timeout is not None else getattr(config, "DY_REQUEST_TIMEOUT_SEC", 20))
+        # 媒体走另一个值：短视频/图集必须给够时间，别被接口的短超时连坐。
+        self.media_timeout = max(self.timeout, MEDIA_MIN_TIMEOUT_SEC)
         self._pacer = CrawlPacer(platform="dy")
         self.headers = headers
         # 抖音边缘网关 ArgusSecurityPlugin 做业务前置校验：缺 x-tt-argus 头 → 403
@@ -58,6 +71,16 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         ]
         self.playwright_page = playwright_page
         self.cookie_dict = cookie_dict
+        # 指纹来自跑着的浏览器（见 tools/browser_fingerprint.py）。以前这里每个
+        # 请求都硬报 2560×1440 / 8 核 / Chrome 125，而真实机器是 1920×1080 /
+        # Chrome 157，cookie 里的 stream_recommend_feed_params 又按真实设备写死
+        # ——同一账号两套设备参数，比"参数不好看"更容易被规则直接命中。
+        self.fingerprint = fingerprint
+        self.device_profile = device_profile
+        # webid 必须整个会话稳定：以前每个请求 get_web_id() 随机一次，
+        # 等于每页都在"换设备"。
+        self.webid = webid or ""
+        self._ms_token_warned = False
         # Initialize proxy pool (from ProxyRefreshMixin)
         self.init_proxy_pool(proxy_ip_pool)
 
@@ -72,7 +95,15 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         if not params:
             return
         headers = headers or self.headers
-        local_storage: Dict = await self.playwright_page.evaluate("() => window.localStorage")  # type: ignore
+        # 没有浏览器也行（纯 cookie 的调用方/单测）：拿不到 localStorage 就当作
+        # 没有 msToken，而不是直接 AttributeError。
+        if self.playwright_page is None:
+            local_storage: Dict = {}
+        else:
+            local_storage = await self.playwright_page.evaluate("() => window.localStorage")  # type: ignore
+
+        fp = self.fingerprint
+        device = self.device_profile
         common_params = {
             "device_platform": "webapp",
             "aid": "6383",
@@ -83,24 +114,28 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
             "pc_client_type": "1",
             "cookie_enabled": "true",
             "browser_language": "zh-CN",
-            "browser_platform": "MacIntel",
+            "browser_platform": device.platform if device and device.platform else "MacIntel",
             "browser_name": "Chrome",
-            "browser_version": "125.0.0.0",
+            "browser_version": fp.browser_version if fp and fp.browser_version else "125.0.0.0",
             "browser_online": "true",
             "engine_name": "Blink",
             "os_name": "Mac OS",
-            "os_version": "10.15.7",
-            "cpu_core_num": "8",
-            "device_memory": "8",
-            "engine_version": "109.0",
+            "os_version": fp.os_version if fp and fp.os_version else "10.15.7",
+            "cpu_core_num": str(device.hardware_concurrency) if device and device.hardware_concurrency else "8",
+            "device_memory": str(device.device_memory) if device and device.device_memory else "8",
+            "engine_version": fp.engine_version if fp and fp.engine_version else "109.0",
             "platform": "PC",
-            "screen_width": "2560",
-            "screen_height": "1440",
+            "screen_width": str(device.screen_width) if device and device.screen_width else "2560",
+            "screen_height": str(device.screen_height) if device and device.screen_height else "1440",
             'effective_type': '4g',
             "round_trip_time": "50",
-            "webid": get_web_id(),
-            "msToken": local_storage.get("xmst"),
+            "webid": await self._resolve_webid(local_storage),
         }
+        # msToken 拿不到就**整个参数都不发**：发空串照样是一处异常特征，
+        # 而真正的 msToken 由页面脚本续期，参数缺失比参数错误更容易被容忍。
+        ms_token = self._resolve_ms_token(local_storage)
+        if ms_token:
+            common_params["msToken"] = ms_token
         params.update(common_params)
         query_string = urllib.parse.urlencode(params)
 
@@ -113,22 +148,168 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
             a_bogus = await get_a_bogus(uri, query_string, post_data, headers["User-Agent"], self.playwright_page)
             params["a_bogus"] = a_bogus
 
+    async def _resolve_webid(self, local_storage: Dict) -> str:
+        """整个会话只认一个 webid。
+
+        优先用浏览器里真实存在的那一个（``localStorage.user_unique_id`` /
+        ``byted_acrawler.user_unique_id``），其次用构造时传进来的，最后才
+        生成一个并**记住**。以前每个请求 ``get_web_id()`` 一次，等于同一台
+        "设备"每秒换一次身份。
+        """
+        if self.webid:
+            return self.webid
+        candidates = (
+            (local_storage or {}).get("user_unique_id"),
+            (local_storage or {}).get("webid"),
+        )
+        for value in candidates:
+            text = str(value or "").strip()
+            if text.isdigit():
+                self.webid = text
+                utils.logger.info(f"[DouYinClient] webid 取自浏览器 localStorage：{text}")
+                return text
+        if self.playwright_page is not None:
+            try:
+                browser_webid = await read_browser_webid(self.playwright_page, label="DouYinClient")
+            except Exception as exc:  # noqa: BLE001 - 取不到就退回生成
+                utils.logger.debug(f"[DouYinClient] 读取浏览器 webid 失败：{exc}")
+                browser_webid = ""
+            if browser_webid:
+                self.webid = browser_webid
+                utils.logger.info(f"[DouYinClient] webid 取自页面脚本：{browser_webid}")
+                return browser_webid
+        self.webid = get_web_id()
+        utils.logger.info(f"[DouYinClient] 浏览器未提供 webid，本次会话生成并固定为 {self.webid}")
+        return self.webid
+
+    def _resolve_ms_token(self, local_storage: Dict) -> str:
+        """msToken 拿不到就**不发这个参数**（空串），不要发字符串 "None"。
+
+        旧代码 ``local_storage.get("xmst")`` 为 None 时会被 urlencode 成
+        ``msToken=None``——一个永远不可能正确的值，比不带更显眼。
+        """
+        token = str((local_storage or {}).get("xmst") or "").strip()
+        if token and token.lower() != "none":
+            return token
+        if not self._ms_token_warned:
+            self._ms_token_warned = True
+            utils.logger.warning(
+                "[DouYinClient] 浏览器 localStorage 没有 msToken（xmst），本次不带该参数；"
+                "若频繁返回空响应，请先在浏览器里正常刷一次抖音页面"
+            )
+        return ""
+
     async def request(self, method, url, **kwargs):
         # Check whether the proxy has expired before each request
         await self._refresh_proxy_if_expired()
 
         # 平台冷却软等待 + 平台并发槽位（同平台最多 N 条并发，见 tools/crawl_pacing.py）
         await self._pacer.before_request()
-        async with platform_slot("dy"):
-            async with make_async_client(proxy=self.proxy) as client:
-                response = await client.request(method, url, timeout=self.timeout, **kwargs)
         try:
-            if response.text == "" or response.text == "blocked":
-                utils.logger.error(f"request params incrr, response.text: {response.text}")
-                raise Exception("account blocked")
+            async with platform_slot("dy"):
+                # 业务接口走 Chrome TLS 指纹（tools/httpx_util.py）：裸 httpx 的
+                # JA3/HTTP2 指纹本身就是"这是 Python 脚本"的证据。
+                async with make_impersonated_client(proxy=self.proxy) as client:
+                    response = await client.request(method, url, timeout=self.timeout, **kwargs)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 网络层失败，交给调用方分类
+            raise DataFetchError(f"请求失败：{exc}") from exc
+
+        blocked = self._classify_response(response, url)
+        if blocked is not None:
+            # 关键：先落冷却再抛。以前这里只把异常包成 DataFetchError 就往上抛，
+            # 上层一旦 `except DataFetchError: break` 吞掉，平台冷却根本不会写盘，
+            # 下一次采集照样放行（对比 xhs/client.py 每个拦截分支都先 on_failure）。
+            failure = self._pacer.on_failure(blocked)
+            utils.logger.error(
+                f"[DouYinClient] {method} {url} 命中拦截：{blocked}；"
+                f"已落平台冷却 {failure.code}"
+                f"（{failure.retry_after_seconds or 0}s）"
+            )
+            raise blocked
+
+        self._pacer.on_success()
+        try:
             return response.json()
-        except Exception as e:
-            raise DataFetchError(f"{e}, {response.text}")
+        except Exception as exc:  # noqa: BLE001 - 200 但不是 JSON
+            raise DataFetchError(
+                f"响应不是合法 JSON：{exc}；body 前 200 字：{self._snippet(response)}"
+            ) from exc
+
+    # -- 响应判读 ---------------------------------------------------------
+
+    @staticmethod
+    def _snippet(response: Any, limit: int = 200) -> str:
+        try:
+            return (response.text or "")[:limit]
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _classify_response(self, response: Any, url: str) -> Optional[BaseException]:
+        """把一个 HTTP 响应判成"正常 / 哪一类拦截"，正常返回 None。
+
+        判据顺序是刻意的：先看 HTTP 状态（平台明确拒绝），再看 body 形态
+        （空 / 挑战页 / 业务错误码）。**不要去 JSON body 里搜"验证码"这类词**
+        ——评论正文本身就可能包含这些词，那样会把一条正常评论判成风控。
+        """
+        status = int(getattr(response, "status_code", 0) or 0)
+        text = (getattr(response, "text", "") or "").strip()
+        snippet = text[:200]
+
+        if status in (401, 403):
+            # 抖音的 403 有两种：账号/接口拒绝访问，以及我们自己的签名/头校验失败
+            # （"Uifid Not Found" / "Signature Not Found"）。两种都必须停手：
+            # 签名已经不被接受了还继续打，就是 2026-11-11 那次事故的放大方式。
+            # 区别只在文案里写清楚，方便人判断是"账号被限"还是"该修签名了"。
+            return PlatformAccessError(f"HTTP {status}：{snippet}")
+        if status == 429:
+            return RateLimitError(f"HTTP 429 请求过于频繁：{snippet}")
+        if status >= 500:
+            # 服务端抖动不是账号问题：不落冷却，交给外层重试/记录
+            raise DataFetchError(f"HTTP {status} 平台服务端错误：{snippet}")
+        if status == 0:
+            return DataFetchError(f"没有拿到 HTTP 响应：{snippet}")
+
+        if text == "" or text == "blocked":
+            # 空响应是抖音 Web 接口最典型的"不给你数据"：可能是签名失效，
+            # 也可能是账号/设备被标记。两种都不该继续翻页。
+            return DouYinAccountBlockedError(f"接口返回空响应或被标记 blocked（HTTP {status}）")
+
+        if text.lstrip().startswith("<"):
+            # HTML 而不是 JSON：挑战页 / 验证页 / 风控中间页
+            head = text.lstrip()[:4000].lower()
+            if any(marker in head for marker in ("captcha", "secsdk", "验证", "verify")):
+                return CaptchaError(f"返回验证页（HTTP {status}）：{snippet}")
+            return DouYinAccountBlockedError(f"返回非 JSON 页面（HTTP {status}）：{snippet}")
+
+        # 业务错误码：只在"没有拿到任何预期数据"时才当失败，避免把
+        # "这一页就是没有更多了"误判成风控。
+        try:
+            data = response.json()
+        except Exception:  # noqa: BLE001 - 交给外层按非法 JSON 处理
+            return None
+        if not isinstance(data, dict):
+            return None
+        status_code = data.get("status_code")
+        message = str(data.get("status_msg") or data.get("message") or "").strip()
+        has_payload = any(
+            key in data
+            for key in ("data", "comments", "aweme_detail", "aweme_list", "has_more", "cursor", "user")
+        )
+        if status_code not in (None, 0) and not has_payload and message:
+            exc = DataFetchError(f"业务错误码 {status_code}：{message}")
+            # 文案里若是"风控/频繁/验证码"之类，升级成必须停手的类型
+            from tools.crawl_pacing import PLATFORM_BLOCKED, RATE_LIMITED, classify_failure
+
+            code = classify_failure(exc, platform="dy").code
+            if code == PLATFORM_BLOCKED:
+                return DouYinAccountBlockedError(f"业务错误码 {status_code}：{message}")
+            if code == RATE_LIMITED:
+                return RateLimitError(f"业务错误码 {status_code}：{message}")
+            return exc
+        return None
+
 
     async def get(self, uri: str, params: Optional[Dict] = None, headers: Optional[Dict] = None):
         """
@@ -278,6 +459,10 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         while comments_has_more and len(result) < max_count:
             try:
                 comments_res = await self.get_aweme_comments(aweme_id, comments_cursor)
+            except ABORT_EXCEPTIONS:
+                # 账号级拦截必须往上抛：这里要是吞成 break，main.py 会把这次
+                # 采集当成"跑通了"并清掉刚落的冷却（2026-11-11 的教训）。
+                raise
             except Exception as exc:  # noqa: BLE001 - 保留已抓部分，记录原因后退出
                 utils.logger.warning(
                     f"[DouYinClient.get_aweme_all_comments] aweme_id={aweme_id} 第 {page_index + 1} 页获取失败：{exc}；"
@@ -322,6 +507,8 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
                     while sub_comments_has_more:
                         try:
                             sub_comments_res = await self.get_sub_comments(aweme_id, comment_id, sub_comments_cursor)
+                        except ABORT_EXCEPTIONS:
+                            raise
                         except Exception as exc:  # noqa: BLE001
                             utils.logger.warning(
                                 f"[DouYinClient.get_aweme_all_comments] aweme_id={aweme_id} 子评论获取失败：{exc}；跳过该条"
@@ -368,7 +555,13 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         posts_has_more = 1
         max_cursor = ""
         result = []
+        page_index = 0
         while posts_has_more == 1:
+            if page_index:
+                # 这条循环以前一页接一页地打，没有任何等待——创作者主页作品
+                # 上千条时会变成最密集的一段请求。
+                await self._pacer.sleep("after creator aweme page")
+            page_index += 1
             aweme_post_res = await self.get_user_aweme_posts(sec_user_id, max_cursor)
             posts_has_more = aweme_post_res.get("has_more", 0)
             max_cursor = aweme_post_res.get("max_cursor")
@@ -380,17 +573,22 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         return result
 
     async def get_aweme_media(self, url: str) -> Union[bytes, None]:
+        """下载图片/视频。
+
+        这一层走普通 httpx 而**不是** TLS 指纹客户端：媒体在 CDN 上，风控判定
+        不在这一跳；而且这里要处理大文件流，curl_cffi 的适配层没必要背这个包袱。
+        """
         async with make_async_client(proxy=self.proxy) as client:
             try:
-                response = await client.request("GET", url, timeout=self.timeout, follow_redirects=True)
+                response = await client.request("GET", url, timeout=self.media_timeout, follow_redirects=True)
                 response.raise_for_status()
                 if not response.reason_phrase == "OK":
-                    utils.logger.error(f"[DouYinClient.get_aweme_media] request {url} err, res:{response.text}")
+                    utils.logger.error(f"[DouYinClient.get_aweme_media] request {url} err, res:{response.text[:200]}")
                     return None
                 else:
                     return response.content
             except httpx.HTTPError as exc:  # some wrong when call httpx.request method, such as connection error, client error, server error or response status code is not 2xx
-                utils.logger.error(f"[DouYinClient.get_aweme_media] {exc.__class__.__name__} for {exc.request.url} - {exc}")  # Keep the original exception type name for developers to debug
+                utils.logger.error(f"[DouYinClient.get_aweme_media] {exc.__class__.__name__} for {url} - {exc}")  # Keep the original exception type name for developers to debug
                 return None
 
     async def resolve_short_url(self, short_url: str) -> str:

@@ -9,6 +9,11 @@ dependencies = [
     "aiomysql==0.2.0",
     "aiosqlite>=0.21.0",
     "cryptography>=45.0.7",
+    # TLS 指纹：业务接口用 Chrome 的 JA3/HTTP2 指纹发请求（tools/httpx_util.py）。
+    # 裸 httpx 的握手本身就是"这是脚本"的证据——实测同一个抖音地址，
+    # httpx 302 / curl_cffi impersonate="chrome" 200，UA 与 header 完全一致。
+    # 代码里有 httpx 回退，缺这个包不会崩，但会失去这一层。
+    "curl_cffi>=0.17.0",
     "fastapi==0.110.2",
     "httpx==0.28.1",
     "jieba==0.42.1",

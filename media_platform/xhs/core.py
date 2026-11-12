@@ -114,7 +114,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
             await self.context_page.goto(self.index_url)
 
             # 指纹必须从「已经开始跑的浏览器」里读：这才是平台看到的那个客户端。
-            self.fingerprint = await read_browser_fingerprint(self.context_page)
+            self.fingerprint = await read_browser_fingerprint(self.context_page, label="XhsFingerprint")
 
             # Create a client to interact with the Xiaohongshu website.
             self.xhs_client = await self.create_xhs_client(httpx_proxy_format)
@@ -433,7 +433,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         # 万一没读到就现场读一次，绝不回落成写死的常量。
         fingerprint = self.fingerprint
         if fingerprint is None:
-            fingerprint = await read_browser_fingerprint(self.context_page)
+            fingerprint = await read_browser_fingerprint(self.context_page, label="XhsFingerprint")
             self.fingerprint = fingerprint
         headers = {
             "accept": "application/json, text/plain, */*",

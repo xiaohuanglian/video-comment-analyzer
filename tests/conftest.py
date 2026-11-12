@@ -94,19 +94,25 @@ def _isolate_real_state_files(tmp_path, monkeypatch):
     但污染的是开发机真实状态）：
     - `cooldowns.json`：测试撞一次 461 就会给 xhs 落 12 小时冷却，
       跑完测试本地采集直接被自己的测试拦住。
-    - `xhs_search_budget.json`：每跑一次测试就消耗「今天还能搜 6 次」的额度。
+    - `xhs_search_budget.json` / `dy_search_budget.json`：每跑一次测试就消耗
+      「今天还能搜几次」的额度（抖音 2026-11-12 接入同一套预算）。
     """
     from api.services import costs
     from tools import crawl_pacing as cp
+    from tools import crawl_safety as cs
     from tools import xhs_safety as xs
 
     monkeypatch.setattr(costs, "COSTS_DIR", tmp_path / "costs")
     monkeypatch.setattr(costs, "LEDGER_FILE", tmp_path / "costs" / "ledger.jsonl")
 
     cp.reset_cooldown_store(cp.CooldownStore(tmp_path / "cooldowns.json"))
-    xs.reset_search_budget(xs.SearchBudget(tmp_path / "search_budget.json"))
+    # xhs_safety 现在只是 crawl_safety 的门面，reset_search_budget 是同一份实现；
+    # 但两边都要显式重置，否则只测其中一边时另一边的单例会带着真实路径进测试。
+    xs.reset_search_budget(cs.SearchBudget(tmp_path / "search_budget.json", platform="xhs"))
+    cs.reset_search_budget(cs.SearchBudget(tmp_path / "dy_search_budget.json", platform="dy"))
     try:
         yield
     finally:
         cp.reset_cooldown_store(None)
         xs.reset_search_budget(None)
+        cs.reset_search_budget(None)
