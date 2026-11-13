@@ -60,6 +60,7 @@ from api.services.insight.storage import (
 )
 from api.services.insight.task_runner import is_running, reconcile_thread_state, request_cancel, start_background
 from api.services.insight.trial_report import build_trial_report
+from api.services.llm_config import require_llm_api_key
 from api.services.outreach.outreach import generate_outreach_drafts, merge_outreach_update
 from api.services.outreach.outreach_prompts import DEFAULT_BASE_TEMPLATE
 from api.services.outreach.reply_runner import is_reply_running, start_reply_run, stop_reply_run
@@ -317,7 +318,8 @@ async def post_suggest_profile(body: ProfileSuggestRequest) -> Dict[str, Any]:
     if not comments:
         raise HTTPException(status_code=400, detail="该任务没有可用的评论样本")
     use_mock = config.use_mock if body.use_mock is None else body.use_mock
-    api_key = (body.api_key or "").strip()
+    # 2026-11-13：key 不再只认 body——回落 环境变量 → 设置页保存的配置
+    api_key = require_llm_api_key(body.api_key or "")
     if not use_mock and not api_key:
         raise HTTPException(status_code=400, detail="生成档案需要 API Key")
     pricing = normalize_model_settings(base_url=body.model.base_url, model_name=body.model.model_name)
@@ -471,9 +473,10 @@ async def post_insight_narrative(run_id: str, body: InsightNarrativeRequest) -> 
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="任务不存在") from exc
     use_mock = config.use_mock if body.use_mock is None else body.use_mock
-    if not use_mock and not (body.api_key or "").strip():
+    api_key = require_llm_api_key(body.api_key or "")
+    if not use_mock and not api_key:
         raise HTTPException(status_code=400, detail="生成中文解读需要 API Key")
-    result = build_insight_narrative(run_id, api_key=body.api_key or "", use_mock=use_mock)
+    result = build_insight_narrative(run_id, api_key=api_key, use_mock=use_mock)
     try:
         (_run_dir(run_id) / "insight_narrative.json").write_text(
             json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -705,8 +708,15 @@ async def post_analyze(run_id: str, body: AnalyzeRequest) -> Dict[str, Any]:
     try:
         config = ensure_run_config(load_config(run_id))
         use_mock = config.use_mock if body.use_mock is None else body.use_mock
-        if not use_mock and not (body.api_key or "").strip():
-            raise HTTPException(status_code=400, detail="真实 API 分析需要填写 API Key")
+        # key 只有这一个解析入口：入参 → 环境变量 → 设置页保存的配置。
+        # 前端从不收集 key，所以缺了回落就等于「配好了也点不动分析」。
+        api_key = require_llm_api_key(body.api_key or "")
+        if not use_mock and not api_key:
+            raise HTTPException(
+                status_code=400,
+                detail="真实 API 分析需要填写 API Key：去「设置 → 模型网关」配一次，或勾演示模式",
+            )
+        body.api_key = api_key
 
         estimate: Optional[Dict[str, Any]] = None
         if not use_mock and not body.retry_failed_only:
@@ -801,8 +811,10 @@ async def post_trial_run(run_id: str, body: AnalyzeRequest) -> Dict[str, Any]:
         if not trial.get("record_ids"):
             raise HTTPException(status_code=400, detail="请先生成试跑样本")
         use_mock = config.use_mock if body.use_mock is None else body.use_mock
-        if not use_mock and not (body.api_key or "").strip():
+        api_key = require_llm_api_key(body.api_key or "")
+        if not use_mock and not api_key:
             raise HTTPException(status_code=400, detail="真实 API 分析需要填写 API Key")
+        body.api_key = api_key
         body.record_ids = trial["record_ids"]
         body.retry_failed_only = False
         if body.background:
@@ -829,8 +841,10 @@ async def post_retry_failed(run_id: str, body: AnalyzeRequest) -> Dict[str, Any]
         if not progress.failed_record_ids:
             raise HTTPException(status_code=400, detail="当前没有失败项可重试")
         use_mock = config.use_mock if body.use_mock is None else body.use_mock
-        if not use_mock and not (body.api_key or "").strip():
+        api_key = require_llm_api_key(body.api_key or "")
+        if not use_mock and not api_key:
             raise HTTPException(status_code=400, detail="真实 API 分析需要填写 API Key")
+        body.api_key = api_key
         body.retry_failed_only = True
         body.record_ids = None
         if body.background:
@@ -942,8 +956,10 @@ async def post_cluster_themes(run_id: str, body: ThemeClusterRequest) -> Dict[st
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="任务不存在") from exc
     use_mock = config.use_mock if body.use_mock is None else body.use_mock
-    if not use_mock and not (body.api_key or "").strip():
+    api_key = require_llm_api_key(body.api_key or "")
+    if not use_mock and not api_key:
         raise HTTPException(status_code=400, detail="主题归并需要填写 API Key")
+    body.api_key = api_key
     analysis_progress = load_progress(run_id)
     if (
         analysis_progress.status in {"running", "cancelling"}
@@ -1197,8 +1213,10 @@ async def post_generate_outreach(run_id: str, body: OutreachGenerateRequest) -> 
     if not candidates_doc.candidates:
         raise HTTPException(status_code=400, detail="请先生成候选用户列表")
     use_mock = config.use_mock if body.use_mock is None else body.use_mock
-    if not use_mock and not (body.api_key or "").strip():
+    api_key = require_llm_api_key(body.api_key or "")
+    if not use_mock and not api_key:
         raise HTTPException(status_code=400, detail="生成回复草稿需要 API Key")
+    body.api_key = api_key
     try:
         doc = generate_outreach_drafts(
             candidates_doc.candidates,

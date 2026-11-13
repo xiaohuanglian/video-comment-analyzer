@@ -128,6 +128,24 @@ def test_analyze_requires_key_without_mock(client, tmp_path):
     assert "API Key" in response.json()["error"]["message"] or "API Key" in response.text
 
 
+def test_analyze_uses_server_side_model_config(monkeypatch, tmp_path):
+    """设置页配好的网关要能被「开始分析」直接用上（2026-11-13 修）。
+
+    前端从不收集 api_key（也不该收集），而路由原先只认 body.api_key——用户在
+    设置页填好 base_url/模型/Key，点「开始分析」仍然 400「需要填写 API Key」，
+    页面看着整个坏掉。现在路由走 require_llm_api_key()：入参 → 环境变量 →
+    设置页保存的配置。这里只验证「服务端有配置时不再拦」，不真的调模型。
+    """
+    from api.services import llm_config
+    from api.services.growth import model_settings
+
+    monkeypatch.setattr(model_settings, "SETTINGS_PATH", tmp_path / "model_settings.json")
+    model_settings.save_model_settings("https://gw.example.com", "m-1", "sk-stored")
+    assert llm_config.require_llm_api_key("") == "sk-stored"
+    # 请求里显式给的 key 仍然优先
+    assert llm_config.require_llm_api_key("sk-body") == "sk-body"
+
+
 def test_frontend_wires_insight_page():
     """UI 侧的最小断言：路由、导航、API 客户端都要接上。"""
     from pathlib import Path

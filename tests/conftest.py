@@ -105,6 +105,20 @@ def _isolate_real_state_files(tmp_path, monkeypatch):
     monkeypatch.setattr(costs, "COSTS_DIR", tmp_path / "costs")
     monkeypatch.setattr(costs, "LEDGER_FILE", tmp_path / "costs" / "ledger.jsonl")
 
+    # 模型网关配置（data/model_settings.json）：开发机上有一份真 key。
+    # 2026-11-13 起洞察路由的 key 解析会回落到持久化配置，不隔离的话
+    # 「无 key 必须 400」那条红线测试会读到真实 key 而失败（而且测试结果
+    # 会随开发机状态变）。隔离成空文件 = 「这个进程什么都没配」。
+    from api.services.growth import model_settings as _model_settings
+
+    monkeypatch.setattr(_model_settings, "SETTINGS_PATH", tmp_path / "model_settings.json")
+    # 环境变量也得清：开发机的 shell 里可能已经 export 了真 key，那会带进整个
+    # 测试进程（pytest 先在收集阶段 import 所有测试模块，早于任何 fixture）。
+    # 洞察路由会回落到环境变量，「无 key 必须 400」的红线否则会随开发机状态飘。
+
+    for _var in ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL"):
+        monkeypatch.delenv(_var, raising=False)
+
     cp.reset_cooldown_store(cp.CooldownStore(tmp_path / "cooldowns.json"))
     # xhs_safety 现在只是 crawl_safety 的门面，reset_search_budget 是同一份实现；
     # 但两边都要显式重置，否则只测其中一边时另一边的单例会带着真实路径进测试。

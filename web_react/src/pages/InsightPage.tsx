@@ -272,6 +272,8 @@ export default function InsightPage() {
   const [limit, setLimit] = useState(100)
   const [profileId, setProfileId] = useState('default')
   const [profileTouched, setProfileTouched] = useState(false)
+  // 服务端当前生效的档案（与下拉里选的那份区分开：下拉可以是「我想用哪份」）
+  const [activeProfileId, setActiveProfileId] = useState('')
   const [useMock, setUseMock] = useState(false)
 
   const [query, setQuery] = useState('')
@@ -296,6 +298,13 @@ export default function InsightPage() {
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  // 刚建好的任务：notice 里直接给一个「现在开始分析」的动作，
+  // 否则用户勾完语料建完任务，还得自己猜分析按钮在右栏任务卡里。
+  const [pendingAnalyzeRun, setPendingAnalyzeRun] = useState('')
+  // 模型网关状态：真实分析要能拿到 key（入参 → 环境变量 → 设置页保存的配置）。
+  // 前端不收集 key，所以这里只判断「服务端到底有没有配」，提前把失败挡在点击之前。
+  const [modelReady, setModelReady] = useState<boolean | null>(null)
+  const [modelMasked, setModelMasked] = useState('')
   const pollRef = useRef<number | null>(null)
 
   const load = useCallback(async () => {
@@ -310,11 +319,19 @@ export default function InsightPage() {
         .commentsReports()
         .then((list) => setLegacyReportCount(list.length))
         .catch(() => setLegacyReportCount(null))
+      void api
+        .modelSettingsGet()
+        .then((m) => {
+          setModelReady(m.configured)
+          setModelMasked(m.api_key_masked)
+        })
+        .catch(() => setModelReady(null))
       setSources(src.groups ?? [])
       setRuns(runList.runs ?? [])
       setProfiles(prof.profiles ?? [])
       setPricing(price)
       // 档案下拉必须落在「当前生效档案」上，否则永远停在内置 default（=未配置）
+      setActiveProfileId(prof.active_profile_id ?? '')
       setProfileId((prev) => {
         if (profileTouched) return prev
         const active = prof.active_profile_id ?? ''
@@ -555,7 +572,8 @@ export default function InsightPage() {
       setTaskName('')
       await load()
       await selectRun(res.run_id)
-      setNotice('任务已创建。确认配置无误后，点「开始分析」。')
+      setPendingAnalyzeRun(res.run_id)
+      setNotice('任务已创建。下一步：点右边这个按钮开始跑分析（不会自动跑）。')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -566,6 +584,7 @@ export default function InsightPage() {
   const startAnalyze = async (runId: string, forceReanalyze = false) => {
     setBusy(`analyze:${runId}`)
     setError('')
+    setPendingAnalyzeRun('')
     try {
       const res = await api.insightAnalyze(runId, {
         use_mock: useMock,
@@ -686,11 +705,33 @@ export default function InsightPage() {
         </div>
       )}
       {notice && (
-        <div className="flex items-start justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
           <span>{notice}</span>
-          <button onClick={() => setNotice('')} className="text-emerald-600 hover:text-emerald-800">
-            知道了
-          </button>
+          <div className="flex items-center gap-2">
+            {pendingAnalyzeRun && (
+              <button
+                onClick={() => void startAnalyze(pendingAnalyzeRun, false)}
+                disabled={busy === `analyze:${pendingAnalyzeRun}`}
+                className="flex items-center gap-1 rounded-md bg-(--brand) px-2.5 py-1 text-[11px] font-medium text-white disabled:opacity-50"
+              >
+                {busy === `analyze:${pendingAnalyzeRun}` ? (
+                  <Loader2 size={11} className="animate-spin" />
+                ) : (
+                  <Play size={11} />
+                )}
+                现在开始分析
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setNotice('')
+                setPendingAnalyzeRun('')
+              }}
+              className="text-emerald-600 hover:text-emerald-800"
+            >
+              知道了
+            </button>
+          </div>
         </div>
       )}
 
@@ -859,11 +900,18 @@ export default function InsightPage() {
                   }}
                   className="w-full rounded-lg border border-stone-200 px-2 py-1.5"
                 >
-                  {profiles.map((p) => (
-                    <option key={p.profile_id} value={p.profile_id}>
-                      {(p.name ?? p.profile_id) + (p.is_configured ? '' : '（未配置）')}
-                    </option>
-                  ))}
+                  {profiles.map((p) => {
+                    // 显示 id：档案名（如「AI 创业者」）不带 id，用户会以为
+                    // youvibe 那份档案不存在（2026-11-13 反馈）。
+                    const label = p.name && p.name !== p.profile_id ? `${p.name} · ${p.profile_id}` : p.profile_id
+                    return (
+                      <option key={p.profile_id} value={p.profile_id}>
+                        {label}
+                        {p.profile_id === activeProfileId ? '（当前生效）' : ''}
+                        {p.is_configured ? '' : '（未配置）'}
+                      </option>
+                    )
+                  })}
                 </select>
               </label>
             </div>
@@ -882,13 +930,24 @@ export default function InsightPage() {
                 {pricing.currency}（每千 token，见设置页）
               </p>
             )}
+            {!useMock && modelReady === false && (
+              <p className="rounded-lg bg-amber-50 px-2 py-1.5 text-[11px] text-amber-700">
+                还没配模型网关，现在点「开始分析」会被拦下。去「设置 → 模型网关」填一次
+                base_url / 模型 / API Key（存服务端，前端不保存），或先勾上面的演示模式。
+              </p>
+            )}
+            {!useMock && modelReady === true && (
+              <p className="text-[11px] text-stone-400">
+                网关已配置{modelMasked ? `（${modelMasked}）` : ''}，点「开始分析」即可用服务端存的 key 跑。
+              </p>
+            )}
             <button
               onClick={() => void createRun()}
               disabled={busy === 'create' || selected.length === 0}
               className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-(--brand) px-3 py-2 text-xs font-medium text-white disabled:opacity-40"
             >
               {busy === 'create' ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-              创建分析任务
+              {selected.length === 0 ? '先在上面勾选语料' : '创建分析任务'}
             </button>
             <p className="text-center text-[11px] text-stone-400">创建后仍需手动点「开始分析」，不会自动跑。</p>
           </section>

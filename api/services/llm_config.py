@@ -129,3 +129,14 @@ def optional_config(**kwargs: Any) -> Optional[LlmConfig]:
     """没配 key 时返回 None（调用方据此给「未配置」提示而不是抛 500）。"""
     config = resolve_llm_config(**kwargs)
     return config if config.api_key else None
+
+
+def require_llm_api_key(api_key: str = "") -> str:
+    """解析**这次请求**真正能用的 key：入参 → 环境变量 → 服务端持久化。
+
+    为什么要有它（2026-11-13）：洞察各路由原先只认 `body.api_key`，而前端
+    从来不收集 key（它就该不收集），于是在设置页明明配好了模型、点「开始分析」
+    仍然 400「真实 API 分析需要填写 API Key」。模型网关的唯一解析入口是
+    `resolve_llm_config()`，这里只是把它套一层，**不要**在各路由里另写回落。
+    """
+    return (api_key or "").strip() or resolve_llm_config().api_key
