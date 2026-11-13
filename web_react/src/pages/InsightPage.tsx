@@ -17,6 +17,7 @@ import {
   Wand2,
 } from 'lucide-react'
 import clsx from 'clsx'
+import { Link } from 'react-router-dom'
 import {
   api,
   type InsightPricing,
@@ -124,11 +125,15 @@ function metricOf(value: unknown): { count: number; coverage_pct?: number } {
   return { count: 0 }
 }
 
-/** 百分比字段在不同接口里既有 0–1 小数也有 0–100 百分数，统一成百分数再渲染。 */
+/**
+ * 百分比字段统一成百分数再渲染。
+ * 后端 summary 里的 primary_intent_percentages / *_coverage 一律是 0–100（例如
+ * result_feedback = 0.98 表示 0.98%）。2026-11-13 这里曾把「≤1 视为 0–1 小数」去乘 100，
+ * 结果 0.98% 被显示成 98%，和旁边 11 条的计数完全对不上——别再加这种猜测。
+ */
 function percentOf(value: unknown): number {
   const n = Number(value)
-  if (!Number.isFinite(n)) return 0
-  return n > 0 && n <= 1 ? n * 100 : n
+  return Number.isFinite(n) ? n : 0
 }
 
 type TabKey = 'overview' | 'themes' | 'results' | 'report' | 'narrative'
@@ -284,6 +289,9 @@ export default function InsightPage() {
   const [resultFilters, setResultFilters] = useState({ primary_intent: '', single_video_relation: '', product_fit: '', keyword: '' })
   const [report, setReport] = useState('')
   const [narrative, setNarrative] = useState('')
+  // 采集页「历史报告」（B 站/YouTube 对标报告）是另一套产物，和洞察任务无关。
+  // 计数放在这里只是为了解释「任务历史怎么只有两条」。
+  const [legacyReportCount, setLegacyReportCount] = useState<number | null>(null)
 
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
@@ -298,6 +306,10 @@ export default function InsightPage() {
         api.insightProfiles(),
         api.insightPricing(),
       ])
+      void api
+        .commentsReports()
+        .then((list) => setLegacyReportCount(list.length))
+        .catch(() => setLegacyReportCount(null))
       setSources(src.groups ?? [])
       setRuns(runList.runs ?? [])
       setProfiles(prof.profiles ?? [])
@@ -334,6 +346,24 @@ export default function InsightPage() {
     }
     return map
   }, [sources])
+
+  /**
+   * 哪些语料已经分析过 —— 反查每个 run 的 config.file_paths。
+   * 没有这个映射，17 份语料看起来一模一样，用户不知道「勾选」和「看结果」是两件事。
+   */
+  const analyzedFiles = useMemo(() => {
+    const map = new Map<string, { runId: string; runName: string; createdAt: string }>()
+    for (const run of runs) {
+      for (const path of run.file_paths ?? []) {
+        const prev = map.get(path)
+        const createdAt = run.created_at ?? ''
+        if (!prev || createdAt > prev.createdAt) {
+          map.set(path, { runId: run.run_id, runName: run.name ?? run.run_id, createdAt })
+        }
+      }
+    }
+    return map
+  }, [runs])
 
   const totalSelectedComments = useMemo(() => {
     let total = 0
@@ -702,6 +732,11 @@ export default function InsightPage() {
               <p className="text-[11px] text-stone-400">
                 已选 {selected.length} 个文件 · 约 {formatCount(totalSelectedComments)} 条评论
               </p>
+              <p className="text-[11px] leading-relaxed text-stone-400">
+                勾选 = 作为<strong className="font-medium text-stone-500">下一次</strong>
+                分析的输入（新建任务）。带「已分析」的文件已经有跑完的任务，点左下角任务历史直接看结果，
+                不用重跑。
+              </p>
             </div>
 
             <div className="max-h-[26rem] overflow-y-auto p-2">
@@ -742,6 +777,7 @@ export default function InsightPage() {
                           <div className="ml-4 space-y-0.5 border-l border-stone-100 pl-2">
                             {(creator.files ?? []).map((file) => {
                               const on = selected.includes(file.path)
+                              const analyzed = analyzedFiles.get(file.path)
                               return (
                                 <button
                                   key={file.path}
@@ -763,6 +799,14 @@ export default function InsightPage() {
                                   <span className="min-w-0 flex-1 truncate">
                                     {file.name ?? file.path.split('/').pop()}
                                   </span>
+                                  {analyzed && (
+                                    <span
+                                      className="shrink-0 rounded bg-emerald-50 px-1 py-0.5 text-[10px] text-emerald-700"
+                                      title={`已分析：${analyzed.runName}`}
+                                    >
+                                      已分析
+                                    </span>
+                                  )}
                                   <span className="shrink-0 text-stone-400">
                                     {formatCount(file.comment_count ?? 0)}
                                   </span>
@@ -855,6 +899,20 @@ export default function InsightPage() {
               <span className="ml-2 text-[11px] font-normal text-stone-400">{runs.length} 个</span>
             </h2>
             {runs.length === 0 && <p className="py-3 text-center text-xs text-stone-400">还没有分析任务</p>}
+            <p className="pb-1 text-[11px] leading-relaxed text-stone-400">
+              这里只列「洞察任务」（选了语料、真的跑过 AI 分析的那批）。历史上只跑过{' '}
+              {runs.length} 次，所以只有这么多条 —— 不是漏列。
+              {legacyReportCount != null && legacyReportCount > 0 && (
+                <>
+                  {' '}
+                  另外那 {legacyReportCount} 份「对标评论报告」是采集页的产物，在{' '}
+                  <Link to="/collect" className="text-(--brand) hover:underline">
+                    采集页底部「历史报告」
+                  </Link>{' '}
+                  里。
+                </>
+              )}
+            </p>
             {runs.map((run) => (
               <button
                 key={run.run_id}

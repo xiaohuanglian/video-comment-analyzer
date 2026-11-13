@@ -529,6 +529,12 @@ def list_runs() -> List[Dict[str, Any]]:
                 "total_records": progress.total_records,
                 "completed": progress.completed,
                 "storage_dir": config.storage_dir,
+                # 2026-11-13：前端要在语料树上标出「这份 CSV 已经分析过」，
+                # 否则 17 份语料平铺着看不出哪些是新的、哪些早就跑过。
+                "file_paths": list(config.file_paths),
+                "project_id": config.project_id,
+                "analysis_limit": config.analysis_limit,
+                "use_mock": config.use_mock,
             }
         )
 

@@ -665,6 +665,9 @@ export interface InsightRunSummary {
   analysis_limit?: number
   use_mock?: boolean
   profile_id?: string
+  file_paths?: string[]
+  project_id?: string
+  storage_dir?: string
 }
 
 export interface InsightPricing {
