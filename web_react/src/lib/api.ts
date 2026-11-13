@@ -679,8 +679,91 @@ export interface InsightPricing {
 export interface InsightProfile {
   profile_id: string
   name?: string
+  niche?: string
+  target_audience?: string
   is_builtin?: boolean
+  is_configured?: boolean
+  intents?: Record<string, string>
+  signals?: Record<string, string>
   [k: string]: unknown
+}
+
+export interface InsightProfilesResponse {
+  profiles: InsightProfile[]
+  /** 2026-11-13：页面必须按「当前生效档案」初始化，否则永远停在内置 default。 */
+  active_profile_id?: string
+}
+
+export interface InsightResultsItem {
+  record_id: string
+  analyzed_at?: string
+  usage?: { prompt_tokens?: number; completion_tokens?: number }
+  source: {
+    comment_text?: string
+    comment_url?: string
+    username?: string
+    user_id?: string
+    user_homepage_url?: string
+    like_count?: number
+    reply_count?: number
+    video_title?: string
+    platform?: string
+    creator_type?: string
+    published_at?: string | null
+  }
+  analysis?: {
+    primary_intent?: string
+    signals?: string[]
+    specific_problems?: string[]
+    single_video_relation?: string
+    single_video_limitation_summary?: string
+    product_fit?: string
+    product_fit_reason?: string
+    evidence_quotes?: string[]
+    new_signals?: { type?: string; text?: string; evidence_quote?: string }[]
+    potential_needs?: string[]
+    confidence?: number
+  }
+}
+
+export interface InsightResultsResponse {
+  total: number
+  page: number
+  page_size: number
+  items: InsightResultsItem[]
+}
+
+export interface InsightTheme {
+  theme_id: string
+  theme_name: string
+  theme_type?: string
+  definition?: string
+  implication?: string
+  confidence?: number
+  relation_to_existing_hypotheses?: string
+  representative_quotes?: string[]
+  record_ids?: string[]
+  stats?: {
+    comment_count?: number
+    unique_user_count?: number
+    source_file_count?: number
+    video_count?: number
+  }
+}
+
+export interface InsightThemesResponse {
+  themes?: InsightTheme[]
+  cluster_progress?: {
+    status?: string
+    message?: string
+    progress_pct?: number
+    theme_count?: number
+    cost?: number
+    currency?: string
+    last_error?: string
+  }
+  cluster_running?: boolean
+  warnings?: string[]
 }
 
 export interface InsightCreateRunPayload {
@@ -697,6 +780,11 @@ export interface InsightRunDetail extends InsightRunSummary {
   progress?: Record<string, unknown>
   config?: Record<string, unknown>
   estimate?: Record<string, unknown>
+  summary?: Record<string, unknown>
+  pricing?: Record<string, unknown>
+  is_running?: boolean
+  export_paths?: Record<string, string>
+  document_warnings?: string[]
 }
 
 export interface InsightReport {
@@ -992,7 +1080,7 @@ export const api = {
       '/analysis/sources',
     ),
   insightRuns: () => req<{ runs: InsightRunSummary[] }>('/analysis/runs'),
-  insightProfiles: () => req<{ profiles: InsightProfile[] }>('/analysis/profiles'),
+  insightProfiles: () => req<InsightProfilesResponse>('/analysis/profiles'),
   insightPricing: () => req<InsightPricing>('/analysis/pricing'),
   insightCreateRun: (payload: InsightCreateRunPayload) =>
     req<{ run_id: string; reused?: boolean; total_records?: number }>('/analysis/runs', {
@@ -1013,8 +1101,31 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ background: true, ...payload }),
     }),
+  // 后端实际返回 {text, generated}；以前这里写成 {narrative} —— 页面永远读不到内容
   insightNarrative: (runId: string) =>
-    req<{ narrative?: string; error?: string }>(`/analysis/runs/${runId}/insight-narrative`),
+    req<{ text?: string; generated?: boolean; error?: string }>(
+      `/analysis/runs/${runId}/insight-narrative`,
+    ),
+  insightNarrativeGenerate: (runId: string, payload: Record<string, unknown> = {}) =>
+    req<{ text?: string; generated?: boolean }>(`/analysis/runs/${runId}/insight-narrative`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  insightResults: (runId: string, query: Record<string, string | number | boolean | undefined> = {}) => {
+    const params = new URLSearchParams()
+    for (const [k, v] of Object.entries(query)) {
+      if (v === undefined || v === '' || v === null) continue
+      params.set(k, String(v))
+    }
+    const qs = params.toString()
+    return req<InsightResultsResponse>(`/analysis/runs/${runId}/results/items${qs ? `?${qs}` : ''}`)
+  },
+  insightThemes: (runId: string) => req<InsightThemesResponse>(`/analysis/runs/${runId}/themes`),
+  insightCluster: (runId: string, payload: Record<string, unknown> = {}) =>
+    req<Record<string, unknown>>(`/analysis/runs/${runId}/themes/cluster`, {
+      method: 'POST',
+      body: JSON.stringify({ background: true, ...payload }),
+    }),
   publishCreate: (body: Record<string, unknown>) =>
     req<PublishRecord>('/publish/records', { method: 'POST', body: JSON.stringify(body) }),
   publishUpdate: (id: string, body: Record<string, unknown>) =>

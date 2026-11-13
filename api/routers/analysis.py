@@ -247,10 +247,25 @@ async def get_pricing(base_url: str = DEFAULT_BASE_URL, model_name: str = DEFAUL
 
 @router.get("/profiles")
 async def get_profiles() -> Dict[str, Any]:
-    """List project/scenario profiles (built-in + user-defined)."""
-    from api.services.insight.project_profiles import list_profiles
+    """List project/scenario profiles (built-in + user-defined).
 
-    return {"profiles": [p.model_dump() for p in list_profiles()]}
+    2026-11-13：补 `active_profile_id` 与每条的 `is_configured`。
+    以前只返回 profiles，前端只能把下拉写死成内置 default（名字就是
+    「未配置（请先填写你的产品/领域）」），用户明明建好了档案也显示未配置。
+    """
+    from api.services.insight.project_profiles import (
+        get_active_profile_id,
+        is_configured,
+        list_profiles,
+    )
+
+    profiles = list_profiles()
+    payload = []
+    for profile in profiles:
+        item = profile.model_dump()
+        item["is_configured"] = is_configured(profile)
+        payload.append(item)
+    return {"profiles": payload, "active_profile_id": get_active_profile_id()}
 
 
 class UpsertProfileRequest(BaseModel):
