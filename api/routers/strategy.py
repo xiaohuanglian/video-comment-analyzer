@@ -34,6 +34,8 @@ class StrategyBody(BaseModel):
     reference_styles: list[str] = Field(default_factory=list)
     goal: str = ""
     evidence: str = ""
+    domain: Optional[str] = None
+    research_goal: Optional[str] = None
 
 
 #: 设置页只需要账号定位这一组；档案里还有整份分类词表、语料上下文，
@@ -41,6 +43,8 @@ class StrategyBody(BaseModel):
 _LOCATION_KEYS = (
     "profile_id",
     "name",
+    "domain",
+    "research_goal",
     "niche",
     "target_audience",
     "monetization",
@@ -131,7 +135,7 @@ async def create_profile(body: CreateProfileBody) -> dict[str, Any]:
         domain=(body.domain or body.niche).strip(),
         research_goal=(body.research_goal or "").strip(),
     )
-    stored = pp.upsert_profile(profile)
+    stored = pp.upsert_profile(profile, activate_if_empty=False)
     return {"profile": stored.model_dump(), "active_profile_id": pp.get_active_profile_id()}
 
 

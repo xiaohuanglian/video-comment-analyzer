@@ -2,8 +2,10 @@ import { useCallback, useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { X, RefreshCw, AlertTriangle, CheckCircle2, Filter, Loader2 } from 'lucide-react'
 import clsx from 'clsx'
+import { useSearchParams } from 'react-router-dom'
 import { api, type AutomationCandidate, type AutomationStatus, type AutomationPlatform } from '../lib/api'
 import CandidateCard from '../components/CandidateCard'
+import ReplyPlanPanel from '../components/ReplyPlanPanel'
 
 const TABS = [
   { key: 'pending_review', label: '待批准' },
@@ -20,7 +22,8 @@ const PLATFORM_TABS = [
 ] as const
 
 export default function AutomationPage() {
-  const [platform, setPlatform] = useState<AutomationPlatform>('bili')
+  const [params, setParams] = useSearchParams()
+  const [platform, setPlatform] = useState<AutomationPlatform>(() => ['bili', 'xhs', 'dy'].includes(params.get('platform') ?? '') ? params.get('platform') as AutomationPlatform : 'bili')
   const [tab, setTab] = useState<(typeof TABS)[number]['key']>('pending_review')
   const [items, setItems] = useState<AutomationCandidate[]>([])
   const [status, setStatus] = useState<AutomationStatus | null>(null)
@@ -136,6 +139,7 @@ export default function AutomationPage() {
                   key={pt.key}
                   onClick={() => {
                     setPlatform(pt.key)
+                    setParams({ platform: pt.key }, { replace: true })
                     setSelected(null)
                   }}
                   className={clsx(
@@ -202,6 +206,7 @@ export default function AutomationPage() {
           </button>
         </div>
       </header>
+      {status?.platform === platform && <ReplyPlanPanel key={platform} platform={platform} status={status} onSaved={() => void refresh()} />}
 
       {(notice || screenResult) && (
         <div
@@ -306,7 +311,7 @@ export default function AutomationPage() {
       {status?.sender && platform === 'dy' && !status.sender.pause_until && (
         <div className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-2 text-xs text-stone-500">
           抖音通道:采集/筛选/起草/人工批准已就绪;发送默认关闭——依赖本机已登录抖音的浏览器(CDP 9222),
-          且草稿经硬校验、逐条人批后才发送。要启用发送:设置页打开「抖音」通道的总开关。
+          且草稿经硬校验、逐条人批后才发送。启用发送前，请核实本页通道状态与人工批准队列。
         </div>
       )}
 

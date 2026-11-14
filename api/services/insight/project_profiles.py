@@ -190,7 +190,7 @@ class ProfileNotConfigured(RuntimeError):
     def __init__(self, message: str = "") -> None:
         super().__init__(
             message
-            or "还没有配置项目档案。请先在「设置 → 项目档案」填写你的产品、目标人群与研究目标"
+            or "还没有配置项目档案。请先在「增长工作台 → 产品档案」填写你的产品、目标人群与研究目标"
             "（或用「AI 根据评论生成档案」生成一份），否则采集口径、筛选标准与选题都会失准。"
         )
 
@@ -396,7 +396,7 @@ def get_active_profile_id() -> str:
     """当前档案 id；没有则返回空串（不猜）。"""
     data = _read_raw()
     pid = str(data.get("active_profile_id") or "").strip()
-    if pid:
+    if "active_profile_id" in data:
         return pid
     configured = [p.profile_id for p in _custom_profiles().values() if is_configured(p)]
     return configured[0] if len(configured) == 1 else ""
@@ -423,7 +423,7 @@ def get_active_profile() -> Optional[ProjectProfile]:
     return get_profile(pid) if pid else None
 
 
-def upsert_profile(profile: ProjectProfile) -> ProjectProfile:
+def upsert_profile(profile: ProjectProfile, *, activate_if_empty: bool = True) -> ProjectProfile:
     """Create or update a user profile (stored in the data dir).
 
     未指定 `updated_at` 时自动打时间戳；保存时**保留未知字段**（见
@@ -444,8 +444,9 @@ def upsert_profile(profile: ProjectProfile) -> ProjectProfile:
         rows.append(stored.model_dump())
         data["profiles"] = rows
         # 第一个被创建的档案自动成为当前档案，避免「建好了却没在用」。
-        if not str(data.get("active_profile_id") or "").strip():
+        if activate_if_empty and not str(data.get("active_profile_id") or "").strip():
             data["active_profile_id"] = stored.profile_id
+        data.setdefault("active_profile_id", "")
         _write_raw(data)
     return stored
 

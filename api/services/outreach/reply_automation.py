@@ -795,7 +795,7 @@ def _screen_brief() -> str:
 
     if not (niche and audience):
         raise ProfileNotConfigured(
-            "回复筛选需要先知道「我们是谁、面向谁」。请到「设置 → 账号定位」"
+            "回复筛选需要先知道「我们是谁、面向谁」。请到「增长工作台 → 产品档案」"
             "填写 niche 与 target_audience，或配置一份项目档案（domain / target_audience）。"
             "此前这里会静默回落到内置的 AI 内容定位，导致筛选口径整体跑偏。"
         )

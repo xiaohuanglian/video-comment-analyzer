@@ -96,6 +96,7 @@ def read_json(
     default: Any,
     expect: Optional[type] = None,
     tolerate_corruption: bool = False,
+    quarantine_corruption: bool = True,
 ) -> Any:
     """读 JSON。
 
@@ -103,6 +104,7 @@ def read_json(
     - 文件存在但解析失败 → **默认抛 JsonStoreCorruption**，并已把坏文件
       改名留存；只有显式 `tolerate_corruption=True` 才降级为 default
       （仅用于「读挂了也不该拦住主流程」的旁路，如成本台账展示）。
+    - 只读诊断可设 `quarantine_corruption=False`：仍抛错，但不移动原文件。
     """
     if not path.exists():
         return default
@@ -110,7 +112,7 @@ def read_json(
         raw = path.read_text(encoding="utf-8")
         data = json.loads(raw) if raw.strip() else default
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        backup = _quarantine(path) if path.exists() else None
+        backup = _quarantine(path) if quarantine_corruption and path.exists() else None
         if tolerate_corruption:
             return default
         raise JsonStoreCorruption(path, backup, f"{type(exc).__name__}: {exc}") from exc
