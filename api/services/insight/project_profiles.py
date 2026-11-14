@@ -227,10 +227,21 @@ def builtin_profiles() -> Dict[str, ProjectProfile]:
 
 
 DEFAULT_PROFILE_ID = "default"
+#: 「我自己的自媒体账号」这份档案的 id。
+#:
+#: 2026-11-14 纠正：这份档案是在「单档案时代」从 data/strategy/youvibe_account.json
+#: 迁过来的，迁移代码把文件名当成了 id，于是你自媒体的账号档案被叫成 youvibe——
+#: 而 youvibe 是造浪 YouVibe 这个产品（BP 里的产品），两件事被同一个名字拴在一起，
+#: 档案下拉里才会显示成「AI 创业者（自媒体账号） · youvibe」。
+#: 现在：产品归「造浪」档案，账号归这份「我的」（name 仍是「AI 创业者（自媒体账号）」）。
+MY_ACCOUNT_PROFILE_ID = "我的"
+
 # "generic" was an early neutral synonym for the built-in default; keep it as a
-# convenience alias. Any other historical id is NOT special-cased — unknown ids
-# simply fall back to `default` in resolve_profile(), so old configs still load.
-_LEGACY_PROFILE_ALIASES = {"generic": "default"}
+# convenience alias. Unknown ids are NOT special-cased — they simply fall back to
+# `default` in resolve_profile(), so old configs still load.
+# "youvibe" 是上面那份账号档案的历史 id（迁移遗留），重命名后继续可解析，
+# 老的 run/文案配置不会因为改名而丢档案。
+_LEGACY_PROFILE_ALIASES = {"generic": "default", "youvibe": MY_ACCOUNT_PROFILE_ID}
 
 
 # --- storage -----------------------------------------------------------------
@@ -318,7 +329,7 @@ def _migrate_legacy_strategy() -> Optional[Dict[str, Any]]:
 
     niche = str(raw.get("niche") or "")
     profile = {
-        "profile_id": "youvibe",
+        "profile_id": MY_ACCOUNT_PROFILE_ID,
         # 名字只取定位的第一个短句：整段定位有 60+ 字，直接截断会断在半句上，
         # 在档案列表里看起来像是数据坏了。
         "name": _short_name(niche),
@@ -337,7 +348,7 @@ def _migrate_legacy_strategy() -> Optional[Dict[str, Any]]:
     }
     data = {
         "version": PROFILES_FILE_VERSION,
-        "active_profile_id": "youvibe",
+        "active_profile_id": MY_ACCOUNT_PROFILE_ID,
         "profiles": [profile],
         "migrated_from": str(legacy.name),
     }
@@ -396,6 +407,7 @@ def set_active_profile(profile_id: str) -> str:
     pid = (profile_id or "").strip()
     if not pid:
         raise ValueError("profile_id 不能为空")
+    pid = _LEGACY_PROFILE_ALIASES.get(pid, pid)
     if pid not in _custom_profiles():
         raise KeyError(f"档案不存在：{pid}")
     with lock_for(_profiles_path()):

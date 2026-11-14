@@ -113,12 +113,16 @@ def test_legacy_strategy_file_is_migrated(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
-    migrated = pp.get_profile("youvibe")
+    # 迁移出来的这份是「我的自媒体账号」，id 用中文「我的」；
+    # youvibe 是造浪那个产品的名字，不该挂在这份账号档案上（2026-11-14 纠正）。
+    migrated = pp.get_profile(pp.MY_ACCOUNT_PROFILE_ID)
     assert migrated is not None
     assert migrated.niche.startswith("AI 创业者")
     assert migrated.target_audience == "想做副业的上班族"
     assert migrated.target_scenarios == [{"name": "旧场景"}]
-    assert pp.get_active_profile_id() == "youvibe"
+    assert pp.get_active_profile_id() == pp.MY_ACCOUNT_PROFILE_ID
+    # 历史 id 仍可解析，老配置不会因为改名而丢档案
+    assert pp.get_profile("youvibe").profile_id == pp.MY_ACCOUNT_PROFILE_ID
     # 旧文件保留，可回溯
     assert (legacy_dir / "youvibe_account.json").exists()
 
