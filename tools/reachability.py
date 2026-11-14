@@ -202,7 +202,6 @@ def write_baseline(path: Path, modules: Iterable[str]) -> None:
 #: 明确声明「只给 CLI / 外部脚本用、不需要 Web UI」的前缀。
 #: 新增条目必须写清楚为什么，否则测试会把它当成缺口。
 UI_EXEMPT_PREFIXES = {
-    "growth": "增长引擎是独立子系统（产品/实验/机会），当前按 CLI+API 方式使用",
     "data": "文件浏览接口服务于下载链接，页面内以 href 直接引用",
     "bilibili": "B 站直连调试接口，由 CLI 使用",
     "youvibe": "内部数据分析查询，随 skill 离线使用",
@@ -228,7 +227,7 @@ def backend_prefixes(root: Path = ROOT) -> Dict[str, int]:
         if not match:
             continue
         prefix = match.group(1).split("/")[0]
-        counts[prefix] = len(re.findall(r"@router\.(?:get|post|patch|put|delete)", text))
+        counts[prefix] = counts.get(prefix, 0) + len(re.findall(r"@router\.(?:get|post|patch|put|delete)", text))
     return counts
 
 
@@ -250,12 +249,18 @@ def frontend_called_paths(root: Path = ROOT) -> Set[str]:
     之间找 method——不能跨语句贪婪匹配，否则会把下一条调用的
     method 张冠李戴（这曾让 chat 被误判成没接入）。
     """
-    import re
 
-    client = root / "web_react" / "src" / "lib" / "api.ts"
-    if not client.exists():
-        return set()
-    text = client.read_text(encoding="utf-8")
+    # API clients may be split by domain. Do not scan test files: their fake
+    # requests cannot establish production reachability.
+    clients = root / "web_react" / "src" / "lib"
+    found: Set[str] = set()
+    for client in sorted(clients.glob("*api.ts")):
+        found.update(_client_called_paths(client.read_text(encoding="utf-8")))
+    return found
+
+
+def _client_called_paths(text: str) -> Set[str]:
+    import re
 
     starts = [m.start() for m in re.finditer(r"req(?:<[^>]*>)?\(\s*[`'\"]", text)]
     starts.append(len(text))

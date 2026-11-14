@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..growth.operating_models import GrowthContext
 from ..json_store import lock_for, read_json, write_json
 from .prompts import (
     PERSONALIZED_VIDEO_KEYWORDS,
@@ -87,6 +88,7 @@ class ProjectProfile(BaseModel):
     goal: str = ""
     evidence: str = ""
     target_scenarios: List[Dict[str, Any]] = Field(default_factory=list)
+    growth_context: GrowthContext = Field(default_factory=GrowthContext)
     updated_at: str = ""
 
     # 2026-11-11：允许未知字段**原样保留**。

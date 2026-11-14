@@ -4,7 +4,7 @@
 真人不会凌晨三点爬起来搜六个不相关的话题；发送侧早就有 09:00–22:00 窗口，采集侧此前
 完全没有作息概念。
 """
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pytest
 

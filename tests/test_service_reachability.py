@@ -182,3 +182,13 @@ def test_detector_accepts_prefix_with_enough_ui_calls(tmp_path: Path):
     )
 
     assert "live" not in reachability.routes_without_ui(tmp_path)
+
+
+def test_detector_reads_split_api_clients_but_not_test_requests(tmp_path: Path):
+    client = tmp_path / "web_react" / "src" / "lib"
+    client.mkdir(parents=True)
+    (client / "growth-api.ts").write_text("req<X>('/growth/workspaces/a')", encoding="utf-8")
+    (client / "api.test.ts").write_text("req<X>('/phantom/not-production')", encoding="utf-8")
+    called = reachability.frontend_called_paths(tmp_path)
+    assert "growth/workspaces/a" in called
+    assert not any("phantom" in path for path in called)

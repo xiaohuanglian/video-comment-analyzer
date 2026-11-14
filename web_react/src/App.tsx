@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
 import HomePage from './pages/HomePage'
+import GrowthPage from './pages/GrowthPage'
 import CollectPage from './pages/CollectPage'
 import InsightPage from './pages/InsightPage'
 import WeChatPage from './pages/WeChatPage'
@@ -16,7 +17,8 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}>
-          <Route index element={<HomePage />} />
+          <Route index element={<GrowthPage />} />
+          <Route path="assistant" element={<HomePage />} />
           <Route path="collect" element={<CollectPage />} />
           <Route path="insight" element={<InsightPage />} />
           <Route path="wechat" element={<WeChatPage />} />

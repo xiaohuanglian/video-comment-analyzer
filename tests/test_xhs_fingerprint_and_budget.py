@@ -19,7 +19,6 @@ import time
 import pytest
 
 import config
-from media_platform.xhs import fingerprint as fp_mod
 from media_platform.xhs.fingerprint import (
     BrowserFingerprint,
     derive_from_user_agent,

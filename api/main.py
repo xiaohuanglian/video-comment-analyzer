@@ -40,6 +40,7 @@ from .routers import (
     youtube_router,
     youvibe_router,
 )
+from .routers.growth_workspace import router as growth_workspace_router
 from .services.browser_check import probe_browser_launch
 from .services.platform_capabilities import PLATFORM_CAPABILITIES
 
@@ -168,6 +169,7 @@ app.include_router(creator_router, prefix="/api")
 app.include_router(analysis_router, prefix="/api")
 app.include_router(analysis_artifacts_router, prefix="/api/analysis")
 app.include_router(growth_router, prefix="/api")
+app.include_router(growth_workspace_router, prefix="/api")
 app.include_router(automation_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 app.include_router(topics_router, prefix="/api")

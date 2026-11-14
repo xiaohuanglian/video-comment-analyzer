@@ -1,10 +1,11 @@
-import { NavLink, Outlet } from 'react-router-dom'
-import { Home, Download, Bot, Lightbulb, PenLine, Settings, BookOpen, Rocket, Sparkles, ScanSearch } from 'lucide-react'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { Home, Download, Bot, Lightbulb, PenLine, Settings, BookOpen, Rocket, Sparkles, ScanSearch, MessageSquare } from 'lucide-react'
 import clsx from 'clsx'
 import ErrorBoundary from './ErrorBoundary'
 
 const NAV = [
-  { to: '/', label: '首页', icon: Home, end: true },
+  { to: '/', label: '增长工作台', icon: Home, end: true },
+  { to: '/assistant', label: 'AI 助手', icon: MessageSquare },
   { to: '/collect', label: '采集', icon: Download },
   { to: '/insight', label: '评论洞察', icon: ScanSearch },
   { to: '/wechat', label: '公众号', icon: BookOpen },
@@ -17,12 +18,20 @@ const NAV = [
 ]
 
 export default function Layout() {
+  const location = useLocation()
+  const navigate = useNavigate()
   return (
-    <div className="flex h-full">
-      <aside className="w-52 shrink-0 border-r border-stone-200 bg-white flex flex-col">
+    <div className="flex h-full flex-col md:flex-row">
+      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-stone-200 bg-white px-4 py-3 md:hidden">
+        <span className="shrink-0 text-sm font-semibold">增长工作台</span>
+        <select aria-label="工作台页面" className="min-w-0 rounded-lg border border-stone-200 px-2 py-1.5 text-sm" value={location.pathname} onChange={event => navigate(event.target.value)}>
+          {NAV.map(item => <option key={item.to} value={item.to}>{item.label}</option>)}
+        </select>
+      </header>
+      <aside className="hidden w-52 shrink-0 flex-col border-r border-stone-200 bg-white md:flex">
         <div className="px-5 py-4 text-lg font-semibold tracking-tight">
-          评论工作台
-          <span className="ml-2 text-xs font-normal text-stone-400">v2</span>
+          增长工作台
+          <span className="mt-1 block text-xs font-normal text-stone-400">理解 · 执行 · 验证 · 积累</span>
         </div>
         <nav className="flex-1 px-3 space-y-1">
           {NAV.map(({ to, label, icon: Icon, end }) => (
@@ -46,7 +55,7 @@ export default function Layout() {
         </nav>
 
       </aside>
-      <main className="flex-1 min-w-0 overflow-y-auto">
+      <main className="min-h-0 flex-1 min-w-0 overflow-y-auto">
         {/*
           页面级错误边界：任何一页渲染崩溃都只影响这一屏，
           侧边栏仍在，用户能切到别的页面继续干活（此前会整站白屏）。
