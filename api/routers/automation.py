@@ -6,7 +6,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from api.services.outreach import reply_automation as auto
@@ -19,6 +20,9 @@ class CandidateDecision(BaseModel):
 
 
 class ConfigUpdate(BaseModel):
+    profile_id: Optional[str] = None
+    reply_goal: Optional[str] = None
+    reply_mode: Optional[str] = None
     enabled: Optional[bool] = None
     auto_draft: Optional[bool] = None
     keywords: Optional[list[str]] = None
@@ -56,8 +60,12 @@ def _store(platform: str = "bili") -> auto.AutomationStore:
     return auto.get_store(platform)
 
 
-def _funnel(store: auto.AutomationStore) -> dict[str, int]:
-    items = store.items
+def _matches_profile(item: dict[str, Any], profile_id: str) -> bool:
+    return not profile_id or (not item.get("profile_id") if profile_id == "__unbound__" else item.get("profile_id") == profile_id)
+
+
+def _funnel(store: auto.AutomationStore, profile_id: str = "") -> dict[str, int]:
+    items = [it for it in store.items if _matches_profile(it, profile_id)]
     return {
         "pending_review": sum(1 for i in items if i["status"] == "pending_review"),
         "approved": sum(1 for i in items if i["status"] == "approved"),
@@ -70,7 +78,7 @@ def _funnel(store: auto.AutomationStore) -> dict[str, int]:
 
 
 @router.get("/status")
-async def status(platform: str = "bili") -> dict[str, Any]:
+async def status(platform: str = "bili", profile_id: str = "") -> dict[str, Any]:
     store = _store(platform)
     cfg = store.config
     sender = store.sender_state()
@@ -79,7 +87,7 @@ async def status(platform: str = "bili") -> dict[str, Any]:
         "platform": store.platform,
         "enabled": cfg.get("enabled", False),
         "config": cfg,
-        "funnel": _funnel(store),
+        "funnel": _funnel(store, profile_id),
         "stats": store._state["stats"],
         "cycle": store._state["cycle"],
         "sender": {
@@ -95,16 +103,21 @@ async def status(platform: str = "bili") -> dict[str, Any]:
 
 
 @router.get("/candidates")
-async def candidates(status: str = "pending_review", limit: int = 60, platform: str = "bili") -> list[dict[str, Any]]:
+async def candidates(status: str = "pending_review", limit: int = 60, platform: str = "bili", profile_id: str = "") -> list[dict[str, Any]]:
     store = _store(platform)
-    items = [i for i in store.items if i["status"] == status]
-    items.sort(key=lambda i: (0 if i.get("tier") == "A" else 1, -i.get("like_count", 0)))
-    return items[-limit:][::-1]
+    items = [i for i in store.items if i["status"] == status and _matches_profile(i, profile_id)]
+    items.sort(key=lambda i: (-i.get("worth", 0), 0 if i.get("tier") == "A" else 1, -i.get("like_count", 0)))
+    from api.services.outreach.reply_campaign import product_source_outdated
+
+    return [{**item, "product_source_outdated": product_source_outdated(item)} for item in items[:max(1, min(limit, 1000))]]
 
 
 @router.post("/candidates/{item_id}/approve")
 async def approve(item_id: str, body: CandidateDecision, platform: str = "bili") -> dict[str, Any]:
     store = _store(platform)
+    existing = store.find(item_id)
+    if existing and not existing.get("profile_id"):
+        raise HTTPException(status_code=400, detail="历史条目未记录产品归属，请选择产品重新筛选后再批准")
     try:
         item = store.decide(item_id, "approve", draft=body.draft)
     except ValueError as exc:  # 相似度闸 / 小红书硬校验拦截
@@ -148,6 +161,12 @@ async def redraft(item_id: str, platform: str = "bili") -> dict[str, Any]:
     item = store.find(item_id)
     if not item or item["status"] != "pending_review":
         raise HTTPException(status_code=400, detail="条目不存在或已处理")
+    if not item.get("profile_snapshot"):
+        raise HTTPException(status_code=400, detail="历史条目没有产品档案快照，请选择产品重新筛选，不能按全局档案重写")
+    from api.services.outreach.reply_campaign import product_source_outdated
+
+    if product_source_outdated(item):
+        raise HTTPException(status_code=400, detail="产品公开能力已更新，请按当前产品重新筛选，不能用旧依据重写")
     draft = await auto.draft_with_llm(item)
     if not draft:
         raise HTTPException(status_code=400, detail="起草失败：模型未配置或调用失败，可手动填写")
@@ -164,25 +183,92 @@ async def draft_manual(item_id: str, body: CandidateDecision, platform: str = "b
     return {"ok": True, "item": updated}
 
 
+@router.post("/candidates/{item_id}/attachments")
+async def add_attachment(item_id: str, request: Request, platform: str = "bili", filename: str = "图片") -> dict[str, Any]:
+    from api.services.outreach import reply_attachments as attachments
+
+    store = _store(platform)
+    item = store.find(item_id)
+    if not item or item.get("status") != "pending_review":
+        raise HTTPException(status_code=400, detail="只有待审草稿可以添加图片；已批准条目请先撤回")
+    content = bytearray()
+    async for chunk in request.stream():
+        content.extend(chunk)
+        if len(content) > attachments.MAX_BYTES:
+            raise HTTPException(status_code=413, detail="单张图片最多8MB")
+    try:
+        metadata = await asyncio.to_thread(attachments.inspect_image, bytes(content), filename)
+        # 上传过程中可能已被批准，读取后再次确认；随后修改和保存之间不让出事件循环。
+        item = store.find(item_id)
+        if not item or item.get("status") != "pending_review":
+            raise ValueError("条目状态已改变，请先撤回批准再编辑附件")
+        existing = item.get("attachments") or []
+        if len(existing) >= attachments.MAX_IMAGES:
+            raise ValueError("一条回复最多添加3张图片")
+        if any(a.get("attachment_id") == metadata["attachment_id"] for a in existing):
+            raise ValueError("这张图片已经添加")
+        attachments.store_image(bytes(content), metadata)
+        item["attachments"] = [*existing, metadata]
+        store.save()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "item": item}
+
+
+@router.get("/candidates/{item_id}/attachments/{attachment_id}")
+async def get_attachment(item_id: str, attachment_id: str, platform: str = "bili"):
+    from api.services.outreach.reply_attachments import image_path
+
+    item = _store(platform).find(item_id)
+    metadata = next((a for a in (item or {}).get("attachments", []) if a.get("attachment_id") == attachment_id), None)
+    if not metadata:
+        raise HTTPException(status_code=404, detail="图片附件不存在")
+    try:
+        path = image_path(metadata)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="图片文件不存在，请重新添加")
+    return FileResponse(path, media_type=metadata["mime_type"], filename=metadata.get("original_name") or path.name, content_disposition_type="inline", headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
+
+
+@router.delete("/candidates/{item_id}/attachments/{attachment_id}")
+async def remove_attachment(item_id: str, attachment_id: str, platform: str = "bili") -> dict[str, Any]:
+    store = _store(platform)
+    item = store.find(item_id)
+    if not item or item.get("status") != "pending_review":
+        raise HTTPException(status_code=400, detail="只有待审草稿可以修改图片；请先撤回批准")
+    item["attachments"] = [a for a in item.get("attachments", []) if a.get("attachment_id") != attachment_id]
+    store.save()
+    return {"ok": True, "item": item}
+
+
 class ScreenRequest(BaseModel):
+    profile_id: str = ""
+    reply_goal: str = ""
+    reply_mode: str = "recommend"
     max_candidates: int = 50
     auto_draft: bool = True
     source: str = "both"  # both=双目录合并(默认) | bulk=手动批量(data/comments) | cycle=自动周期(各平台目录)
 
 
 @router.post("/candidates/bulk-approve")
-async def bulk_approve(platform: str = "bili") -> dict[str, Any]:
+async def bulk_approve(platform: str = "bili", profile_id: str = "") -> dict[str, Any]:
     """批量批准全部 LLM 精筛且已有草稿的待审条目(规则筛遗留与无草稿的不动)。"""
     store = _store(platform)
-    approved, skipped, skipped_similar = store.bulk_approve_llm_screened()
+    if not profile_id or profile_id == "__unbound__":
+        raise HTTPException(status_code=400, detail="请先选择产品，批量批准仅作用于该产品")
+    approved, skipped, skipped_similar = store.bulk_approve_llm_screened(profile_id=profile_id)
     return {"ok": True, "approved": approved, "skipped_no_draft": skipped, "skipped_similar": skipped_similar}
 
 
 @router.post("/candidates/bulk-reject")
-async def bulk_reject(platform: str = "bili") -> dict[str, Any]:
+async def bulk_reject(platform: str = "bili", profile_id: str = "") -> dict[str, Any]:
     """一键拒绝全部旧规则筛的待审条目(仅限 screened_by != llm 的遗留项)。"""
     store = _store(platform)
-    n = store.bulk_reject_rules_screened()
+    if not profile_id:
+        raise HTTPException(status_code=400, detail="请明确选择产品或历史条目，批量拒绝仅作用于该范围")
+    n = store.bulk_reject_rules_screened(profile_id=profile_id)
     return {"ok": True, "rejected": n}
 
 
@@ -192,6 +278,13 @@ async def screen_collected(body: ScreenRequest, platform: str = "bili") -> dict[
     store = _store(platform)
     if store._state["cycle"].get("running"):
         raise HTTPException(status_code=409, detail="已有筛选/采集任务在运行")
+
+    from api.services.outreach.reply_campaign import make_campaign
+
+    try:
+        campaign = make_campaign(body.profile_id, body.reply_goal, body.reply_mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     async def _run() -> None:
         from api.services.outreach.reply_automation import BULK_COMMENT_DIR, comment_dir_for
@@ -203,7 +296,7 @@ async def screen_collected(body: ScreenRequest, platform: str = "bili") -> dict[
         )
         await auto.screen_collected(
             store, max_candidates=body.max_candidates, auto_draft=body.auto_draft,
-            source_dir=source_dir,
+            source_dir=source_dir, campaign=campaign,
         )
 
     asyncio.create_task(_run())
@@ -211,14 +304,22 @@ async def screen_collected(body: ScreenRequest, platform: str = "bili") -> dict[
 
 
 @router.post("/collect-now")
-async def collect_now(mode: str = "", platform: str = "bili") -> dict[str, Any]:
+async def collect_now(mode: str = "", platform: str = "bili", body: Optional[ScreenRequest] = None) -> dict[str, Any]:
     """立即跑一轮采集。mode 可临时覆盖采集模式：list(竞品清单)/search(关键词扫描)。"""
     store = _store(platform)
     if store._state["cycle"].get("running"):
         raise HTTPException(status_code=409, detail="采集周期已在运行")
     if mode and mode not in ("list", "search"):
         raise HTTPException(status_code=400, detail="mode 仅支持 list / search")
-    asyncio.create_task(auto.run_cycle(store, mode_override=mode))
+    from api.services.outreach.reply_campaign import make_campaign
+
+    try:
+        campaign = make_campaign(body.profile_id if body else str(store.config.get("profile_id") or ""),
+                                 body.reply_goal if body else str(store.config.get("reply_goal") or ""),
+                                 body.reply_mode if body else str(store.config.get("reply_mode") or "recommend"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    asyncio.create_task(auto.run_cycle(store, mode_override=mode, campaign=campaign))
     return {"ok": True, "message": "采集周期已启动（后台运行，稍后刷新查看）"}
 
 
@@ -233,7 +334,10 @@ async def update_config(body: ConfigUpdate, platform: str = "bili") -> dict[str,
             partial["note_urls"] = value
         else:
             partial[key] = value
-    cfg = store.update_config(partial)
+    try:
+        cfg = store.update_config(partial)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "config": cfg}
 
 

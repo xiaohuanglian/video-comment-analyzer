@@ -291,7 +291,7 @@ def _qual_stats_section(qual_stats: Optional[dict]) -> List[str]:
     if intent_counts:
         lines.extend(
             [
-                "### 主要沟通目的",
+                "### 评论主要表达（模型归类，非用户画像）",
                 "",
                 "| 目的 | 条数 | 占比 |",
                 "| --- | ---: | ---: |",
@@ -307,9 +307,9 @@ def _qual_stats_section(qual_stats: Optional[dict]) -> List[str]:
     if signal_coverage:
         lines.extend(
             [
-                "### 信息信号覆盖率",
+                "### 已分析评论中的信号占比",
                 "",
-                "> 同一评论可含多个信号，覆盖率之和可能超过 100%。",
+                "> 分母是已分析评论条数；同一信号每条只计一次。多信号占比之和可超过100%，不代表准确率或转化概率。",
                 "",
                 "| 信号 | 条数 | 覆盖率 |",
                 "| --- | ---: | ---: |",
@@ -330,7 +330,7 @@ def _qual_stats_section(qual_stats: Optional[dict]) -> List[str]:
     if video_stats:
         lines.extend(
             [
-                "### 一次回复能解决吗",
+                "### 原文提出的答复形式线索（不预测能否解决）",
                 "",
                 "| 情况 | 条数 | 覆盖率 |",
                 "| --- | ---: | ---: |",

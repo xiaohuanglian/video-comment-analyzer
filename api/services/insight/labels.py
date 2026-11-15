@@ -50,10 +50,10 @@ SIGNAL_LABELS = {
 }
 
 SINGLE_VIDEO_LABELS = {
-    "video_sufficient": "现有内容/视频已足够",
-    "one_reply_sufficient": "一次回复可解决",
-    "personalized_judgment_needed": "需结合个人情况",
-    "realtime_observation_needed": "需看到实际操作",
+    "video_sufficient": "历史推断：内容已足够（未验证）",
+    "one_reply_sufficient": "历史推断：一次可解决（未验证）",
+    "personalized_judgment_needed": "原文要求结合个人情况",
+    "realtime_observation_needed": "原文请求查看操作",
     "unclear": "暂无法判断",
 }
 

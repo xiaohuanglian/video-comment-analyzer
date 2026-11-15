@@ -313,6 +313,10 @@ class DouYinCrawler(AbstractCrawler):
             await asyncio.wait(task_list)
 
     async def get_comments(self, aweme_id: str, semaphore: asyncio.Semaphore) -> None:
+        from tools.content_precheck import allow_comments
+
+        if not await allow_comments("dy", str(aweme_id)):
+            return
         async with semaphore:
             try:
                 # Pass the list of keywords to the get_aweme_all_comments method

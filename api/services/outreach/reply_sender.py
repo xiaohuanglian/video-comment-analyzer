@@ -12,6 +12,7 @@ platform cookies in run artifacts.
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Callable, Optional
 
@@ -105,6 +106,7 @@ def send_bilibili_reply(
     cookie: str = "",
     url: str = "",
     root_id: str = "",
+    attachments: Optional[list[dict]] = None,
 ) -> str:
     """Post a public reply and return the platform reply id (if any).
 
@@ -134,6 +136,30 @@ def send_bilibili_reply(
     with httpx.Client(timeout=20.0, follow_redirects=True) as client:
         aid = _resolve_bilibili_aid(client, content_id, _headers(cookie))
         referer = f"https://www.bilibili.com/video/{content_id}"
+        pictures = []
+        if attachments:
+            from .reply_attachments import MAX_IMAGES, load_image
+
+            if len(attachments) > MAX_IMAGES:
+                raise ReplySendError("一条回复最多3张图片")
+            # 先把所有图片校验完再上传，避免第二张缺失时已上传第一张。
+            contents = [(metadata, load_image(metadata)) for metadata in attachments]
+            for metadata, content in contents:
+                uploaded = client.post(
+                    "https://api.bilibili.com/x/dynamic/feed/draw/upload_bfs",
+                    data={"csrf": csrf, "category": "daily", "biz": "new_dyn"},
+                    files={"file_up": (f"reply.{metadata['extension']}", content, metadata['mime_type'])},
+                    headers=_headers(cookie, referer),
+                )
+                try:
+                    upload_result = uploaded.json()
+                except ValueError as exc:
+                    raise ReplySendError("图片上传失败：平台返回非JSON") from exc
+                info = upload_result.get("data") or {}
+                if upload_result.get("code") != 0 or not info.get("image_url"):
+                    raise ReplySendError(f"图片上传失败：{upload_result.get('message') or upload_result.get('code')}")
+                pictures.append({"img_src": info["image_url"], "img_width": info.get("image_width") or metadata["width"],
+                                 "img_height": info.get("image_height") or metadata["height"], "img_size": info.get("img_size") or len(content) / 1024})
         response = client.post(
             _BILIBILI_REPLY_ADD,
             data={
@@ -143,6 +169,7 @@ def send_bilibili_reply(
                 "root": root,
                 "parent": parent,
                 "csrf": csrf,
+                **({"pictures": json.dumps(pictures), "plat": 1} if pictures else {}),
             },
             headers=_headers(cookie, referer),
         )

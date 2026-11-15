@@ -117,5 +117,5 @@ def test_contact_reason_non_empty_for_high_score():
     }
     score = compute_candidate_score(analysis)
     reason = build_contact_reason(analysis, score)
-    assert score >= 7
+    assert score == 5
     assert reason

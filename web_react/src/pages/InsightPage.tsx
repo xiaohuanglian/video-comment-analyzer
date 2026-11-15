@@ -64,21 +64,6 @@ const INTENT_LABELS_DEFAULT: Record<string, string> = {
   invalid_or_unclear: '无效/不明',
 }
 
-const SINGLE_VIDEO_LABELS: Record<string, string> = {
-  video_sufficient: '现有视频已足够',
-  one_reply_sufficient: '一次回复可解决',
-  personalized_judgment_needed: '需结合个人情况',
-  realtime_observation_needed: '需实时观察',
-  unclear: '暂无法判断',
-}
-
-const PRODUCT_FIT_LABELS: Record<string, string> = {
-  high: '高度契合',
-  medium: '部分契合',
-  low: '不契合',
-  unclear: '不明',
-}
-
 const THEME_RELATION_LABELS: Record<string, string> = {
   supports_existing: '支持已有假设',
   extends_existing: '补充已有假设',
@@ -98,9 +83,6 @@ const OVERVIEW_METRICS: { key: string; label: string; hint?: string }[] = [
   { key: 'gratitude_signal_count', label: '表达感谢' },
   { key: 'check_in_count', label: '签到打卡' },
   { key: 'result_feedback_count', label: '反馈使用结果' },
-  { key: 'personalized_needed_count', label: '需要针对性回答' },
-  { key: 'realtime_needed_count', label: '需要看到实际过程' },
-  { key: 'product_fit_high_count', label: '与内容/产品高度契合' },
   { key: 'research_matched_user_count', label: '命中目标人群' },
   { key: 'contactable_homepage_count', label: '可找到主页' },
 ]
@@ -288,7 +270,7 @@ export default function InsightPage() {
   const [results, setResults] = useState<InsightResultsItem[]>([])
   const [resultsTotal, setResultsTotal] = useState(0)
   const [resultsPage, setResultsPage] = useState(1)
-  const [resultFilters, setResultFilters] = useState({ primary_intent: '', single_video_relation: '', product_fit: '', keyword: '' })
+  const [resultFilters, setResultFilters] = useState({ primary_intent: '', keyword: '' })
   const [report, setReport] = useState('')
   const [narrative, setNarrative] = useState('')
   // 采集页「历史报告」（B 站/YouTube 对标报告）是另一套产物，和洞察任务无关。
@@ -457,8 +439,6 @@ export default function InsightPage() {
           page_size: 20,
           keyword: filters.keyword,
           primary_intent: filters.primary_intent,
-          single_video_relation: filters.single_video_relation,
-          product_fit: filters.product_fit,
           intent_valid: filters.primary_intent ? 'true' : undefined,
         })
         setResults(res.items ?? [])
@@ -1137,6 +1117,7 @@ export default function InsightPage() {
 
               {tab === 'overview' && (
                 <section className="space-y-3">
+                  <p className="rounded-xl bg-amber-50 p-3 text-xs text-amber-800">本页描述评论样本中的表达与证据，不是经过校准的用户画像或转化预测。这里只展示评论表达、具体困难和行为证据；不推断产品契合度或一次回复能否解决。自动回复另按明确产品任务逐条判断，不使用这些汇总占比选人。旧结果应刷新统计后查看。</p>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                     {OVERVIEW_METRICS.map(({ key, label }) => (
                       <div key={key} className="rounded-xl border border-stone-200 bg-white p-2.5 shadow-sm">
@@ -1148,9 +1129,9 @@ export default function InsightPage() {
                     ))}
                   </div>
 
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-3">
                     <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
-                      <h3 className="mb-2 text-xs font-semibold text-stone-700">主要沟通目的</h3>
+                      <h3 className="mb-2 text-xs font-semibold text-stone-700">评论主要表达（模型归类）</h3>
                       {Object.keys((summary.primary_intent_counts as Record<string, number>) ?? {}).length === 0 && (
                         <p className="text-[11px] text-stone-400">还没有分析结果。</p>
                       )}
@@ -1177,38 +1158,11 @@ export default function InsightPage() {
                           )
                         })}
                     </div>
-
-                    <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
-                      <h3 className="mb-2 text-xs font-semibold text-stone-700">一次回复能解决吗</h3>
-                      <div className="space-y-1">
-                        {Object.entries((summary.single_video_stats as Record<string, unknown>) ?? {})
-                          .map(([k, v]) => [k, metricOf(v)] as const)
-                          .sort((a, b) => b[1].count - a[1].count)
-                          .map(([k, v]) => (
-                            <div key={k} className="flex items-center justify-between text-[11px] text-stone-600">
-                              <span>{SINGLE_VIDEO_LABELS[k] ?? k}</span>
-                              <span className="shrink-0 text-stone-400">
-                                {formatCount(v.count)}
-                                {v.coverage_pct !== undefined ? ` · ${v.coverage_pct.toFixed(1)}%` : ''}
-                              </span>
-                            </div>
-                          ))}
-                      </div>
-                      <h3 className="mb-1 mt-3 text-xs font-semibold text-stone-700">与产品/内容契合度</h3>
-                      <div className="space-y-1">
-                        {Object.entries((summary.product_fit_counts as Record<string, number>) ?? {}).map(([k, v]) => (
-                          <div key={k} className="flex items-center justify-between text-[11px] text-stone-600">
-                            <span>{PRODUCT_FIT_LABELS[k] ?? k}</span>
-                            <span className="text-stone-400">{formatCount(v)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
                   </div>
 
                   <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
-                    <h3 className="mb-2 text-xs font-semibold text-stone-700">信息信号覆盖率</h3>
-                    <p className="mb-2 text-[10px] text-stone-400">同一评论可含多个信号，覆盖率之和可能超过 100%。</p>
+                    <h3 className="mb-2 text-xs font-semibold text-stone-700">已分析评论中的信号占比</h3>
+                    <p className="mb-2 text-[10px] text-stone-400">分母是已分析评论条数，每条同一信号只计一次；多信号占比可超过100%。这不是识别准确率、市场占比或转化概率。</p>
                     <div className="grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
                       {Object.entries((summary.signal_counts as Record<string, number>) ?? {})
                         .sort((a, b) => b[1] - a[1])
@@ -1308,30 +1262,6 @@ export default function InsightPage() {
                         </option>
                       ))}
                     </select>
-                    <select
-                      value={resultFilters.single_video_relation}
-                      onChange={(e) => setResultFilters((f) => ({ ...f, single_video_relation: e.target.value }))}
-                      className="rounded-lg border border-stone-200 px-2 py-1"
-                    >
-                      <option value="">一次回复能否解决</option>
-                      {Object.entries(SINGLE_VIDEO_LABELS).map(([k, v]) => (
-                        <option key={k} value={k}>
-                          {v}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      value={resultFilters.product_fit}
-                      onChange={(e) => setResultFilters((f) => ({ ...f, product_fit: e.target.value }))}
-                      className="rounded-lg border border-stone-200 px-2 py-1"
-                    >
-                      <option value="">全部契合度</option>
-                      {Object.entries(PRODUCT_FIT_LABELS).map(([k, v]) => (
-                        <option key={k} value={k}>
-                          {v}
-                        </option>
-                      ))}
-                    </select>
                     <button
                       onClick={() => void loadResults(activeRun, 1)}
                       className="rounded-lg bg-stone-800 px-2.5 py-1 text-white"
@@ -1348,8 +1278,6 @@ export default function InsightPage() {
                           <th className="px-2 py-1.5 font-medium">评论</th>
                           <th className="px-2 py-1.5 font-medium">用户</th>
                           <th className="px-2 py-1.5 font-medium">目的</th>
-                          <th className="px-2 py-1.5 font-medium">一次回复</th>
-                          <th className="px-2 py-1.5 font-medium">契合</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1388,17 +1316,12 @@ export default function InsightPage() {
                             <td className="px-2 py-1.5 text-stone-600">
                               {intentLabels[item.analysis?.primary_intent ?? ''] ?? item.analysis?.primary_intent ?? ''}
                             </td>
-                            <td className="px-2 py-1.5 text-stone-600">
-                              {SINGLE_VIDEO_LABELS[item.analysis?.single_video_relation ?? ''] ?? ''}
-                            </td>
-                            <td className="px-2 py-1.5 text-stone-600">
-                              {PRODUCT_FIT_LABELS[item.analysis?.product_fit ?? ''] ?? ''}
-                            </td>
+
                           </tr>
                         ))}
                         {results.length === 0 && (
                           <tr>
-                            <td colSpan={5} className="px-2 py-8 text-center text-stone-400">
+                            <td colSpan={3} className="px-2 py-8 text-center text-stone-400">
                               没有匹配的评论
                             </td>
                           </tr>

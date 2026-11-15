@@ -37,18 +37,12 @@ def build_contact_reason(analysis: Dict[str, Any], score: int, *, research_match
     problems = analysis.get("specific_problems") or []
     if problems:
         parts.append(f"具体问题：{'；'.join(str(p) for p in problems[:2])}")
-    relation = analysis.get("single_video_relation") or ""
-    if relation in {"personalized_judgment_needed", "realtime_observation_needed"}:
-        parts.append("单向内容可能不足")
-    fit = analysis.get("product_fit") or ""
-    if fit == "high":
-        parts.append("产品适配度高")
-    if score >= 7:
-        parts.append("综合评分高")
-    text = "；".join(parts) or "评论内容与目标场景反馈相关，值得进一步了解"
+    if score >= 5:
+        parts.append("可供调研的具体线索较多（不代表产品匹配）")
+    text = "；".join(parts) or "暂无足够线索判断调研价值，需核对原评论"
     forbidden = ("付费意愿", "强烈付费", "购买意向", "询价")
     if any(token in text for token in forbidden):
-        text = "用户明确实际使用过，并提出了单向内容难以解决的具体问题"
+        text += "；价格相关表述不能证明实际购买行为"
     return text
 
 
@@ -160,6 +154,7 @@ def build_candidates(results: List[Dict[str, Any]], *, research_targets: List[st
             breakdown.append("付费求助信号")
         candidates.append(
             CandidateRecord(
+                scoring_policy_version=2,
                 user_key=group["user_key"],
                 username=group["username"],
                 platform=group["platform"],

@@ -26,7 +26,6 @@ from .evidence_schemas import (
 )
 from .prompts import (
     PERSONALIZED_VIDEO_KEYWORDS,
-    POSITIVE_RESULT_KEYWORDS,
     REALTIME_VIDEO_KEYWORDS,
 )
 from .schemas import SingleVideoRelation
@@ -40,6 +39,7 @@ CARD_PROJECTED_KEYS = (
     "product_fit",
     "product_fit_reason",
     "product_fit_source",
+    "projection_policy_version",
     "primary_intent",
     "action_gap",
     "paid_help",
@@ -380,40 +380,23 @@ def infer_single_video_relation(
     personalized = (
         tuple(personalized_tokens) if personalized_tokens is not None else PERSONALIZED_VIDEO_KEYWORDS
     )
-    positive = (
-        tuple(positive_result_tokens)
-        if positive_result_tokens is not None
-        else POSITIVE_RESULT_KEYWORDS
-    )
     if card.record_status != RecordStatus.USABLE:
         return SingleVideoRelation.UNCLEAR.value
 
-    pool = _card_text_pool(card)
-    expression = card.primary_expression.value
-    has_problem = any(item.type == EvidenceItemType.PROBLEM for item in (card.evidence_items or []))
-    has_result = any(item.type == EvidenceItemType.RESULT for item in (card.evidence_items or []))
-
-    if any(keyword in pool for keyword in realtime):
+    # 只报告原文里明确提出的答复形式需求。提问/求助/正面反馈本身
+    # 都不能证明“一次能解决”或“需要个性化服务”。不读取模型改写的 text。
+    pool = "\n".join(str(item.evidence_quote or "") for item in card.evidence_items)
+    explicit_realtime = ("帮我看下操作", "看看我的操作", "看我的视频", "看一下我的动作", "帮我检查动作")
+    explicit_personal = ("根据我的情况", "适合我的", "结合我的情况", "我的具体情况")
+    if any(token in pool for token in explicit_realtime):
         return SingleVideoRelation.REALTIME.value
-
-    if expression == PrimaryExpression.HELP_REQUEST.value and has_problem:
+    if any(token in pool for token in explicit_personal):
         return SingleVideoRelation.PERSONALIZED.value
-
-    if any(keyword in pool for keyword in personalized):
+    # 档案自定义词只作为线索，不支持由此推断已经答完/一次足够。
+    if realtime_tokens is not None and any(token and token in pool for token in realtime):
+        return SingleVideoRelation.REALTIME.value
+    if personalized_tokens is not None and any(token and token in pool for token in personalized):
         return SingleVideoRelation.PERSONALIZED.value
-
-    if expression == PrimaryExpression.COMPLAINT.value and has_problem:
-        return SingleVideoRelation.PERSONALIZED.value
-
-    if expression in {PrimaryExpression.RESULT_FEEDBACK.value, PrimaryExpression.PRAISE.value} and (
-        has_result or any(keyword in pool for keyword in positive)
-    ):
-        return SingleVideoRelation.VIDEO_SUFFICIENT.value
-
-    if expression == PrimaryExpression.QUESTION.value and not has_problem:
-        if not any(keyword in pool for keyword in personalized + realtime):
-            return SingleVideoRelation.ONE_REPLY.value
-
     return SingleVideoRelation.UNCLEAR.value
 
 
@@ -632,16 +615,10 @@ def outreach_analysis_from_card(card: EvidenceCard | dict, *, profile: Any = Non
     training = infer_training_evidence(card)
     token_overrides: Dict[str, Any] = {}
     if profile is not None:
-        from .project_profiles import (
-            resolve_personalized_tokens,
-            resolve_positive_result_tokens,
-            resolve_realtime_tokens,
-        )
-
+        # 仅采用档案明确给出的自定义词。空词表不能偷偷回落到旧训练领域词汇。
         token_overrides = {
-            "realtime_tokens": resolve_realtime_tokens(profile),
-            "personalized_tokens": resolve_personalized_tokens(profile),
-            "positive_result_tokens": resolve_positive_result_tokens(profile),
+            "realtime_tokens": getattr(profile, "realtime_tokens", None) or None,
+            "personalized_tokens": getattr(profile, "personalized_tokens", None) or None,
         }
 
     gap_subtypes = {g.get("subtype") or "" for g in fields["action_gap"]}
@@ -655,13 +632,9 @@ def outreach_analysis_from_card(card: EvidenceCard | dict, *, profile: Any = Non
         impact = "none"
 
     help_seeking = card.primary_expression.value == "help_request" or bool(fields["specific_problems"])
-    level = fields["evidence_level"]
-    if level == "strong":
-        fit = "high"
-    elif level == "medium":
-        fit = "medium"
-    else:
-        fit = "unclear"
+    # 证据丰富度描述评论能提供多少事实，不等于与任一产品匹配。
+    # 匹配判断在回复任务中对照固定产品能力逐条做；洞察不伪造该结论。
+    fit = "unclear"
 
     quotes = [i.evidence_quote for i in (card.evidence_items or []) if i.evidence_quote][:5]
     return {
@@ -675,10 +648,11 @@ def outreach_analysis_from_card(card: EvidenceCard | dict, *, profile: Any = Non
         "training_impact": impact,
         "single_video_relation": infer_single_video_relation(card, **token_overrides),
         "product_fit": fit,
-        "product_fit_reason": f"evidence_level={level}",
-        "product_fit_source": "rule_based_projection",
+        "product_fit_reason": "尚未对照产品能力独立评估；证据丰富度不代表产品匹配",
+        "product_fit_source": "not_assessed",
+        "projection_policy_version": 2,
         "evidence_quotes": quotes,
-        "confidence": float(card.confidence or 0.7),
+        "confidence": float(card.confidence or 0.0),
         "action_gap": fields["action_gap"],
         "paid_help": fields["paid_help"],
         "explicit_user_context": [i.text for i in card.evidence_items if i.type == EvidenceItemType.CONTEXT],
@@ -697,12 +671,12 @@ def _expression_to_intent(expression: str) -> str:
 
 
 def analysis_dict_from_result_row(row: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize legacy results.jsonl or evidence_cards.jsonl rows for outreach scoring."""
+    """Normalize stored results; retire unsupported historical product/answer predictions."""
     analysis = dict(row.get("analysis") or {})
-    card_payload = row.get("card")
-    if card_payload:
-        projected = outreach_analysis_from_card(card_payload)
+    if row.get("card"):
+        projected = outreach_analysis_from_card(row["card"])
         analysis = merge_projected_analysis(analysis, projected)
         analysis["paid_help"] = bool(analysis.get("paid_help") or projected.get("paid_help"))
-        return analysis
+    elif analysis.get("projection_policy_version") != 2:
+        analysis.update(product_fit="unclear", product_fit_reason="历史产品匹配结论未验证，请按产品任务重新评估", product_fit_source="not_assessed", single_video_relation="unclear", projection_policy_version=2)
     return analysis

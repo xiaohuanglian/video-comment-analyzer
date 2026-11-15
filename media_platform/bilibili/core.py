@@ -381,6 +381,10 @@ class BilibiliCrawler(AbstractCrawler):
         expected_reply_count: Optional[int] = None,
     ):
         """Fetch comments for one video (DEFAULT pass, then TIME pass if incomplete)."""
+        from tools.content_precheck import allow_comments
+
+        if not await allow_comments("bili", str(video_id)):
+            return
         async with semaphore:
             try:
                 save_dir = Path(config.SAVE_DATA_PATH) if config.SAVE_DATA_PATH else None

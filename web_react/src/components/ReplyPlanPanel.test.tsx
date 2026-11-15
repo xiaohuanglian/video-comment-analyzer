@@ -22,7 +22,7 @@ beforeEach(() => {
 describe('渠道计划与执行约束分开', () => {
   it('轮询更新不覆盖正在编辑的词表', async () => {
     const { rerender } = render(<MemoryRouter><ReplyPlanPanel platform="bili" status={status} onSaved={vi.fn()} /></MemoryRouter>)
-    const input = screen.getByLabelText('本轮寻找哪些讨论（每行一个关键词）')
+    const input = screen.getByLabelText('搜索视频用词（每行一个，仅新采集时使用）')
     fireEvent.change(input, { target: { value: '我正在编辑' } })
     rerender(<MemoryRouter><ReplyPlanPanel platform="bili" status={{ ...status, config: { ...status.config, keywords: ['轮询词表'] } }} onSaved={vi.fn()} /></MemoryRouter>)
     expect((input as HTMLTextAreaElement).value).toBe('我正在编辑')
@@ -31,7 +31,7 @@ describe('渠道计划与执行约束分开', () => {
 
   it('保存筛选计划不能附带放宽节奏、窗口或启用发送', async () => {
     render(<MemoryRouter><ReplyPlanPanel platform="bili" status={status} onSaved={vi.fn()} /></MemoryRouter>)
-    fireEvent.change(screen.getByLabelText('本轮寻找哪些讨论（每行一个关键词）'), { target: { value: '新词' } })
+    fireEvent.change(screen.getByLabelText('搜索视频用词（每行一个，仅新采集时使用）'), { target: { value: '新词' } })
     fireEvent.click(screen.getByRole('button', { name: '保存本平台计划' }))
     await waitFor(() => expect(api.automationConfigUpdate).toHaveBeenCalledOnce())
     const patch = vi.mocked(api.automationConfigUpdate).mock.calls[0][0]

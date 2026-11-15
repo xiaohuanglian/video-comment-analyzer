@@ -42,41 +42,14 @@ def contactability(source: Dict[str, Any]) -> str:
 
 
 def compute_candidate_score(analysis: Dict[str, Any]) -> int:
-    score = 0
-    evidence = analysis.get("actual_training_evidence") or "none"
-    if evidence == "tried":
-        score += 1
-    elif evidence == "continued":
-        score += 2
-    if analysis.get("specific_problems"):
-        score += 2
-    relation = analysis.get("single_video_relation") or "unclear"
-    if relation in {"personalized_judgment_needed", "realtime_observation_needed"}:
-        score += 2
-    if analysis.get("help_seeking"):
-        score += 1
-    if analysis.get("behavior_costs") or analysis.get("action_gap"):
-        score += 1
-    impact = analysis.get("training_impact") or "none"
-    impact_scores = {
-        "skipped": 1,
-        "stopped": 2,
-        "changed_plan": 1,
-        "paid_help": 2,
-    }
-    score += impact_scores.get(impact, 0)
-    if analysis.get("paid_help") and impact != "paid_help":
-        score += 2
-    fit = analysis.get("product_fit") or "unclear"
-    if fit == "high":
-        score += 2
-    elif fit == "medium":
-        score += 1
-    return score
+    # 调研线索排序，不是回复价值、成交概率或经过校准的专业量表。
+    from .score_breakdown import explain_candidate_score
+
+    return sum(item["points"] for item in explain_candidate_score(analysis))
 
 
 def candidate_priority(score: int) -> str:
-    if score >= 7:
+    if score >= 5:
         return "high"
     if score >= 4:
         return "medium"
@@ -224,9 +197,11 @@ def build_statistics(
 
     valid_comments = 0
 
+    from .evidence_adapter import analysis_dict_from_result_row
+
     for row in results:
         source = row.get("source") or {}
-        analysis = row.get("analysis") or {}
+        analysis = analysis_dict_from_result_row(row)
         ukey = user_key(source)
         if ukey:
             unique_users.add(ukey)
@@ -258,7 +233,7 @@ def build_statistics(
         signals = analysis.get("signals") or []
         if "gratitude" in signals:
             gratitude_signal += 1
-        for signal in signals:
+        for signal in set(signals):
             signal_counts[signal] += 1
 
         evidence = analysis.get("actual_training_evidence") or "none"
@@ -355,6 +330,15 @@ def build_statistics(
     contradictions = _build_contradictions(hypothesis_details)
 
     return {
+        "projection_policy_version": 2,
+        "methodology": {
+            "purpose": "评论研究描述，不是自动回复名单或转化预测",
+            "signal_denominator": "已分析评论条数；每条同一信号只计一次，多信号占比之和可超过100%",
+            "product_fit": "尚未独立评估；不再将证据丰富度换算为产品匹配",
+            "reply_sufficiency": "仅记录原文明确要求的答复形式线索，不预测一次回复能否解决",
+            "candidate_score": "调研线索启发式排序，未做转化率校准，不直接决定自动回复对象",
+        },
+        "product_fit_unassessed_count": total_analyzed,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "total_analyzed": total_analyzed,
         "total_records": total_records or total_analyzed,

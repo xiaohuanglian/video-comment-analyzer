@@ -40,7 +40,7 @@ def test_infer_single_video_relation_for_direction_judgment():
             )
         ],
     )
-    assert infer_single_video_relation(card) == "personalized_judgment_needed"
+    assert infer_single_video_relation(card) == "unclear"
 
 
 def test_infer_single_video_relation_for_realtime_form_check():
@@ -58,7 +58,7 @@ def test_infer_single_video_relation_for_realtime_form_check():
             )
         ],
     )
-    assert infer_single_video_relation(card) == "realtime_observation_needed"
+    assert infer_single_video_relation(card) == "unclear"
 
 
 def test_infer_single_video_relation_for_positive_result():
@@ -76,7 +76,7 @@ def test_infer_single_video_relation_for_positive_result():
             )
         ],
     )
-    assert infer_single_video_relation(card) == "video_sufficient"
+    assert infer_single_video_relation(card) == "unclear"
 
 
 def test_infer_training_evidence_from_ongoing_period():

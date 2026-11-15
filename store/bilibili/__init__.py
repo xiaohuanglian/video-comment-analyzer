@@ -38,9 +38,10 @@ async def update_bilibili_video(video_item: Dict):
     video_id = str(video_item_view.get("aid"))
     save_content_item = {
         "video_id": video_id,
+        "bvid": video_item_view.get("bvid", ""),
         "video_type": "video",
         "title": video_item_view.get("title", "")[:500],
-        "desc": video_item_view.get("desc", "")[:500],
+        "desc": video_item_view.get("desc", "")[:6000],
         "create_time": video_item_view.get("pubdate"),
         "user_id": str(video_user_info.get("mid")),
         "nickname": video_user_info.get("name"),
@@ -59,6 +60,9 @@ async def update_bilibili_video(video_item: Dict):
         "source_keyword": source_keyword_var.get(),
     }
     utils.logger.info(f"[store.bilibili.update_bilibili_video] bilibili video id:{video_id}, title:{save_content_item.get('title')}")
+    from tools.content_precheck import register_content
+
+    register_content("bili", str(video_id), save_content_item)
     await BiliStoreFactory.create_store().store_content(content_item=save_content_item)
 
 

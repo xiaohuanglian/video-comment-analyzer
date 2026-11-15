@@ -347,7 +347,11 @@ class BufferedResultsWriter:
 def load_results(run_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for line in _iter_jsonl(_run_dir(run_id) / "results.jsonl"):
-        rows.append(json.loads(line))
+        row = json.loads(line)
+        from .evidence_adapter import analysis_dict_from_result_row
+
+        row["analysis"] = analysis_dict_from_result_row(row)
+        rows.append(row)
         if limit and len(rows) >= limit:
             break
     return rows
@@ -357,7 +361,11 @@ def iter_results(run_id: str, limit: Optional[int] = None):
     """Yield result rows one at a time so callers can stream huge runs."""
     count = 0
     for line in _iter_jsonl(_run_dir(run_id) / "results.jsonl"):
-        yield json.loads(line)
+        row = json.loads(line)
+        from .evidence_adapter import analysis_dict_from_result_row
+
+        row["analysis"] = analysis_dict_from_result_row(row)
+        yield row
         count += 1
         if limit and count >= limit:
             break
@@ -373,7 +381,7 @@ def load_summary(run_id: str) -> Dict[str, Any]:
         return {}
     try:
         data = _read_json(path)
-        return data if isinstance(data, dict) else {}
+        return data if isinstance(data, dict) and data.get("projection_policy_version") == 2 else {}
     except (json.JSONDecodeError, OSError):
         return {}
 
@@ -456,7 +464,20 @@ def load_open_theme_artifacts(run_id: str) -> Optional[Dict[str, Any]]:
 def load_candidates(run_id: str):
     from .candidate_schemas import CandidatesDocument
 
-    return _load_document(_run_dir(run_id) / "candidates.json", CandidatesDocument)
+    document = _load_document(_run_dir(run_id) / "candidates.json", CandidatesDocument)
+    if document.candidates and any(c.scoring_policy_version < 2 for c in document.candidates):
+        rows = results_for_candidates(run_id)
+        if rows:
+            from .candidates import build_candidates
+
+            rebuilt = build_candidates(rows, research_targets=load_config(run_id).research_targets)
+            old = {c.user_key: c for c in document.candidates}
+            for candidate in rebuilt.candidates:
+                if candidate.user_key in old:
+                    candidate.contact_status = old[candidate.user_key].contact_status
+                    candidate.product_manager_note = old[candidate.user_key].product_manager_note
+            return rebuilt
+    return document
 
 
 def save_candidates(run_id: str, doc) -> None:

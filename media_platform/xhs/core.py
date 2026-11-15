@@ -402,6 +402,10 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
     async def get_comments(self, note_id: str, xsec_token: str, semaphore: asyncio.Semaphore):
         """Get note comments with keyword filtering and quantity limitation"""
+        from tools.content_precheck import allow_comments
+
+        if not await allow_comments("xhs", str(note_id)):
+            return
         async with semaphore:
             utils.logger.info(f"[XiaoHongShuCrawler.get_comments] Begin get note id comments {note_id}")
             # Safe, jittered pacing between notes (adaptive pacer runs per page inside the client)

@@ -108,8 +108,8 @@ def test_auto_export_writes_beside_source_csv(tmp_path, monkeypatch):
     assert report_file.exists()
     report = report_file.read_text(encoding="utf-8")
     assert "评论洞察决策报告" in report
-    assert "主要沟通目的" in report
-    assert "一次回复能解决吗" in report
+    assert "评论主要表达" in report
+    assert "原文提出的答复形式线索" in report
     assert "访谈与实验" not in report
     assert "访谈结果按首页" not in report
     assert "## 当前优先行动" in report
@@ -147,7 +147,7 @@ def test_open_themes_refresh_exported_research_report(tmp_path, monkeypatch):
     report_file = data_dir / "教程类" / "博主" / "视频" / "视频_评论分析_洞察报告.md"
     exported = report_file.read_text(encoding="utf-8")
     assert "步骤不适反馈" in exported
-    assert "主要沟通目的" in exported
+    assert "评论主要表达" in exported
 
 
 def test_multi_video_exports_are_scoped_per_source(tmp_path, monkeypatch):

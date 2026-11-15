@@ -165,6 +165,9 @@ async def update_douyin_aweme(aweme_item: Dict):
         "source_keyword": source_keyword_var.get(),
     }
     utils.logger.info(f"[store.douyin.update_douyin_aweme] douyin aweme id:{aweme_id}, title:{save_content_item.get('title')}")
+    from tools.content_precheck import register_content
+
+    register_content("dy", str(aweme_id), save_content_item)
     await DouyinStoreFactory.create_store().store_content(content_item=save_content_item)
 
 

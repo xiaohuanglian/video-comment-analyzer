@@ -69,7 +69,8 @@ def test_single_video_stats(tmp_path, monkeypatch):
     run_id = _setup(tmp_path, monkeypatch)
     summary = build_summary(run_id)
     assert "one_reply_sufficient" in summary["single_video_stats"]
-    assert summary["single_video_stats"]["video_sufficient"]["count"] >= 1
+    assert summary["single_video_stats"]["video_sufficient"]["count"] == 0
+    assert summary["single_video_stats"]["unclear"]["count"] >= 1
 
 
 def test_candidate_score_rules():
@@ -82,4 +83,4 @@ def test_candidate_score_rules():
             "product_fit": "high",
         }
     )
-    assert score >= 7
+    assert score == 5

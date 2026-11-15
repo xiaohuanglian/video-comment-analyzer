@@ -1,8 +1,28 @@
 // 后端 API 客户端 —— 对接现有 FastAPI (127.0.0.1:8766)
 
+export interface ReplyAttachment {
+  attachment_id: string
+  extension: string
+  mime_type: string
+  size: number
+  width: number
+  height: number
+  original_name: string
+}
+
 export interface AutomationCandidate {
   id: string
   comment_id: string
+  profile_id?: string
+  attachments?: ReplyAttachment[]
+  need_quote?: string
+  matched_offering?: string
+  profile_name?: string
+  reply_goal?: string
+  reply_mode?: 'recommend' | 'trust'
+  product_source_outdated?: boolean
+  campaign_key?: string
+  profile_snapshot?: Record<string, unknown>
   video_id: string
   video_title: string
   video_url: string
@@ -17,6 +37,8 @@ export interface AutomationCandidate {
   worth?: number
   intent?: string
   lane?: 'help' | 'engage' | string
+  contact?: string
+  video_description?: string
   match_reason?: string
   screened_by?: string
   persona?: string
@@ -59,7 +81,7 @@ export interface AutomationStatus {
     rejected: number
   }
   stats: Record<string, number>
-  cycle: { running: boolean; last_run_at: string; last_summary: string; last_error: string }
+  cycle: { campaign?: { profile_id?: string }; running: boolean; last_run_at: string; last_summary: string; last_error: string; stage?: string; content_review?: { video_id: string; title: string; description: string; decision: string; reason: string }[] }
   sender: {
     can_send: boolean
     wait_reason: string
@@ -861,10 +883,10 @@ export interface ScenarioVerifyResult {
 }
 
 export const api = {
-  automationStatus: (platform: AutomationPlatform = 'bili') =>
-    req<AutomationStatus>(`/automation/status?platform=${platform}`),
-  candidates: (status = 'pending_review', limit = 60, platform: AutomationPlatform = 'bili') =>
-    req<AutomationCandidate[]>(`/automation/candidates?status=${status}&limit=${limit}${p(platform)}`),
+  automationStatus: (platform: AutomationPlatform = 'bili', profileId = '') =>
+    req<AutomationStatus>(`/automation/status?platform=${platform}${profileId ? `&profile_id=${encodeURIComponent(profileId)}` : ''}`),
+  candidates: (status = 'pending_review', limit = 60, platform: AutomationPlatform = 'bili', profileId = '') =>
+    req<AutomationCandidate[]>(`/automation/candidates?status=${status}&limit=${limit}${p(platform)}${profileId ? `&profile_id=${encodeURIComponent(profileId)}` : ''}`),
   approve: (id: string, draft: string, platform: AutomationPlatform = 'bili') =>
     req<{ ok: boolean; item: AutomationCandidate; warnings: string[] }>(
       `/automation/candidates/${id}/approve?platform=${platform}`,
@@ -872,8 +894,8 @@ export const api = {
     ),
   reject: (id: string, platform: AutomationPlatform = 'bili') =>
     req<{ ok: boolean }>(`/automation/candidates/${id}/reject?platform=${platform}`, { method: 'POST' }),
-  bulkRejectRules: (platform: AutomationPlatform = 'bili') =>
-    req<{ ok: boolean; rejected: number }>(`/automation/candidates/bulk-reject?platform=${platform}`, {
+  bulkRejectRules: (platform: AutomationPlatform = 'bili', profileId = '') =>
+    req<{ ok: boolean; rejected: number }>(`/automation/candidates/bulk-reject?platform=${platform}&profile_id=${encodeURIComponent(profileId)}`, {
       method: 'POST',
     }),
   refreshEngagement: (platform: AutomationPlatform = 'bili') =>
@@ -886,9 +908,9 @@ export const api = {
       `/automation/candidates/${id}/human-touch?platform=${platform}`,
       { method: 'POST' },
     ),
-  bulkApproveLlm: (platform: AutomationPlatform = 'bili') =>
+  bulkApproveLlm: (platform: AutomationPlatform = 'bili', profileId = '') =>
     req<{ ok: boolean; approved: number; skipped_no_draft: number; skipped_similar: number }>(
-      `/automation/candidates/bulk-approve?platform=${platform}`,
+      `/automation/candidates/bulk-approve?platform=${platform}&profile_id=${encodeURIComponent(profileId)}`,
       { method: 'POST' },
     ),
   biliLogin: () =>
@@ -901,12 +923,20 @@ export const api = {
     req<{ ok: boolean; item: AutomationCandidate }>(`/automation/candidates/${id}/draft?platform=${platform}`, {
       method: 'POST',
     }),
-  collectNow: (platform: AutomationPlatform = 'bili', mode: 'list' | 'search' | '' = '') =>
-    req(`/automation/collect-now?platform=${platform}${mode ? `&mode=${mode}` : ''}`, { method: 'POST' }),
-  screenCollected: (max_candidates = 50, auto_draft = true, platform: AutomationPlatform = 'bili') =>
+  collectNow: (platform: AutomationPlatform = 'bili', mode: 'list' | 'search' | '' = '', profileId = '', replyGoal = '', replyMode = 'recommend') =>
+    req(`/automation/collect-now?platform=${platform}${mode ? `&mode=${mode}` : ''}`, { method: 'POST', body: JSON.stringify({ profile_id: profileId, reply_goal: replyGoal, reply_mode: replyMode }) }),
+  uploadReplyImage: (id: string, file: File, platform: AutomationPlatform = 'bili') =>
+    req<{ ok: boolean; item: AutomationCandidate }>(`/automation/candidates/${encodeURIComponent(id)}/attachments?platform=${platform}&filename=${encodeURIComponent(file.name)}`, {
+      method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file,
+    }),
+  removeReplyImage: (id: string, attachmentId: string, platform: AutomationPlatform = 'bili') =>
+    req<{ ok: boolean; item: AutomationCandidate }>(`/automation/candidates/${encodeURIComponent(id)}/attachments/${encodeURIComponent(attachmentId)}?platform=${platform}`, { method: 'DELETE' }),
+  replyImageUrl: (id: string, attachmentId: string, platform: AutomationPlatform = 'bili') =>
+    `${BASE}/automation/candidates/${encodeURIComponent(id)}/attachments/${encodeURIComponent(attachmentId)}?platform=${platform}`,
+  screenCollected: (max_candidates = 50, auto_draft = true, platform: AutomationPlatform = 'bili', profileId = '', replyGoal = '', replyMode = 'recommend') =>
     req<{ ok: boolean; message: string }>(`/automation/screen-collected?platform=${platform}`, {
       method: 'POST',
-      body: JSON.stringify({ max_candidates, auto_draft }),
+      body: JSON.stringify({ max_candidates, auto_draft, profile_id: profileId, reply_goal: replyGoal, reply_mode: replyMode }),
     }),
 
   chatHistory: () => req<ChatMessage[]>('/chat/history'),

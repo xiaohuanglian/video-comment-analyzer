@@ -49,6 +49,7 @@ class CandidateComment(BaseModel):
 
 
 class CandidateRecord(BaseModel):
+    scoring_policy_version: int = 1
     user_key: str
     username: str = ""
     platform: str = ""

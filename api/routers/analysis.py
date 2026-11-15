@@ -578,11 +578,7 @@ async def get_run(run_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="任务不存在") from exc
     summary = {}
     try:
-        from api.services.insight.storage import _read_json, _run_dir
-
-        summary_path = _run_dir(run_id) / "summary.json"
-        if summary_path.exists():
-            summary = _read_json(summary_path)
+        summary = load_summary(run_id) or build_summary(run_id)
     except Exception:
         summary = {}
     config_dump = ensure_run_config(config).model_dump()

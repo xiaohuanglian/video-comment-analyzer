@@ -32,10 +32,6 @@ def explain_candidate_score(analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
     if analysis.get("specific_problems"):
         items.append({"key": "specific_problems", "label": SCORE_LABELS["specific_problems"], "points": 2})
 
-    relation = analysis.get("single_video_relation") or "unclear"
-    if relation in {"personalized_judgment_needed", "realtime_observation_needed"}:
-        items.append({"key": "video_insufficient", "label": SCORE_LABELS["video_insufficient"], "points": 2})
-
     if analysis.get("help_seeking"):
         items.append({"key": "help_seeking", "label": SCORE_LABELS["help_seeking"], "points": 1})
 
@@ -54,11 +50,5 @@ def explain_candidate_score(analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
         items.append({"key": key, "label": SCORE_LABELS[key], "points": points})
     elif analysis.get("paid_help"):
         items.append({"key": "impact_paid_help", "label": SCORE_LABELS["impact_paid_help"], "points": 2})
-
-    fit = analysis.get("product_fit") or "unclear"
-    if fit == "high":
-        items.append({"key": "fit_high", "label": SCORE_LABELS["fit_high"], "points": 2})
-    elif fit == "medium":
-        items.append({"key": "fit_medium", "label": SCORE_LABELS["fit_medium"], "points": 1})
 
     return items

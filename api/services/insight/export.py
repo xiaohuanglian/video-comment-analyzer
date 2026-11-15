@@ -635,10 +635,10 @@ def build_report_markdown(
             f"| 需结合个人情况 | {summary.get('personalized_needed_count', 0)} | 一次回复难以解决 |",
             f"| 需看到实际操作 | {summary.get('realtime_needed_count', 0)} | 需实时/个性化反馈 |",
             f"| 高产品适配 | {summary.get('product_fit_high_count', 0)} | product_fit = high |",
-            f"| 高优先级潜在用户 | {summary.get('high_priority_user_count', 0)} | 用户级，综合评分 ≥ 7 |",
+            f"| 高优先级潜在用户 | {summary.get('high_priority_user_count', 0)} | 用户级，调研线索分 ≥ 5（启发式，不代表回复/转化概率） |",
             f"| 高优先级候选评论 | {summary.get('high_priority_candidate_comment_count', 0)} | 评论级，供交叉核对 |",
             "",
-            "## 主要沟通目的",
+            "## 评论主要表达（模型归类，非用户画像）",
             "",
             "| 目的 | 条数 | 占比 |",
             "| --- | ---: | ---: |",
@@ -650,11 +650,11 @@ def build_report_markdown(
     for key in sorted(intents.keys(), key=lambda k: (-counts.get(k, 0), k)):
         lines.append(f"| {label_intent(key, _intent_labels)} | {counts.get(key, 0)} | {intents.get(key, 0)}% |")
 
-    lines.extend(["", "## 信息信号覆盖率", "", "> 同一评论可含多个信号，覆盖率之和可能超过 100%。", "", "| 信号 | 条数 | 覆盖率 |", "| --- | ---: | ---: |"])
+    lines.extend(["", "## 已分析评论中的信号占比", "", "> 同一评论可含多个信号，覆盖率之和可能超过 100%。", "", "| 信号 | 条数 | 覆盖率 |", "| --- | ---: | ---: |"])
     for key, info in (summary.get("signal_coverage") or {}).items():
         lines.append(f"| {label_signal(key, _signal_labels)} | {info.get('count', 0)} | {info.get('coverage_pct', 0)}% |")
 
-    lines.extend(["", "## 一次回复能解决吗", "", "| 情况 | 条数 | 覆盖率 |", "| --- | ---: | ---: |"])
+    lines.extend(["", "## 原文提出的答复形式线索（不预测能否解决）", "", "| 情况 | 条数 | 覆盖率 |", "| --- | ---: | ---: |"])
     for key, info in (summary.get("single_video_stats") or {}).items():
         if info.get("count", 0) <= 0:
             continue
@@ -684,7 +684,7 @@ def build_report_markdown(
 
     priority_rows = _collect_high_priority_rows(rows)
     if priority_rows:
-        lines.extend(["## 高优先级候选评论（节选）", "", "以下评论综合行为证据、具体问题、求助意愿与产品适配度评分较高，建议优先人工复核。", ""])
+        lines.extend(["## 高优先级候选评论（节选）", "", "以下评论包含较多可供调研的行为、具体问题或成本线索；不将产品契合度和问题难度作为加分项，不直接决定回复对象。", ""])
         for row in priority_rows:
             source = row.get("source") or {}
             analysis = row.get("analysis") or {}

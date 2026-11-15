@@ -1,4 +1,4 @@
-import type { AutomationCandidate } from '../lib/api'
+import { api, type AutomationCandidate } from '../lib/api'
 import clsx from 'clsx'
 import { CheckCircle2, XCircle } from 'lucide-react'
 
@@ -48,6 +48,11 @@ export default function CandidateCard({
         onClick && 'cursor-pointer hover:border-(--brand)',
       )}
     >
+      <div className="mb-2 rounded bg-stone-50 px-2 py-1 text-xs text-stone-600">
+        <strong>{c.profile_name || '归属未记录（历史条目）'}</strong>
+        {c.reply_goal && <span className="ml-2">目标：{c.reply_goal}</span>}
+        {c.reply_mode && <span className="ml-2">{c.reply_mode === 'recommend' ? '相关时提产品' : '建立信任'}</span>}
+      </div>
       <div className="flex items-center gap-2 text-xs text-stone-400">
         <span
           className={clsx(
@@ -121,7 +126,7 @@ export default function CandidateCard({
                   : c.persona === 'watcher'
                     ? '观望焦虑'
                     : c.persona === 'beggar'
-                      ? '求带党'
+                      ? '需要入门引导'
                       : '营销号'}
           </span>
         )}
@@ -169,6 +174,10 @@ export default function CandidateCard({
           <span className="text-stone-400">{c.commenter}:</span> {c.comment_text}
         </p>
       )}
+      {c.product_source_outdated && <p className="mt-1 text-xs text-amber-700">产品公开能力已更新：这条使用旧依据，需重新筛选。</p>}
+      {c.matched_offering && <p className="mt-1 text-xs text-stone-600">匹配能力：{c.matched_offering} · 原话：{c.need_quote}</p>}
+      {!!c.attachments?.length && <div className="mt-2 flex gap-2">{c.attachments.map(attachment => <img key={attachment.attachment_id} className="h-14 w-14 rounded border border-stone-200 object-contain" src={api.replyImageUrl(c.id, attachment.attachment_id, (c.platform || 'bili') as 'bili' | 'xhs' | 'dy')} alt={attachment.original_name} />)}</div>}
+      {c.contact && <p className="mt-1 text-xs text-stone-600">关联依据：{c.contact}</p>}
       {c.match_reason && (
         <p className="mt-1 flex items-start gap-1 text-xs text-stone-400">
           <span className="shrink-0">✧</span>
@@ -193,7 +202,7 @@ export default function CandidateCard({
           {onApprove && (
             <button
               onClick={() => void onApprove(c)}
-              disabled={!hasDraft}
+              disabled={!hasDraft || !c.profile_id || c.product_source_outdated}
               title={hasDraft ? '批准草稿,排队自动发送' : '还没有草稿:点卡片进抽屉让 AI 起草'}
               className={clsx(
                 'flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium',

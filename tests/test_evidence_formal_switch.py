@@ -346,7 +346,8 @@ def test_product_fit_source_and_candidates_from_evidence():
     card = extract_evidence_card_mock(rec)
     card = assign_evidence_item_ids(card)
     projected = outreach_analysis_from_card(card)
-    assert projected["product_fit_source"] == "rule_based_projection"
+    assert projected["product_fit_source"] == "not_assessed"
+    assert projected["product_fit"] == "unclear"
     assert "product_fit" in projected
 
     row = {

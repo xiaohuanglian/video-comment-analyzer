@@ -109,6 +109,9 @@ async def update_xhs_note(note_item: Dict):
         "xsec_token": note_item.get("xsec_token"),  # xsec_token
     }
     utils.logger.info(f"[store.xhs.update_xhs_note] xhs note: {local_db_item}")
+    from tools.content_precheck import register_content
+
+    register_content("xhs", str(note_id), local_db_item)
     await XhsStoreFactory.create_store().store_content(local_db_item)
 
 

@@ -296,15 +296,15 @@ class TestAutomationStore:
         store.update_config({"enabled": True, "daily_send_limit": 1})
         store._state["sender"]["today"] = datetime.now().strftime("%Y-%m-%d")
         store._state["sender"]["sent_today"] = 1
-        ok, reason = store.can_send_now()
+        ok, reason = store.can_send_now(now=datetime.now().replace(hour=12, minute=0))
         assert not ok and "上限" in reason
 
     def test_can_send_pacing_wait(self, store):
         store.update_config({"enabled": True})
         store._state["sender"]["next_allowed_at"] = (
-            datetime.now() + timedelta(minutes=5)
+            datetime.now().replace(hour=12, minute=5)
         ).isoformat(timespec="seconds")
-        ok, reason = store.can_send_now()
+        ok, reason = store.can_send_now(now=datetime.now().replace(hour=12, minute=0))
         assert not ok and "节奏" in reason
 
     def test_disabled_blocks_send(self, store):
@@ -573,7 +573,7 @@ class TestLaneModel:
         item["lane"] = "engage"
         assert "人味规则" in auto._system_prompt_for(item)  # 2026-10-26 人味化重写后的标志段
         assert "把答案直接给全" not in auto._system_prompt_for(item)
-        assert "把答案直接给全" in auto._system_prompt_for(_screen_item("2", "怎么做"))
+        assert "给最有用的一步" in auto._system_prompt_for(_screen_item("2", "怎么做"))
 
 
 class TestSpamNick:
@@ -824,14 +824,14 @@ class TestPersonaScreening:
         assert kept[0]["persona"] == "novice_doer"
 
     @pytest.mark.asyncio
-    async def test_beggar_and_seller_forced_skip(self):
+    async def test_persona_label_alone_does_not_disqualify_newcomer(self):
         async def fake_complete(messages, **kwargs):
-            # 模型给了 lane=help 但 persona 是求带党 → 强制 skip
+            # 是否值得回复看具体接触点，不凭“求带党”标签自动否决
             return ('{"lane":"help","persona":"beggar","intent":"求带",'
                     '"worth":7,"already_answered":false,"reason":"求带"}')
         item = {"id": "c_p2", "comment_text": "带带我", "video_title": "t", "signal": "s"}
         kept, _ = await auto.llm_screen_candidates([item], complete_fn=fake_complete)
-        assert kept == []
+        assert kept[0]["persona"] == "beggar"
 
     @pytest.mark.asyncio
     async def test_unknown_persona_falls_back_by_lane(self):
@@ -850,8 +850,8 @@ class TestPersonaScreening:
         assert "稳住" in msg and "第一步" in msg  # watcher 专属策略注入
 
     def test_seller_tactic_absent_from_draft(self):
-        # beggar/seller 不入起草,不应出现在策略表
-        assert "beggar" not in auto._PERSONA_TACTICS and "seller" not in auto._PERSONA_TACTICS
+        # 营销号不入起草；需要入门引导的人不因标签被否决
+        assert "beggar" in auto._PERSONA_TACTICS and "seller" not in auto._PERSONA_TACTICS
 
     def test_keywords_default_v2(self):
         assert "AI工具" in auto.DEFAULT_CONFIG["keywords"]
@@ -1149,14 +1149,14 @@ class TestAiCommentDefense:
         assert status == "excluded" and label == "AI装饰符"
 
     @pytest.mark.asyncio
-    async def test_screen_skips_ai_comment(self):
+    async def test_style_only_ai_guess_does_not_force_exclusion(self):
         async def fake_complete(messages, **kwargs):
             return ('{"lane":"engage","persona":"thinker","intent":"观点/预测",'
                     '"worth":9,"is_ai_comment":true,"already_answered":false,'
                     '"reason":"复述视频内容+完美翻案句,无个人痕迹"}')
         item = {"id": "c_ai1", "comment_text": "这条线确实顺", "video_title": "t", "signal": "s"}
         kept, _ = await auto.llm_screen_candidates([item], complete_fn=fake_complete)
-        assert kept == []  # 哪怕 worth=9:疑似AI评论一律拦
+        assert len(kept) == 1  # 文风猜测不足以证明机器身份
 
     def test_screen_prompt_has_botcheck(self):
         assert "真人鉴定" in auto.LLM_SCREEN_PROMPT and "is_ai_comment" in auto.LLM_SCREEN_PROMPT
