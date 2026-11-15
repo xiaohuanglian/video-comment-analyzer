@@ -92,3 +92,11 @@ describe('CandidateCard 动作区分', () => {
     expect(screen.getByText(/评论区还没有像样的热评/)).toBeTruthy()
   })
 })
+
+it('保留历史原稿，单独展示产品复核与未入发送队列的改写对照', () => {
+  render(<CandidateCard c={base({ marketing_audit: { profile_name: 'YouVibe', decision: 'rewrite', reason: '需要提示词学习参考', issues: ['虚构亲历'], suggested_reply: '先写目标和已有材料，YouVibe 有写法可参考。' } })} />)
+  expect(screen.getByText(/建议改写/)).toBeTruthy()
+  expect(screen.getByText('改写对照（未入发送队列）')).toBeTruthy()
+  expect(screen.getByText(/YouVibe 有写法可参考/)).toBeTruthy()
+  expect(screen.getByText(/用即梦，先固定参考图/)).toBeTruthy()
+})

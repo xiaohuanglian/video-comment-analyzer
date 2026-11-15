@@ -107,9 +107,13 @@ async def candidates(status: str = "pending_review", limit: int = 60, platform: 
     store = _store(platform)
     items = [i for i in store.items if i["status"] == status and _matches_profile(i, profile_id)]
     items.sort(key=lambda i: (-i.get("worth", 0), 0 if i.get("tier") == "A" else 1, -i.get("like_count", 0)))
+    from api.services.outreach.product_reply import audit_basis, load_audits
     from api.services.outreach.reply_campaign import product_source_outdated
 
-    return [{**item, "product_source_outdated": product_source_outdated(item)} for item in items[:max(1, min(limit, 1000))]]
+    audits = load_audits(platform).get("items", {})
+    return [{**item, "product_source_outdated": product_source_outdated(item),
+             "marketing_audit": audits.get(item["id"]) if audits.get(item["id"], {}).get("source_hash") == audit_basis(item) else None}
+            for item in items[:max(1, min(limit, 1000))]]
 
 
 @router.post("/candidates/{item_id}/approve")
@@ -168,8 +172,9 @@ async def redraft(item_id: str, platform: str = "bili") -> dict[str, Any]:
     if product_source_outdated(item):
         raise HTTPException(status_code=400, detail="产品公开能力已更新，请按当前产品重新筛选，不能用旧依据重写")
     draft = await auto.draft_with_llm(item)
+    store.save()  # persist review outcome even when drafting is skipped or unavailable
     if not draft:
-        raise HTTPException(status_code=400, detail="起草失败：模型未配置或调用失败，可手动填写")
+        raise HTTPException(status_code=400, detail=(item.get("draft_review") or {}).get("reason") or "起草失败：模型未配置或调用失败，可手动填写")
     updated = store.update_draft(item_id, draft, source="llm")
     return {"ok": True, "item": updated}
 

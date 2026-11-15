@@ -381,6 +381,9 @@ class AutomationStore:
             final = (draft or it.get("draft") or "").strip()
             if not final:
                 return None
+            review = it.get("draft_review") or {}
+            if review.get("status") in ("skipped", "blocked", "unavailable", "checking") and final == (it.get("draft") or "").strip():
+                raise ValueError("本轮起草未通过质检，请人工修改旧稿或重新生成后再批准")
             # P0-2 相似度闸:与近 30 天已发/已批草稿比对,block 拒绝、warn 放行但标警
             verdict, score = similarity_verdict(
                 final, self._recent_outbound_drafts(exclude_id=item_id), lane=str(it.get("lane") or "help")
@@ -427,6 +430,8 @@ class AutomationStore:
         it["draft"] = (draft or "").strip()
         it["lint_warnings"] = check_reply_style(it["draft"])
         it["draft_source"] = source
+        if source == "manual" and it.get("draft_review"):
+            it["draft_review"] = {"status": "manual", "reason": "草稿已人工修改，先前模型质检不适用于当前正文"}
         self.save()
         return it
 
@@ -1215,6 +1220,10 @@ def _ai_flavor_issues(warnings: list[str]) -> list[str]:
 
 async def draft_with_llm(item: dict[str, Any]) -> str:
     """起草→自动去 AI 味环:lint 命中硬伤→带具体反馈重写→复检,干净才返回。"""
+    if item.get("profile_snapshot"):
+        from .product_reply import draft_product_reply
+
+        return await draft_product_reply(item)
     from api.services.growth.model_settings import load_model_settings
     from api.services.insight.llm_analyzer import build_openai_client
 
@@ -1677,6 +1686,10 @@ async def _queue_candidates(
                 item["draft_source"] = "llm"
                 drafted += 1
 
+    # A fluent response without an honest product bridge is not a new lead.
+    draft_filtered = [it for it in picked if (it.get("draft_review") or {}).get("status") in ("skipped", "blocked")]
+    picked = [it for it in picked if it not in draft_filtered]
+    routes = mark_video_routes(picked)
     added = store.add_items(picked)
     return {
         "funnel": funnel,
@@ -1685,6 +1698,8 @@ async def _queue_candidates(
         "llm_screen": screen_stats,
         "new_candidates": added,
         "llm_drafted": drafted,
+        "draft_filtered": len(draft_filtered),
+        "draft_rejected_examples": [{"comment": it.get("comment_text", ""), "reason": it["draft_review"].get("reason", "")} for it in draft_filtered[:20]],
     }
 
 

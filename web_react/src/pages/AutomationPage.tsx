@@ -122,13 +122,14 @@ export default function AutomationPage() {
                 llm_screen?: { examined?: number; not_examined?: number; rejected?: number; video_cap?: number; note?: string }
                 new_candidates?: number
                 llm_drafted?: number
+                draft_filtered?: number
                 routes?: { hot_comment?: number; reply?: number }
               }
               setScreenResult(
                 `完成:扫描 ${sum.comments ?? '?'} 条评论/${sum.videos ?? '?'} 个视频 → ` +
                   `排除 ${sum.funnel?.excluded ?? 0}、超龄 ${sum.funnel?.stale ?? 0}、重复 ${sum.funnel?.dedup ?? 0} → ` +
                   `AI 已看 ${sum.llm_screen?.examined ?? 0} 条、淘汰 ${sum.llm_screen?.rejected ?? 0} 条、未看 ${sum.llm_screen?.not_examined ?? 0} 条 → ` +
-                  `新候选 ${sum.new_candidates ?? 0} 条，其中根评论 ${sum.routes?.hot_comment ?? 0} 条、具体回复 ${sum.routes?.reply ?? 0} 条(AI 起草 ${sum.llm_drafted ?? 0} 条)` + (sum.llm_screen?.note ? `；${sum.llm_screen.note}` : ''),
+                  `新候选 ${sum.new_candidates ?? 0} 条，其中根评论 ${sum.routes?.hot_comment ?? 0} 条、具体回复 ${sum.routes?.reply ?? 0} 条(AI 起草 ${sum.llm_drafted ?? 0} 条，因文案无合适切入点或质检失败过滤 ${sum.draft_filtered ?? 0} 条)` + (sum.llm_screen?.note ? `；${sum.llm_screen.note}` : ''),
               )
             } catch {
               setScreenResult('完成,但摘要解析失败,请看待批准列表')
@@ -160,7 +161,7 @@ export default function AutomationPage() {
     const summary = JSON.parse(status?.cycle.last_summary || '{}')
     if (summary.profile_id === profileId) {
       lastReview = summary
-      rejectedExamples = summary.llm_screen?.rejected_examples ?? []
+      rejectedExamples = [...(summary.llm_screen?.rejected_examples ?? []), ...(summary.draft_rejected_examples ?? [])].slice(0, 20)
     }
   } catch { /* 兼容旧摘要 */ }
 
@@ -268,6 +269,7 @@ export default function AutomationPage() {
           <p className="text-xs text-stone-500">筛选和草稿固定使用这份产品档案及本次目标；切换内容工具的当前档案不会改变已有条目。先答具体问题，相关时才提产品，发送仍需人工批准。</p>
         </> : <p className="text-xs text-amber-700">已有条目不会因切换产品自动改归属。历史条目需按明确产品重新筛选，才能确认适合谁、推荐什么。</p>}
       </section>
+      {items.some(c => !c.profile_id) && <p className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">当前列表含 {items.filter(c => !c.profile_id).length} 条未绑定产品的历史草稿，并非按本次目标生成。请先选产品查看对应队列；历史文案需要重新核对需求与产品能力，不能直接沿用。</p>}
       {status?.platform === platform && <ReplyPlanPanel key={`${platform}:${profileId}`} platform={platform} status={status} profileId={profileId || undefined} replyGoal={replyGoal} replyMode={replyMode} onSaved={() => void refresh()} />}
 
       {status?.cycle.running && status.cycle.stage && <p className="text-sm text-stone-500">{status.cycle.stage}</p>}
@@ -685,7 +687,7 @@ function Drawer({
                     disabled={busy}
                     className="text-xs text-(--brand) hover:underline disabled:cursor-wait disabled:text-stone-400"
                   >
-                    {busy ? 'AI 起草中…(含去AI味复检,约1分钟,别关)' : c.draft ? '让 AI 重新起草' : '让 AI 起草'}
+                    {busy ? 'AI 起草中…（核对推荐理由与内容质检）' : c.draft ? '让 AI 重新起草' : '让 AI 起草'}
                   </button>
                 )}
                 {draftError && <span className="text-xs text-red-500">{draftError}</span>}

@@ -53,6 +53,17 @@ export default function CandidateCard({
         {c.reply_goal && <span className="ml-2">目标：{c.reply_goal}</span>}
         {c.reply_mode && <span className="ml-2">{c.reply_mode === 'recommend' ? '相关时提产品' : '建立信任'}</span>}
       </div>
+      {!c.profile_id && <p className="mb-2 text-xs text-amber-700">历史草稿未按产品目标复核，不能当作当前产品的推荐文案。</p>}
+      {c.marketing_audit && <div className="mb-2 space-y-1 rounded border border-orange-200 bg-orange-50 p-3 text-xs text-stone-700">
+        <p className="font-medium">按 {c.marketing_audit.profile_name} 复核：{c.marketing_audit.decision === 'rewrite' ? '建议改写' : c.marketing_audit.decision === 'skip' ? '建议跳过' : '需要补充信息'}</p>
+        <p>{c.marketing_audit.reason}</p>
+        {!!c.marketing_audit.issues?.length && <p>原稿问题：{c.marketing_audit.issues.join('；')}</p>}
+        {c.marketing_audit.suggested_reply && <><p className="pt-1 font-medium">改写对照（未入发送队列）</p><p className="whitespace-pre-wrap">{c.marketing_audit.suggested_reply}</p></>}
+      </div>}
+      {c.draft_review && <div className="mb-2 rounded bg-orange-50 p-2 text-xs text-stone-600">
+        <p>文案检查（仍需人审）：{c.draft_review.status === 'passed' ? '模型质检通过' : c.draft_review.status === 'manual' ? '已人工修改' : '尚无可用新稿'} · {c.draft_review.reason}</p>
+        {c.draft_review.bridge_reason && <p className="mt-1">推荐切入点：{c.draft_review.bridge_reason}</p>}
+      </div>}
       <div className="flex items-center gap-2 text-xs text-stone-400">
         <span
           className={clsx(

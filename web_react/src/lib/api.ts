@@ -23,6 +23,8 @@ export interface AutomationCandidate {
   product_source_outdated?: boolean
   campaign_key?: string
   profile_snapshot?: Record<string, unknown>
+  draft_review?: { status: string; reason?: string; strategy?: string; need_quote?: string; matched_offering?: string; bridge_reason?: string }
+  marketing_audit?: { profile_name: string; decision: string; reason: string; issues?: string[]; suggested_reply?: string }
   video_id: string
   video_title: string
   video_url: string
