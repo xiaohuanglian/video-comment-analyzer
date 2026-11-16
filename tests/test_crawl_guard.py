@@ -164,6 +164,8 @@ def test_non_cooldown_codes_do_not_block_platform():
 
 
 def test_pacer_records_rate_limit_for_whole_platform(monkeypatch):
+    # 验证配置时固定时钟，避免真实耗时跨秒令 42 变成 41。
+    monkeypatch.setattr(cp.time, "time", lambda: 1_800_000_000.0)
     monkeypatch.setattr(config, "CRAWL_GUARD_RATE_LIMIT_COOLDOWN_SEC", 42, raising=False)
     pacer = cp.CrawlPacer("xhs")
     pacer.on_rate_limit()

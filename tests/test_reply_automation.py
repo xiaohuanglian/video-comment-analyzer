@@ -11,6 +11,20 @@ import pytest
 
 from api.services.outreach import reply_automation as auto
 
+
+@pytest.fixture(autouse=True)
+def _isolated_screening_profile(monkeypatch):
+    """筛选测试显式提供虚构业务，不能依赖开发机的真实产品档案。"""
+    from api.services import strategy
+
+    monkeypatch.setattr(strategy, "load", lambda profile_id=None: {
+        "niche": "给新手的 AI 视频制作教程",
+        "domain": "AI 视频制作教程",
+        "target_audience": "学习 AI 视频制作的新手",
+        "research_goal": "识别具体制作困难并提供帮助",
+    })
+
+
 # ---------------------------------------------------------------------------
 # classify_comment：产品需要人群筛选
 # ---------------------------------------------------------------------------
