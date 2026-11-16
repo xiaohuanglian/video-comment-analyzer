@@ -109,8 +109,8 @@ def test_cycle_stops_before_comment_requests_when_preflight_rejects(tmp_path, mo
 
 
 def test_direct_collection_gate_uses_details_without_requesting_platform(monkeypatch):
-    from tools import content_precheck
     from api.services.outreach import collection_preflight
+    from tools import content_precheck
     monkeypatch.setenv("VC_CONTENT_PREFLIGHT", "1")
     monkeypatch.setattr(content_precheck, "_contents", {})
     monkeypatch.setattr(content_precheck, "_decisions", {})

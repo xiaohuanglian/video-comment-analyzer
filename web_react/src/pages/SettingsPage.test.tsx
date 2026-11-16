@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, type CostSummary } from '../lib/api'
-import { growthApi, type SystemStatus } from '../lib/growth-api'
+import { settingsApi, type SystemStatus } from '../lib/settings-api'
 import SettingsPage from './SettingsPage'
 
 const status: SystemStatus = { model: { configured: true, base_url: 'https://gateway.example', model: 'test-model', api_key_masked: '****1234', connection: 'not_checked', environment_override: false },
@@ -10,7 +10,7 @@ const status: SystemStatus = { model: { configured: true, base_url: 'https://gat
 
 beforeEach(() => {
   vi.restoreAllMocks()
-  vi.spyOn(growthApi, 'systemStatus').mockResolvedValue(status)
+  vi.spyOn(settingsApi, 'systemStatus').mockResolvedValue(status)
   vi.spyOn(api, 'costsSummary').mockResolvedValue({ today: { calls: 0, total_tokens: 0 }, pricing: { configured: false }, by_feature: [] } as unknown as CostSummary)
   vi.spyOn(api, 'modelSettingsTest').mockResolvedValue({ ok: true, reply: 'ok' })
   vi.spyOn(api, 'biliLogin').mockResolvedValue({} as Awaited<ReturnType<typeof api.biliLogin>>)
@@ -45,7 +45,7 @@ describe('设置只维护连接与异常', () => {
     await screen.findByText(/模型已配置，连接尚未验证/)
     fireEvent.change(screen.getByLabelText('网关根地址'), { target: { value: 'https://new.example' } })
     fireEvent.click(screen.getByRole('button', { name: '刷新本地状态' }))
-    await waitFor(() => expect(growthApi.systemStatus).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(settingsApi.systemStatus).toHaveBeenCalledTimes(2))
     expect((screen.getByLabelText('网关根地址') as HTMLInputElement).value).toBe('https://new.example')
   })
 })

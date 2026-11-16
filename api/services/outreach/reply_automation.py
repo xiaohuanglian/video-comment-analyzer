@@ -842,7 +842,7 @@ def _screen_brief(campaign: Optional[dict[str, Any]] = None) -> str:
 
     if not (niche and audience):
         raise ProfileNotConfigured(
-            "回复筛选需要先知道「我们是谁、面向谁」。请到「增长工作台 → 产品档案」"
+            "回复筛选需要先知道「我们是谁、面向谁」。请到「产品与筛选档案」"
             "填写 niche 与 target_audience，或配置一份项目档案（domain / target_audience）。"
             "此前这里会静默回落到内置的 AI 内容定位，导致筛选口径整体跑偏。"
         )
@@ -1191,17 +1191,6 @@ def _llm_user_message(item: dict[str, Any]) -> str:
     # 结构变体:同批草稿骨架互不相同,打散批量模板感
     structures = _HELP_STRUCTURES if item.get("lane", "help") == "help" else _ENGAGE_STRUCTURES
     payload["本条写法"] = structures[hash(str(item.get("id") or "")) % len(structures)]
-    # 私域操盘知识库素材(风物执守·XY 原子,仅观点参考,不照抄不提来源)
-    _query = str(item.get("comment_text") or "").strip() or str(item.get("video_title") or "").strip()
-    try:
-        from api.services import knowledge as kb
-
-        hits = kb.search(_query, k=2)
-        if hits:
-            payload["可用素材"] = [h["knowledge"][:120] for h in hits]
-            payload["素材用法"] = "仅在与原评论直接相关且有依据时使用；不是作者亲身经历，不得改写成我试过"
-    except Exception:  # noqa: BLE001
-        pass
     if item.get("sub_replies") and not is_hot:
         payload["评论区已有回复(楼中楼)"] = item["sub_replies"]
         payload["已有回复处理"] = "若已有人答对一部分,给增量或更完整版,不重复原话"
@@ -1224,8 +1213,8 @@ async def draft_with_llm(item: dict[str, Any]) -> str:
         from .product_reply import draft_product_reply
 
         return await draft_product_reply(item)
-    from api.services.growth.model_settings import load_model_settings
     from api.services.insight.llm_analyzer import build_openai_client
+    from api.services.model_settings import load_model_settings
 
     settings = load_model_settings()
     if not (settings.get("api_key") or "").strip():
@@ -1892,19 +1881,6 @@ async def run_cycle(store: AutomationStore, mode_override: str = "", campaign: O
         store._state["cycle"]["last_summary"] = json.dumps(summary, ensure_ascii=False)
         store.save()
 
-        # 数据飞轮：采集后自动刷新受众洞察（画像×生命周期×AVS → 机会库，幂等）
-        # 失败不影响回复主流程；可用 config.audience_refresh=false 关闭
-        if store.config.get("audience_refresh", True):
-            try:
-                from api.services.growth import audience as _audience
-
-                summary["audience_refresh"] = _audience.refresh_default(
-                    product_id=str(store.config.get("audience_product_id", "youvibe"))
-                )
-            except Exception as exc:  # noqa: BLE001
-                summary["audience_refresh"] = {"ok": False, "error": str(exc)[:200]}
-            store._state["cycle"]["last_summary"] = json.dumps(summary, ensure_ascii=False)
-            store.save()
         return summary
     except Exception as exc:  # noqa: BLE001
         store._state["cycle"]["last_error"] = str(exc)[:300]

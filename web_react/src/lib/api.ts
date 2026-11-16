@@ -1,475 +1,315 @@
 // 后端 API 客户端 —— 对接现有 FastAPI (127.0.0.1:8766)
-
 export interface ReplyAttachment {
-  attachment_id: string
-  extension: string
-  mime_type: string
-  size: number
-  width: number
-  height: number
-  original_name: string
+    attachment_id: string;
+    extension: string;
+    mime_type: string;
+    size: number;
+    width: number;
+    height: number;
+    original_name: string;
 }
-
 export interface AutomationCandidate {
-  id: string
-  comment_id: string
-  profile_id?: string
-  attachments?: ReplyAttachment[]
-  need_quote?: string
-  matched_offering?: string
-  profile_name?: string
-  reply_goal?: string
-  reply_mode?: 'recommend' | 'trust'
-  product_source_outdated?: boolean
-  campaign_key?: string
-  profile_snapshot?: Record<string, unknown>
-  draft_review?: { status: string; reason?: string; strategy?: string; need_quote?: string; matched_offering?: string; bridge_reason?: string }
-  marketing_audit?: { profile_name: string; decision: string; reason: string; issues?: string[]; suggested_reply?: string }
-  video_id: string
-  video_title: string
-  video_url: string
-  comment_url?: string
-  platform?: string
-  commenter: string
-  comment_text: string
-  like_count: number
-  age_hours: number
-  signal: string
-  tier: 'A' | 'B' | string
-  worth?: number
-  intent?: string
-  lane?: 'help' | 'engage' | string
-  contact?: string
-  video_description?: string
-  match_reason?: string
-  screened_by?: string
-  persona?: string
-  sub_replies?: string[]
-  sub_reply_count?: number
-  /** 这一条要做什么：回复某个具体的人，还是直接发根评论（评在视频下） */
-  action?: 'reply' | 'hot_comment' | string
-  /** 这个视频的策略结论：同一视频既有根评论又有回复时为 both（两条都做） */
-  video_route?: 'reply' | 'hot_comment' | 'both' | string
-  /** 热评竞争强度：cold / open / contested / crowded / too_small */
-  competition?: string
-  reply_like_count?: number
-  reply_rcount?: number
-  engagement_at?: string
-  engagement_note?: string
-  reply_sub_preview?: string[]
-  draft: string
-  lint_warnings: string[]
-  draft_source: string
-  status: 'pending_review' | 'approved' | 'sent' | 'failed' | 'rejected' | 'sending'
-  created_at: string
-  decided_at?: string
-  sent_at?: string
-  send_error?: string
-  attempts: number
-  note?: string
+    id: string;
+    comment_id: string;
+    profile_id?: string;
+    attachments?: ReplyAttachment[];
+    need_quote?: string;
+    matched_offering?: string;
+    profile_name?: string;
+    reply_goal?: string;
+    reply_mode?: 'recommend' | 'trust';
+    product_source_outdated?: boolean;
+    campaign_key?: string;
+    profile_snapshot?: Record<string, unknown>;
+    draft_review?: {
+        status: string;
+        reason?: string;
+        strategy?: string;
+        need_quote?: string;
+        matched_offering?: string;
+        bridge_reason?: string;
+    };
+    marketing_audit?: {
+        profile_name: string;
+        decision: string;
+        reason: string;
+        issues?: string[];
+        suggested_reply?: string;
+    };
+    video_id: string;
+    video_title: string;
+    video_url: string;
+    comment_url?: string;
+    platform?: string;
+    commenter: string;
+    comment_text: string;
+    like_count: number;
+    age_hours: number;
+    signal: string;
+    tier: 'A' | 'B' | string;
+    worth?: number;
+    intent?: string;
+    lane?: 'help' | 'engage' | string;
+    contact?: string;
+    video_description?: string;
+    match_reason?: string;
+    screened_by?: string;
+    persona?: string;
+    sub_replies?: string[];
+    sub_reply_count?: number;
+    /** 这一条要做什么：回复某个具体的人，还是直接发根评论（评在视频下） */
+    action?: 'reply' | 'hot_comment' | string;
+    /** 这个视频的策略结论：同一视频既有根评论又有回复时为 both（两条都做） */
+    video_route?: 'reply' | 'hot_comment' | 'both' | string;
+    /** 热评竞争强度：cold / open / contested / crowded / too_small */
+    competition?: string;
+    reply_like_count?: number;
+    reply_rcount?: number;
+    engagement_at?: string;
+    engagement_note?: string;
+    reply_sub_preview?: string[];
+    draft: string;
+    lint_warnings: string[];
+    draft_source: string;
+    status: 'pending_review' | 'approved' | 'sent' | 'failed' | 'rejected' | 'sending';
+    created_at: string;
+    decided_at?: string;
+    sent_at?: string;
+    send_error?: string;
+    attempts: number;
+    note?: string;
 }
-
 export interface AutomationStatus {
-  platform?: string
-  enabled: boolean
-  config: Record<string, unknown>
-  funnel: {
-    pending_review: number
-    approved: number
-    /** 正在发送中；>0 且长时间不动说明有卡死条目 */
-    sending?: number
-    sent: number
-    failed: number
-    rejected: number
-  }
-  stats: Record<string, number>
-  cycle: { campaign?: { profile_id?: string }; running: boolean; last_run_at: string; last_summary: string; last_error: string; stage?: string; content_review?: { video_id: string; title: string; description: string; decision: string; reason: string }[] }
-  sender: {
-    can_send: boolean
-    wait_reason: string
-    cookie_cached: boolean | null
-    account?: { uname?: string; mid?: number; level?: number }
-    login_flow?: { running: boolean; message: string }
-    pause_until?: string
-    pause_reason?: string
-    [k: string]: unknown
-  }
+    platform?: string;
+    enabled: boolean;
+    config: Record<string, unknown>;
+    funnel: {
+        pending_review: number;
+        approved: number;
+        /** 正在发送中；>0 且长时间不动说明有卡死条目 */
+        sending?: number;
+        sent: number;
+        failed: number;
+        rejected: number;
+    };
+    stats: Record<string, number>;
+    cycle: {
+        campaign?: {
+            profile_id?: string;
+        };
+        running: boolean;
+        last_run_at: string;
+        last_summary: string;
+        last_error: string;
+        stage?: string;
+        content_review?: {
+            video_id: string;
+            title: string;
+            description: string;
+            decision: string;
+            reason: string;
+        }[];
+    };
+    sender: {
+        can_send: boolean;
+        wait_reason: string;
+        cookie_cached: boolean | null;
+        account?: {
+            uname?: string;
+            mid?: number;
+            level?: number;
+        };
+        login_flow?: {
+            running: boolean;
+            message: string;
+        };
+        pause_until?: string;
+        pause_reason?: string;
+        [k: string]: unknown;
+    };
 }
-
-export interface ChatMessage {
-  role: 'user' | 'assistant'
-  text: string
-  ts: number
-}
-
 export interface CrawlerStatus {
-  status: 'idle' | 'running' | 'stopping' | 'error'
-  platform?: string | null
-  crawler_type?: string | null
-  started_at?: string | null
-  finished_at?: string | null
-  error_message?: string | null
-  comments_crawled?: number | null
-  comments_target?: number | null
-  progress_updated_at?: string | null
-  result_kind?: string | null
-  result_title?: string | null
-  result_message?: string | null
+    status: 'idle' | 'running' | 'stopping' | 'error';
+    platform?: string | null;
+    crawler_type?: string | null;
+    started_at?: string | null;
+    finished_at?: string | null;
+    error_message?: string | null;
+    comments_crawled?: number | null;
+    comments_target?: number | null;
+    progress_updated_at?: string | null;
+    result_kind?: string | null;
+    result_title?: string | null;
+    result_message?: string | null;
 }
-
 export interface CrawlerLog {
-  id: number
-  timestamp: string
-  level: string
-  message: string
+    id: number;
+    timestamp: string;
+    level: string;
+    message: string;
 }
-
 export interface CrawlerStartPayload {
-  platform: string
-  crawler_type: 'search' | 'detail' | 'creator'
-  keywords?: string
-  specified_ids?: string
-  max_notes_count?: number
-  max_comments_count?: number
-  enable_sub_comments?: boolean
-  headless?: boolean
+    platform: string;
+    crawler_type: 'search' | 'detail' | 'creator';
+    keywords?: string;
+    specified_ids?: string;
+    max_notes_count?: number;
+    max_comments_count?: number;
+    enable_sub_comments?: boolean;
+    headless?: boolean;
 }
-
 /** 本地已采数据盘点(采集页「本地已采数据」概览) */
 export interface LocalDataBatch {
-  date: string
-  source: 'manual' | 'automation'
-  platform: string
-  contents: number
-  comments: number
-  titles: string[]
+    date: string;
+    source: 'manual' | 'automation';
+    platform: string;
+    contents: number;
+    comments: number;
+    titles: string[];
 }
-
 export interface LocalDataSummary {
-  platforms: Record<string, { comments: number; contents: number; batches: number }>
-  batches: LocalDataBatch[]
+    platforms: Record<string, {
+        comments: number;
+        contents: number;
+        batches: number;
+    }>;
+    batches: LocalDataBatch[];
 }
-
 /** 小红书关键词笔记（只有笔记、没有评论；采集页「笔记列表」用） */
 export interface XhsNoteItem {
-  note_id: string
-  keyword: string
-  title: string
-  author: string
-  note_type: string
-  liked: number
-  collected: number
-  comments: number
-  url: string
+    note_id: string;
+    keyword: string;
+    title: string;
+    author: string;
+    note_type: string;
+    liked: number;
+    collected: number;
+    comments: number;
+    url: string;
 }
-
 export interface XhsNotesResponse {
-  batch: string
-  batches: { batch: string; created_at: string; total: number }[]
-  total: number
-  limit: number
-  offset: number
-  items: XhsNoteItem[]
-  keyword_counts: Record<string, number>
+    batch: string;
+    batches: {
+        batch: string;
+        created_at: string;
+        total: number;
+    }[];
+    total: number;
+    limit: number;
+    offset: number;
+    items: XhsNoteItem[];
+    keyword_counts: Record<string, number>;
 }
-
-export interface Topic {
-  id: string
-  ts: number
-  video_id?: string
-  video_title?: string
-  video_url?: string
-  comment_count?: number
-  title: string
-  signal?: string
-  target_reader?: string
-  core_tension?: string
-  angle?: string
-  material_entry?: string
-  viral_score?: number
-  evergreen_score?: number
-  source?: string
-  application_domain?: string
-  problem_type?: string
-  origin_note?: string
-  status?: string
-}
-
-export interface TopicBoard {
-  total: number
-  domains: string[]
-  problem_types: string[]
-  grid: Record<string, Record<string, number>>
-  status: Record<string, number>
-  recent_drafts: string[]
-  has_strategy: boolean
-}
-
-export interface PlanTopic {
-  title: string
-  source: string
-  application_domain: string
-  problem_type: string
-  origin_note: string
-  why: string
-}
-
-export interface PlanResult {
-  board_summary: string
-  topics: PlanTopic[]
-}
-
 export interface ProfileBrief {
-  profile_id: string
-  name: string
-  niche: string
-  target_audience: string
-  is_active: boolean
-  is_configured: boolean
-  updated_at: string
+    profile_id: string;
+    name: string;
+    niche: string;
+    target_audience: string;
+    is_active: boolean;
+    is_configured: boolean;
+    updated_at: string;
 }
-
 export interface Strategy {
-  profile_id?: string
-  name?: string
-  domain?: string
-  research_goal?: string
-  is_configured?: boolean
-  is_builtin?: boolean
-  niche?: string
-  target_audience?: string
-  monetization?: string
-  tone_rules?: string[]
-  forbidden?: string[]
-  reference_styles?: string[]
-  goal?: string
-  evidence?: string
-  target_scenarios?: { name?: string; axis?: string; trigger?: string; keywords?: string[] }[]
-  updated_at?: string
-  exists?: boolean
-  /** 当前生效的档案（不同产品不能混用定位，所以这是显式状态） */
-  active_profile_id?: string
-  is_active?: boolean
-  profiles?: ProfileBrief[]
+    profile_id?: string;
+    name?: string;
+    domain?: string;
+    research_goal?: string;
+    is_configured?: boolean;
+    is_builtin?: boolean;
+    niche?: string;
+    target_audience?: string;
+    monetization?: string;
+    tone_rules?: string[];
+    forbidden?: string[];
+    reference_styles?: string[];
+    goal?: string;
+    evidence?: string;
+    target_scenarios?: {
+        name?: string;
+        axis?: string;
+        trigger?: string;
+        keywords?: string[];
+    }[];
+    updated_at?: string;
+    exists?: boolean;
+    /** 当前生效的档案（不同产品不能混用定位，所以这是显式状态） */
+    active_profile_id?: string;
+    is_active?: boolean;
+    profiles?: ProfileBrief[];
 }
-
-export interface CostEntry {
-  ts: number
-  date: string
-  feature: string
-  model: string
-  prompt_tokens: number
-  completion_tokens: number
-  total_tokens: number
-  duration_ms: number
-  ok: boolean
-  error?: string
-}
-
 export interface CostBucket {
-  calls: number
-  ok_calls: number
-  prompt_tokens: number
-  completion_tokens: number
-  total_tokens: number
-  cost: number
+    calls: number;
+    ok_calls: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    cost: number;
 }
-
 export interface CostSummary {
-  pricing: { input_per_1m: number; output_per_1m: number; configured: boolean }
-  total: CostBucket & { first_ts?: number | null }
-  today: CostBucket
-  by_feature: (CostBucket & { feature: string })[]
-  by_model: (CostBucket & { model: string })[]
+    pricing: {
+        input_per_1m: number;
+        output_per_1m: number;
+        configured: boolean;
+    };
+    total: CostBucket & {
+        first_ts?: number | null;
+    };
+    today: CostBucket;
+    by_feature: (CostBucket & {
+        feature: string;
+    })[];
+    by_model: (CostBucket & {
+        model: string;
+    })[];
 }
-
-export interface BoostVideoResult {
-  topic_title: string
-  bili_refs: string[]
-  auto_found?: { title: string; channel: string; view_count: number; url: string }[]
-  link_refs: { url: string; title: string; ok: boolean }[]
-  reference_review: { source: string; take: string }[]
-  titles: string[]
-  script: string
-  why_strong: string
-}
-
-export interface Draft {
-  id: string
-  ts: number
-  format: 'xhs' | 'koubo'
-  topic_title: string
-  title: string
-  body: string
-  tags: string[]
-  shots: string[]
-  /** 发布前质检单（生成时自动附带，改稿后可调 /writer/check 复检） */
-  quality?: ContentQuality
-}
-
-export type QualitySeverity = 'high' | 'medium' | 'low'
-
-export interface QualityIssue {
-  code: string
-  severity: QualitySeverity
-  message: string
-  excerpt: string
-  suggestion: string
-}
-
-export interface LlmReview {
-  verdict?: string
-  scroll_risk?: { excerpt?: string; why?: string; fix?: string }[]
-  weak_parts?: { excerpt?: string; missing?: string }[]
-  keep?: string[]
-}
-
-/** 发布前质检单：纯代码判定，给分数与可溯源命中片段，不拦截发布 */
-export interface ContentQuality {
-  version: string
-  platform: string
-  platform_label: string
-  score: number
-  blocking: boolean
-  checks: string[]
-  issues: QualityIssue[]
-  metrics: Record<string, number | boolean>
-  llm_review?: LlmReview | null
-}
-
-/** 稿件体检：一批稿件的质检汇总（飞轮的学习环节） */
-export interface QualitySummary {
-  count: number
-  avg_score: number
-  blocking: number
-  blocking_rate: number
-  buckets: Record<string, number>
-  by_platform: Record<string, { count: number; avg_score: number }>
-  top_issues: { code: string; label: string; count: number }[]
-  trend: number[]
-  generated_at?: number
-}
-
-/** 表现数据（人手动回填）。null = 还没拿到，0 = 确实是 0，两者不能混 */
-export interface PublishMetrics {
-  views: number | null
-  likes: number | null
-  comments: number | null
-  saves: number | null
-  shares: number | null
-  follows: number | null
-}
-
-/** 一条已发布作品（本工作台不发布，只登记人自己发的） */
-export interface PublishRecord {
-  id: string
-  created_at: number
-  updated_at: number
-  published_at: string
-  platform: string
-  title: string
-  url: string
-  draft_id: string
-  topic_id: string
-  topic_title: string
-  quality_score: number | null
-  quality_blocking: boolean | null
-  quality_codes: string[]
-  metrics: PublishMetrics
-  notes: string
-}
-
-export interface PublishBrief {
-  id: string
-  title: string
-  platform: string
-  published_at: string
-  quality_score: number | null
-  views: number
-  interaction_rate: number
-  url: string
-}
-
-export interface PublishBucket {
-  key: string
-  label: string
-  count: number
-  avg_views: number
-  avg_interaction_rate: number
-}
-
-/** 质检分 vs 实际表现的对账 */
-export interface PublishAnalysis {
-  total_records: number
-  with_metrics: number
-  pending_backfill: number
-  buckets: Record<string, PublishBucket>
-  by_platform: Record<string, { count: number; avg_views: number; avg_interaction_rate: number }>
-  correlation: {
-    n: number
-    ready: boolean
-    needed: number
-    pearson_log_views: number | null
-    note: string
-  }
-  top_views: PublishBrief[]
-  bottom_views: PublishBrief[]
-  top_interaction: PublishBrief[]
-}
-
-export interface UnregisteredDraft {
-  id: string
-  title: string
-  format: string
-  topic_title: string
-  ts: number
-  quality_score: number | null
-  quality_blocking: boolean | null
-}
-
 export interface ReportSummary {
-  id: string
-  ts: number
-  scope: string
-  total_comments: number
-  total_videos: number
-  audience: string
-  theme_count: number
-  topic_count: number
-  keywords?: string
+    id: string;
+    ts: number;
+    scope: string;
+    total_comments: number;
+    total_videos: number;
+    audience: string;
+    theme_count: number;
+    keywords?: string;
 }
-
 export interface CommentReport {
-  id: string
-  ts: number
-  scope: string
-  keywords?: string
-  total_comments: number
-  total_videos: number
-  top_videos: { title: string; comments: number }[]
-  audience: string
-  pain_themes: { theme: string; evidence: string; heat: string }[]
-  reply_opportunities: { target: string; why: string; example: string }[]
-  topic_hints: { title: string; signal: string; score: number }[]
-  dos: string[]
-  carry_over?: string
-  raw?: string
-  exists?: boolean
+    id: string;
+    ts: number;
+    scope: string;
+    keywords?: string;
+    total_comments: number;
+    total_videos: number;
+    top_videos: {
+        title: string;
+        comments: number;
+    }[];
+    audience: string;
+    pain_themes: {
+        theme: string;
+        evidence: string;
+        heat: string;
+    }[];
+    reply_opportunities: {
+        target: string;
+        why: string;
+        example: string;
+    }[];
+    dos: string[];
+    carry_over?: string;
+    raw?: string;
+    exists?: boolean;
 }
-
-const BASE = '/api'
-
+const BASE = '/api';
 /** 后端统一错误信封里的字段（见 api/services/error_handlers.py） */
 export interface ApiError extends Error {
-  status: number
-  /** 机器可读错误码，如 BAD_INPUT / NEED_LOGIN / RATE_LIMITED */
-  code?: string
-  /** 可执行建议 */
-  hint?: string
-  /** 限流/冷却时还需等待的秒数 */
-  retryAfterSeconds?: number | null
+    status: number;
+    /** 机器可读错误码，如 BAD_INPUT / NEED_LOGIN / RATE_LIMITED */
+    code?: string;
+    /** 可执行建议 */
+    hint?: string;
+    /** 限流/冷却时还需等待的秒数 */
+    retryAfterSeconds?: number | null;
 }
-
 /**
  * 把后端的错误体解析成人能看懂的一句话。
  *
@@ -479,177 +319,94 @@ export interface ApiError extends Error {
  * 用户看到的是 200 个字符的 JSON——等于没提示。
  */
 export function describeError(status: number, statusText: string, raw: string): ApiError {
-  let message = `${status} ${statusText}`
-  let code: string | undefined
-  let hint: string | undefined
-  let retryAfterSeconds: number | null | undefined
-
-  if (raw) {
-    try {
-      const body = JSON.parse(raw)
-      const envelope = body?.error
-      if (envelope && typeof envelope === 'object') {
-        message = String(envelope.message || message)
-        code = typeof envelope.code === 'string' ? envelope.code : undefined
-        hint = typeof envelope.hint === 'string' ? envelope.hint : undefined
-        retryAfterSeconds = envelope.retry_after_seconds ?? undefined
-      } else if (typeof body?.detail === 'string') {
-        message = body.detail
-      }
-    } catch {
-      // 非 JSON（如网关返回 HTML）：退回状态码 + 截断文本
-      message = `${status} ${statusText}: ${raw.slice(0, 200)}`
+    let message = `${status} ${statusText}`;
+    let code: string | undefined;
+    let hint: string | undefined;
+    let retryAfterSeconds: number | null | undefined;
+    if (raw) {
+        try {
+            const body = JSON.parse(raw);
+            const envelope = body?.error;
+            if (envelope && typeof envelope === 'object') {
+                message = String(envelope.message || message);
+                code = typeof envelope.code === 'string' ? envelope.code : undefined;
+                hint = typeof envelope.hint === 'string' ? envelope.hint : undefined;
+                retryAfterSeconds = envelope.retry_after_seconds ?? undefined;
+            }
+            else if (typeof body?.detail === 'string') {
+                message = body.detail;
+            }
+        }
+        catch {
+            // 非 JSON（如网关返回 HTML）：退回状态码 + 截断文本
+            message = `${status} ${statusText}: ${raw.slice(0, 200)}`;
+        }
     }
-  }
-
-  const error = new Error(hint ? `${message}（${hint}）` : message) as ApiError
-  error.status = status
-  error.code = code
-  error.hint = hint
-  error.retryAfterSeconds = retryAfterSeconds
-  return error
+    const error = new Error(hint ? `${message}（${hint}）` : message) as ApiError;
+    error.status = status;
+    error.code = code;
+    error.hint = hint;
+    error.retryAfterSeconds = retryAfterSeconds;
+    return error;
 }
-
 export async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
-  })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw describeError(res.status, res.statusText, text)
-  }
-  return res.json() as Promise<T>
-}
-
-// ---------------------------------------------------------------------------
-// 创作中台（creator-buddy 方法论 + 标题工坊 + 交付物）
-// ---------------------------------------------------------------------------
-
-export interface StudioSkill {
-  id: string
-  name: string
-  description: string
-  platform: string
-  platform_label: string
-  stage: string
-  rel_path: string
-  tags: string[]
-}
-
-export interface StudioTitleItem {
-  text: string
-  method: string
-  hook: string
-  score: number
-  length: number
-  breakdown: Record<string, number>
-  notes: string[]
-  risk: { level: 'low' | 'medium' | 'high'; flags: string[]; blocking: string[] }
-  duplicate_of: string | null
-  disqualified: boolean
-  disqualify_reason: string
-}
-
-export interface StudioTitlePack {
-  platform: string
-  platform_label: string
-  count: number
-  valid_count: number
-  items: StudioTitleItem[]
-  methods_covered: string[]
-  method_count: number
-  diversity_ok: boolean
-  recommendations: Record<string, { text: string; method: string; score: number }>
-}
-
-export interface StudioDraft {
-  text: string
-  platform: string
-  rounds: { round: number; chars: number; blocking: string[]; issue_count: number }[]
-  passed: boolean
-  remaining_blocking: string[]
-  issues: { code: string; excerpt: string }[]
-  chars: number
-}
-
-export interface StudioDeliverable {
-  format: string
-  html?: string
-  pages?: number
-  shots?: {
-    index: number
-    start_s: number
-    duration_s: number
-    role: string
-    text: string
-    visual: string
-  }[]
-  total_duration_label?: string
-  prompt?: string
-  note?: string
-  error?: string
-}
-
-export interface StudioRun {
-  id: string
-  created_at: string
-  format: string
-  format_label: string
-  topic: string
-  style_slug: string
-  skill_id: string
-  title: string
-  titles: StudioTitlePack | null
-  titles_error: string
-  draft: StudioDraft
-  deliverable: StudioDeliverable
-}
-
-export interface StudioContext {
-  audience: string
-  forbidden_claims: string
-  persona: string
-  tone: string
-  styles: { slug: string; chars: number }[]
-  formats: Record<string, { label: string; quality: string; deliver: string }>
-  platforms: Record<string, string>
+    const res = await fetch(`${BASE}${path}`, {
+        headers: { 'Content-Type': 'application/json' },
+        ...init,
+    });
+    if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw describeError(res.status, res.statusText, text);
+    }
+    return res.json() as Promise<T>;
 }
 export interface YouTubeTarget {
-  channel: string
-  source: string
-  video_count: number
-  selected: { id: string; title: string; views: number; url: string }[]
+    channel: string;
+    source: string;
+    video_count: number;
+    selected: {
+        id: string;
+        title: string;
+        views: number;
+        url: string;
+    }[];
 }
-
 export interface YouTubeJob {
-  id: string
-  status: 'running' | 'done' | 'error'
-  started_at: string
-  finished_at: string
-  params: { limit: number; channels: string[]; max_comments: number; sort: string }
-  progress: { done: number; total: number; current: string; rows: number }
-  result: Record<string, unknown> | null
-  error: string
+    id: string;
+    status: 'running' | 'done' | 'error';
+    started_at: string;
+    finished_at: string;
+    params: {
+        limit: number;
+        channels: string[];
+        max_comments: number;
+        sort: string;
+    };
+    progress: {
+        done: number;
+        total: number;
+        current: string;
+        rows: number;
+    };
+    result: Record<string, unknown> | null;
+    error: string;
 }
-
 export interface YouTubeSummary {
-  total_comments: number
-  out_dir: string
-  channels: {
-    channel: string
-    comments: number
-    videos: number
-    csv: string
-    top_liked: { content: string; like_count: number }[]
-  }[]
+    total_comments: number;
+    out_dir: string;
+    channels: {
+        channel: string;
+        comments: number;
+        videos: number;
+        csv: string;
+        top_liked: {
+            content: string;
+            like_count: number;
+        }[];
+    }[];
 }
-
-export type AutomationPlatform = 'bili' | 'xhs' | 'dy'
-
-const p = (platform: AutomationPlatform) => `&platform=${platform}`
-
-
+export type AutomationPlatform = 'bili' | 'xhs' | 'dy';
+const p = (platform: AutomationPlatform) => `&platform=${platform}`;
 // ---------------------------------------------------------------------------
 // 评论洞察（/api/analysis/*）
 //
@@ -657,827 +414,515 @@ const p = (platform: AutomationPlatform) => `&platform=${platform}`
 // 旧的 web_static/insight.js 在移除旧前端时被删掉了，UI 没跟着重建。
 // 这里补齐最小可用的一套类型与调用。
 // ---------------------------------------------------------------------------
-
 export interface InsightSourceFile {
-  path: string
-  name?: string
-  comment_count?: number
-  category?: string
-  creator?: string
-  folder?: string
-  platform_hint?: string
-  video_label?: string
-  size?: number
-  modified_at?: number
+    path: string;
+    name?: string;
+    comment_count?: number;
+    category?: string;
+    creator?: string;
+    folder?: string;
+    platform_hint?: string;
+    video_label?: string;
+    size?: number;
+    modified_at?: number;
 }
-
 export interface InsightSourceGroup {
-  category: string
-  file_count: number
-  comment_count: number
-  creators: { creator: string; files: InsightSourceFile[]; file_count: number; comment_count: number }[]
+    category: string;
+    file_count: number;
+    comment_count: number;
+    creators: {
+        creator: string;
+        files: InsightSourceFile[];
+        file_count: number;
+        comment_count: number;
+    }[];
 }
-
 export interface InsightRunSummary {
-  run_id: string
-  name?: string
-  total_records?: number
-  created_at?: string
-  status?: string
-  completed?: number
-  failed?: number
-  analysis_limit?: number
-  use_mock?: boolean
-  profile_id?: string
-  file_paths?: string[]
-  project_id?: string
-  storage_dir?: string
+    run_id: string;
+    name?: string;
+    total_records?: number;
+    created_at?: string;
+    status?: string;
+    completed?: number;
+    failed?: number;
+    analysis_limit?: number;
+    use_mock?: boolean;
+    profile_id?: string;
+    file_paths?: string[];
+    project_id?: string;
+    storage_dir?: string;
 }
-
 export interface InsightPricing {
-  model_name: string
-  base_url: string
-  input_price: number
-  output_price: number
-  currency: string
-  provider_label?: string
+    model_name: string;
+    base_url: string;
+    input_price: number;
+    output_price: number;
+    currency: string;
+    provider_label?: string;
 }
-
 export interface InsightProfile {
-  profile_id: string
-  name?: string
-  niche?: string
-  target_audience?: string
-  is_builtin?: boolean
-  is_configured?: boolean
-  intents?: Record<string, string>
-  signals?: Record<string, string>
-  [k: string]: unknown
+    profile_id: string;
+    name?: string;
+    niche?: string;
+    target_audience?: string;
+    is_builtin?: boolean;
+    is_configured?: boolean;
+    intents?: Record<string, string>;
+    signals?: Record<string, string>;
+    [k: string]: unknown;
 }
-
 export interface InsightProfilesResponse {
-  profiles: InsightProfile[]
-  /** 2026-11-13：页面必须按「当前生效档案」初始化，否则永远停在内置 default。 */
-  active_profile_id?: string
+    profiles: InsightProfile[];
+    /** 2026-11-13：页面必须按「当前生效档案」初始化，否则永远停在内置 default。 */
+    active_profile_id?: string;
 }
-
 export interface InsightResultsItem {
-  record_id: string
-  analyzed_at?: string
-  usage?: { prompt_tokens?: number; completion_tokens?: number }
-  source: {
-    comment_text?: string
-    comment_url?: string
-    username?: string
-    user_id?: string
-    user_homepage_url?: string
-    like_count?: number
-    reply_count?: number
-    video_title?: string
-    platform?: string
-    creator_type?: string
-    published_at?: string | null
-  }
-  analysis?: {
-    primary_intent?: string
-    signals?: string[]
-    specific_problems?: string[]
-    single_video_relation?: string
-    single_video_limitation_summary?: string
-    product_fit?: string
-    product_fit_reason?: string
-    evidence_quotes?: string[]
-    new_signals?: { type?: string; text?: string; evidence_quote?: string }[]
-    potential_needs?: string[]
-    confidence?: number
-  }
+    record_id: string;
+    analyzed_at?: string;
+    usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+    };
+    source: {
+        comment_text?: string;
+        comment_url?: string;
+        username?: string;
+        user_id?: string;
+        user_homepage_url?: string;
+        like_count?: number;
+        reply_count?: number;
+        video_title?: string;
+        platform?: string;
+        creator_type?: string;
+        published_at?: string | null;
+    };
+    analysis?: {
+        primary_intent?: string;
+        signals?: string[];
+        specific_problems?: string[];
+        single_video_relation?: string;
+        single_video_limitation_summary?: string;
+        product_fit?: string;
+        product_fit_reason?: string;
+        evidence_quotes?: string[];
+        new_signals?: {
+            type?: string;
+            text?: string;
+            evidence_quote?: string;
+        }[];
+        potential_needs?: string[];
+        confidence?: number;
+    };
 }
-
 export interface InsightResultsResponse {
-  total: number
-  page: number
-  page_size: number
-  items: InsightResultsItem[]
+    total: number;
+    page: number;
+    page_size: number;
+    items: InsightResultsItem[];
 }
-
 export interface InsightTheme {
-  theme_id: string
-  theme_name: string
-  theme_type?: string
-  definition?: string
-  implication?: string
-  confidence?: number
-  relation_to_existing_hypotheses?: string
-  representative_quotes?: string[]
-  record_ids?: string[]
-  stats?: {
-    comment_count?: number
-    unique_user_count?: number
-    source_file_count?: number
-    video_count?: number
-  }
+    theme_id: string;
+    theme_name: string;
+    theme_type?: string;
+    definition?: string;
+    implication?: string;
+    confidence?: number;
+    relation_to_existing_hypotheses?: string;
+    representative_quotes?: string[];
+    record_ids?: string[];
+    stats?: {
+        comment_count?: number;
+        unique_user_count?: number;
+        source_file_count?: number;
+        video_count?: number;
+    };
 }
-
 export interface InsightThemesResponse {
-  themes?: InsightTheme[]
-  cluster_progress?: {
-    status?: string
-    message?: string
-    progress_pct?: number
-    theme_count?: number
-    cost?: number
-    currency?: string
-    last_error?: string
-  }
-  cluster_running?: boolean
-  warnings?: string[]
+    themes?: InsightTheme[];
+    cluster_progress?: {
+        status?: string;
+        message?: string;
+        progress_pct?: number;
+        theme_count?: number;
+        cost?: number;
+        currency?: string;
+        last_error?: string;
+    };
+    cluster_running?: boolean;
+    warnings?: string[];
 }
-
 export interface InsightCreateRunPayload {
-  name?: string
-  file_paths: string[]
-  analysis_limit?: number
-  use_mock?: boolean
-  research_targets?: string
-  profile_id?: string
-  model?: { model_name?: string; base_url?: string; budget_limit?: number }
+    name?: string;
+    file_paths: string[];
+    analysis_limit?: number;
+    use_mock?: boolean;
+    research_targets?: string;
+    profile_id?: string;
+    model?: {
+        model_name?: string;
+        base_url?: string;
+        budget_limit?: number;
+    };
 }
-
 export interface InsightRunDetail extends InsightRunSummary {
-  progress?: Record<string, unknown>
-  config?: Record<string, unknown>
-  estimate?: Record<string, unknown>
-  summary?: Record<string, unknown>
-  pricing?: Record<string, unknown>
-  is_running?: boolean
-  export_paths?: Record<string, string>
-  document_warnings?: string[]
+    progress?: Record<string, unknown>;
+    config?: Record<string, unknown>;
+    estimate?: Record<string, unknown>;
+    summary?: Record<string, unknown>;
+    pricing?: Record<string, unknown>;
+    is_running?: boolean;
+    export_paths?: Record<string, string>;
+    document_warnings?: string[];
 }
-
 export interface InsightReport {
-  run_id: string
-  markdown?: string
-  research?: Record<string, unknown>
-  has_report?: boolean
-  waiting_for_open_themes?: boolean
+    run_id: string;
+    markdown?: string;
+    research?: Record<string, unknown>;
+    has_report?: boolean;
+    waiting_for_open_themes?: boolean;
 }
-
-
 // ---------------------------------------------------------------------------
-// 切场景（/api/topics/scenario/*）
+// 切场景（/api/strategy/scenario/*）
 //
 // 回答的是「除了我想到的那几个场景，还有哪些地方能打」。
 // 六个轴：身份/困境/替代/触发/否认/邻近——不从产品功能反推，从用户生活情境出发。
 // ---------------------------------------------------------------------------
-
 export interface ScenarioAxis {
-  key: string
-  label: string
-  description: string
+    key: string;
+    label: string;
+    description: string;
 }
-
 export interface Scenario {
-  name: string
-  axis: string
-  axis_label: string
-  /** 具体触发情境（When & Why），写得像一个人的真实瞬间 */
-  trigger: string
-  pain: string
-  /** 我们的产品在这里具体提供什么 */
-  entry: string
-  /** 可直接粘进搜索框的用户原话 */
-  keywords: string[]
-  platforms: string[]
-  why_underused: string
-  /** 低/中/高 + 一句理由；诚实评估比乐观更有用 */
-  competitor_density: string
-  /** 以下全部由代码回算，模型不许报数字 */
-  hits: number | null
-  users: number | null
-  videos: number | null
-  sample_quotes: string[]
-  /** 有信号 / 弱信号 / 无信号 */
-  verdict: string
+    name: string;
+    axis: string;
+    axis_label: string;
+    /** 具体触发情境（When & Why），写得像一个人的真实瞬间 */
+    trigger: string;
+    pain: string;
+    /** 我们的产品在这里具体提供什么 */
+    entry: string;
+    /** 可直接粘进搜索框的用户原话 */
+    keywords: string[];
+    platforms: string[];
+    why_underused: string;
+    /** 低/中/高 + 一句理由；诚实评估比乐观更有用 */
+    competitor_density: string;
+    /** 以下全部由代码回算，模型不许报数字 */
+    hits: number | null;
+    users: number | null;
+    videos: number | null;
+    sample_quotes: string[];
+    /** 有信号 / 弱信号 / 无信号 */
+    verdict: string;
 }
-
 export interface ScenarioPlanResult {
-  positioning: string
-  audience: string
-  axes: ScenarioAxis[]
-  scenarios: Scenario[]
-  warnings: string[]
-  verified: boolean
-  message: string
+    positioning: string;
+    audience: string;
+    axes: ScenarioAxis[];
+    scenarios: Scenario[];
+    warnings: string[];
+    verified: boolean;
+    message: string;
 }
-
 export interface ScenarioVerifyResult {
-  scenarios: Scenario[]
-  stats: {
-    total: number
-    with_signal?: number
-    weak_signal?: number
-    no_signal?: number
-    verified: number
-    axis_coverage?: Record<string, number>
-    warnings?: string[]
-  }
-  corpus_size: number
+    scenarios: Scenario[];
+    stats: {
+        total: number;
+        with_signal?: number;
+        weak_signal?: number;
+        no_signal?: number;
+        verified: number;
+        axis_coverage?: Record<string, number>;
+        warnings?: string[];
+    };
+    corpus_size: number;
 }
-
 export const api = {
-  automationStatus: (platform: AutomationPlatform = 'bili', profileId = '') =>
-    req<AutomationStatus>(`/automation/status?platform=${platform}${profileId ? `&profile_id=${encodeURIComponent(profileId)}` : ''}`),
-  candidates: (status = 'pending_review', limit = 60, platform: AutomationPlatform = 'bili', profileId = '') =>
-    req<AutomationCandidate[]>(`/automation/candidates?status=${status}&limit=${limit}${p(platform)}${profileId ? `&profile_id=${encodeURIComponent(profileId)}` : ''}`),
-  approve: (id: string, draft: string, platform: AutomationPlatform = 'bili') =>
-    req<{ ok: boolean; item: AutomationCandidate; warnings: string[] }>(
-      `/automation/candidates/${id}/approve?platform=${platform}`,
-      { method: 'POST', body: JSON.stringify({ draft }) },
-    ),
-  reject: (id: string, platform: AutomationPlatform = 'bili') =>
-    req<{ ok: boolean }>(`/automation/candidates/${id}/reject?platform=${platform}`, { method: 'POST' }),
-  bulkRejectRules: (platform: AutomationPlatform = 'bili', profileId = '') =>
-    req<{ ok: boolean; rejected: number }>(`/automation/candidates/bulk-reject?platform=${platform}&profile_id=${encodeURIComponent(profileId)}`, {
-      method: 'POST',
+    automationStatus: (platform: AutomationPlatform = 'bili', profileId = '') => req<AutomationStatus>(`/automation/status?platform=${platform}${profileId ? `&profile_id=${encodeURIComponent(profileId)}` : ''}`),
+    candidates: (status = 'pending_review', limit = 60, platform: AutomationPlatform = 'bili', profileId = '') => req<AutomationCandidate[]>(`/automation/candidates?status=${status}&limit=${limit}${p(platform)}${profileId ? `&profile_id=${encodeURIComponent(profileId)}` : ''}`),
+    approve: (id: string, draft: string, platform: AutomationPlatform = 'bili') => req<{
+        ok: boolean;
+        item: AutomationCandidate;
+        warnings: string[];
+    }>(`/automation/candidates/${id}/approve?platform=${platform}`, { method: 'POST', body: JSON.stringify({ draft }) }),
+    reject: (id: string, platform: AutomationPlatform = 'bili') => req<{
+        ok: boolean;
+    }>(`/automation/candidates/${id}/reject?platform=${platform}`, { method: 'POST' }),
+    bulkRejectRules: (platform: AutomationPlatform = 'bili', profileId = '') => req<{
+        ok: boolean;
+        rejected: number;
+    }>(`/automation/candidates/bulk-reject?platform=${platform}&profile_id=${encodeURIComponent(profileId)}`, {
+        method: 'POST',
     }),
-  refreshEngagement: (platform: AutomationPlatform = 'bili') =>
-    req<{ ok: boolean; updated: number; with_activity: { id: string; like: number; rcount: number; subs: string[] }[] }>(
-      `/automation/candidates/refresh-engagement?platform=${platform}`,
-      { method: 'POST' },
-    ),
-  candidateHumanTouch: (id: string, platform: AutomationPlatform = 'bili') =>
-    req<{ ok: boolean; item_id: string; report: string }>(
-      `/automation/candidates/${id}/human-touch?platform=${platform}`,
-      { method: 'POST' },
-    ),
-  bulkApproveLlm: (platform: AutomationPlatform = 'bili', profileId = '') =>
-    req<{ ok: boolean; approved: number; skipped_no_draft: number; skipped_similar: number }>(
-      `/automation/candidates/bulk-approve?platform=${platform}&profile_id=${encodeURIComponent(profileId)}`,
-      { method: 'POST' },
-    ),
-  biliLogin: () =>
-    req<{ ok: boolean; message: string }>('/automation/bili-login', { method: 'POST' }),
-  senderResume: (platform: AutomationPlatform = 'bili') =>
-    req<{ ok: boolean; message: string }>(`/automation/sender-resume?platform=${platform}`, { method: 'POST' }),
-  retract: (id: string, platform: AutomationPlatform = 'bili') =>
-    req<{ ok: boolean }>(`/automation/candidates/${id}/retract?platform=${platform}`, { method: 'POST' }),
-  redraft: (id: string, platform: AutomationPlatform = 'bili') =>
-    req<{ ok: boolean; item: AutomationCandidate }>(`/automation/candidates/${id}/draft?platform=${platform}`, {
-      method: 'POST',
+    refreshEngagement: (platform: AutomationPlatform = 'bili') => req<{
+        ok: boolean;
+        updated: number;
+        with_activity: {
+            id: string;
+            like: number;
+            rcount: number;
+            subs: string[];
+        }[];
+    }>(`/automation/candidates/refresh-engagement?platform=${platform}`, { method: 'POST' }),
+    candidateHumanTouch: (id: string, platform: AutomationPlatform = 'bili') => req<{
+        ok: boolean;
+        item_id: string;
+        report: string;
+    }>(`/automation/candidates/${id}/human-touch?platform=${platform}`, { method: 'POST' }),
+    bulkApproveLlm: (platform: AutomationPlatform = 'bili', profileId = '') => req<{
+        ok: boolean;
+        approved: number;
+        skipped_no_draft: number;
+        skipped_similar: number;
+    }>(`/automation/candidates/bulk-approve?platform=${platform}&profile_id=${encodeURIComponent(profileId)}`, { method: 'POST' }),
+    biliLogin: () => req<{
+        ok: boolean;
+        message: string;
+    }>('/automation/bili-login', { method: 'POST' }),
+    senderResume: (platform: AutomationPlatform = 'bili') => req<{
+        ok: boolean;
+        message: string;
+    }>(`/automation/sender-resume?platform=${platform}`, { method: 'POST' }),
+    retract: (id: string, platform: AutomationPlatform = 'bili') => req<{
+        ok: boolean;
+    }>(`/automation/candidates/${id}/retract?platform=${platform}`, { method: 'POST' }),
+    redraft: (id: string, platform: AutomationPlatform = 'bili') => req<{
+        ok: boolean;
+        item: AutomationCandidate;
+    }>(`/automation/candidates/${id}/draft?platform=${platform}`, {
+        method: 'POST',
     }),
-  collectNow: (platform: AutomationPlatform = 'bili', mode: 'list' | 'search' | '' = '', profileId = '', replyGoal = '', replyMode = 'recommend') =>
-    req(`/automation/collect-now?platform=${platform}${mode ? `&mode=${mode}` : ''}`, { method: 'POST', body: JSON.stringify({ profile_id: profileId, reply_goal: replyGoal, reply_mode: replyMode }) }),
-  uploadReplyImage: (id: string, file: File, platform: AutomationPlatform = 'bili') =>
-    req<{ ok: boolean; item: AutomationCandidate }>(`/automation/candidates/${encodeURIComponent(id)}/attachments?platform=${platform}&filename=${encodeURIComponent(file.name)}`, {
-      method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file,
+    collectNow: (platform: AutomationPlatform = 'bili', mode: 'list' | 'search' | '' = '', profileId = '', replyGoal = '', replyMode = 'recommend') => req(`/automation/collect-now?platform=${platform}${mode ? `&mode=${mode}` : ''}`, { method: 'POST', body: JSON.stringify({ profile_id: profileId, reply_goal: replyGoal, reply_mode: replyMode }) }),
+    uploadReplyImage: (id: string, file: File, platform: AutomationPlatform = 'bili') => req<{
+        ok: boolean;
+        item: AutomationCandidate;
+    }>(`/automation/candidates/${encodeURIComponent(id)}/attachments?platform=${platform}&filename=${encodeURIComponent(file.name)}`, {
+        method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file,
     }),
-  removeReplyImage: (id: string, attachmentId: string, platform: AutomationPlatform = 'bili') =>
-    req<{ ok: boolean; item: AutomationCandidate }>(`/automation/candidates/${encodeURIComponent(id)}/attachments/${encodeURIComponent(attachmentId)}?platform=${platform}`, { method: 'DELETE' }),
-  replyImageUrl: (id: string, attachmentId: string, platform: AutomationPlatform = 'bili') =>
-    `${BASE}/automation/candidates/${encodeURIComponent(id)}/attachments/${encodeURIComponent(attachmentId)}?platform=${platform}`,
-  screenCollected: (max_candidates = 50, auto_draft = true, platform: AutomationPlatform = 'bili', profileId = '', replyGoal = '', replyMode = 'recommend') =>
-    req<{ ok: boolean; message: string }>(`/automation/screen-collected?platform=${platform}`, {
-      method: 'POST',
-      body: JSON.stringify({ max_candidates, auto_draft, profile_id: profileId, reply_goal: replyGoal, reply_mode: replyMode }),
+    removeReplyImage: (id: string, attachmentId: string, platform: AutomationPlatform = 'bili') => req<{
+        ok: boolean;
+        item: AutomationCandidate;
+    }>(`/automation/candidates/${encodeURIComponent(id)}/attachments/${encodeURIComponent(attachmentId)}?platform=${platform}`, { method: 'DELETE' }),
+    replyImageUrl: (id: string, attachmentId: string, platform: AutomationPlatform = 'bili') => `${BASE}/automation/candidates/${encodeURIComponent(id)}/attachments/${encodeURIComponent(attachmentId)}?platform=${platform}`,
+    screenCollected: (max_candidates = 50, auto_draft = true, platform: AutomationPlatform = 'bili', profileId = '', replyGoal = '', replyMode = 'recommend') => req<{
+        ok: boolean;
+        message: string;
+    }>(`/automation/screen-collected?platform=${platform}`, {
+        method: 'POST',
+        body: JSON.stringify({ max_candidates, auto_draft, profile_id: profileId, reply_goal: replyGoal, reply_mode: replyMode }),
     }),
-
-  chatHistory: () => req<ChatMessage[]>('/chat/history'),
-  chatSend: (text: string) =>
-    req<ChatMessage>('/chat/send', { method: 'POST', body: JSON.stringify({ text }) }),
-  chatClear: () => req<{ ok: boolean }>('/chat/clear', { method: 'POST' }),
-
-  crawlerStatus: () => req<CrawlerStatus>('/crawler/status'),
-  crawlerStart: (payload: CrawlerStartPayload) =>
-    req('/crawler/start', { method: 'POST', body: JSON.stringify(payload) }),
-  crawlerStop: () => req('/crawler/stop', { method: 'POST' }),
-  crawlerStatusFresh: () => req<CrawlerStatus>('/crawler/status?refresh_progress=true'),
-  crawlerLogs: (limit = 30) =>
-    req<{ logs: CrawlerLog[] }>(`/crawler/logs?limit=${limit}`),
-  crawlerLocalData: () => req<LocalDataSummary>('/crawler/local-data'),
-  xhsNotes: (params: { batch?: string; q?: string; sort?: string; limit?: number; offset?: number } = {}) => {
-    const qs = new URLSearchParams()
-    if (params.batch) qs.set('batch', params.batch)
-    if (params.q) qs.set('q', params.q)
-    if (params.sort) qs.set('sort', params.sort)
-    if (params.limit != null) qs.set('limit', String(params.limit))
-    if (params.offset != null) qs.set('offset', String(params.offset))
-    const tail = qs.toString()
-    return req<XhsNotesResponse>(tail ? `/crawler/xhs-notes?${tail}` : '/crawler/xhs-notes')
-  },
-
-  topicsList: () => req<Topic[]>('/topics/list'),
-  topicBoard: () => req<TopicBoard>('/topics/board'),
-  topicPlan: (seed_ideas: string) =>
-    req<PlanResult>('/topics/plan', { method: 'POST', body: JSON.stringify({ seed_ideas }) }),
-  topicBatchAdd: (topics: PlanTopic[]) =>
-    req<{ inserted: number; skipped: string[]; total: number }>('/topics/batch', {
-      method: 'POST',
-      body: JSON.stringify({ topics }),
+    crawlerStart: (payload: CrawlerStartPayload) => req('/crawler/start', { method: 'POST', body: JSON.stringify(payload) }),
+    crawlerStop: () => req('/crawler/stop', { method: 'POST' }),
+    crawlerStatusFresh: () => req<CrawlerStatus>('/crawler/status?refresh_progress=true'),
+    crawlerLogs: (limit = 30) => req<{
+        logs: CrawlerLog[];
+    }>(`/crawler/logs?limit=${limit}`),
+    crawlerLocalData: () => req<LocalDataSummary>('/crawler/local-data'),
+    xhsNotes: (params: {
+        batch?: string;
+        q?: string;
+        sort?: string;
+        limit?: number;
+        offset?: number;
+    } = {}) => {
+        const qs = new URLSearchParams();
+        if (params.batch)
+            qs.set('batch', params.batch);
+        if (params.q)
+            qs.set('q', params.q);
+        if (params.sort)
+            qs.set('sort', params.sort);
+        if (params.limit != null)
+            qs.set('limit', String(params.limit));
+        if (params.offset != null)
+            qs.set('offset', String(params.offset));
+        const tail = qs.toString();
+        return req<XhsNotesResponse>(tail ? `/crawler/xhs-notes?${tail}` : '/crawler/xhs-notes');
+    },
+    strategyGet: (profileId?: string) => req<Strategy>(`/strategy${profileId ? `?profile_id=${encodeURIComponent(profileId)}` : ''}`),
+    strategySave: (s: Partial<Strategy>) => req<Strategy>('/strategy', { method: 'PUT', body: JSON.stringify(s) }),
+    strategyProfiles: () => req<{
+        active_profile_id: string;
+        profiles: ProfileBrief[];
+    }>('/strategy/profiles'),
+    strategyCreateProfile: (payload: {
+        name: string;
+        niche?: string;
+        target_audience?: string;
+        domain?: string;
+    }) => req<{
+        profile: Strategy;
+        active_profile_id: string;
+    }>('/strategy/profiles', {
+        method: 'POST',
+        body: JSON.stringify(payload),
     }),
-  topicBatchDelete: (ids: string[]) =>
-    req<{ ok: boolean; total: number }>('/topics/batch-delete', {
-      method: 'POST',
-      body: JSON.stringify({ ids }),
+    strategySetActive: (profileId: string) => req<{
+        active_profile_id: string;
+        profiles: ProfileBrief[];
+    }>('/strategy/active', {
+        method: 'PUT',
+        body: JSON.stringify({ profile_id: profileId }),
     }),
-  strategyGet: (profileId?: string) =>
-    req<Strategy>(`/strategy${profileId ? `?profile_id=${encodeURIComponent(profileId)}` : ''}`),
-  strategySave: (s: Partial<Strategy>) =>
-    req<Strategy>('/strategy', { method: 'PUT', body: JSON.stringify(s) }),
-  strategyProfiles: () => req<{ active_profile_id: string; profiles: ProfileBrief[] }>('/strategy/profiles'),
-  strategyCreateProfile: (payload: { name: string; niche?: string; target_audience?: string; domain?: string }) =>
-    req<{ profile: Strategy; active_profile_id: string }>('/strategy/profiles', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  strategySetActive: (profileId: string) =>
-    req<{ active_profile_id: string; profiles: ProfileBrief[] }>('/strategy/active', {
-      method: 'PUT',
-      body: JSON.stringify({ profile_id: profileId }),
-    }),
-  strategyDeleteProfile: (profileId: string) =>
-    req<{ deleted: string; active_profile_id: string }>(`/strategy/profiles/${encodeURIComponent(profileId)}`, {
-      method: 'DELETE',
-    }),
-  // ---- 引导式建档：3 个问题 → 一份可用档案 ----
-  onboardingQuestions: () =>
-    req<{
-      questions: { key: string; question: string; hint: string; placeholder: string }[]
-      required_count: number
-      already_configured: boolean
-      active_profile_id: string
+    // ---- 引导式建档：3 个问题 → 一份可用档案 ----
+    onboardingQuestions: () => req<{
+        questions: {
+            key: string;
+            question: string;
+            hint: string;
+            placeholder: string;
+        }[];
+        required_count: number;
+        already_configured: boolean;
+        active_profile_id: string;
     }>('/strategy/onboarding/questions'),
-  onboardingSubmit: (payload: {
-    domain: string
-    target_audience: string
-    research_goal: string
-    name?: string
-    run_scenario?: boolean
-    scenario_limit?: number
-  }) =>
-    req<{
-      profile: Strategy
-      active_profile_id: string
-      scenarios: { items: Scenario[]; warnings: string[]; verified: boolean } | null
-      scenario_error: string
-      next_steps: string[]
+    onboardingSubmit: (payload: {
+        domain: string;
+        target_audience: string;
+        research_goal: string;
+        name?: string;
+        run_scenario?: boolean;
+        scenario_limit?: number;
+    }) => req<{
+        profile: Strategy;
+        active_profile_id: string;
+        scenarios: {
+            items: Scenario[];
+            warnings: string[];
+            verified: boolean;
+        } | null;
+        scenario_error: string;
+        next_steps: string[];
     }>('/strategy/onboarding', { method: 'POST', body: JSON.stringify(payload) }),
-  costsSummary: () => req<CostSummary>('/costs/summary'),
-  costsLedger: (limit = 20) => req<CostEntry[]>(`/costs/ledger?limit=${limit}`),
-  // ---- 模型网关配置（服务端持久化，脱敏返回）----
-  modelSettingsGet: () =>
-    req<{ configured: boolean; base_url: string; model_name: string; api_key_masked: string }>(
-      '/growth/settings/model',
-    ),
-  modelSettingsSave: (payload: { base_url?: string; model_name?: string; api_key?: string }) =>
-    req<{ configured: boolean; base_url: string; model_name: string; api_key_masked: string }>(
-      '/growth/settings/model',
-      { method: 'POST', body: JSON.stringify(payload) },
-    ),
-  modelSettingsTest: (payload: { base_url?: string; model_name?: string; api_key?: string } = {}) =>
-    req<{ ok: boolean; error?: string; reply?: string }>('/growth/settings/model/test', {
-      method: 'POST',
-      body: JSON.stringify(payload),
+    costsSummary: () => req<CostSummary>('/costs/summary'),
+    // ---- 模型网关配置（服务端持久化，脱敏返回）----
+    modelSettingsGet: () => req<{
+        configured: boolean;
+        base_url: string;
+        model_name: string;
+        api_key_masked: string;
+    }>('/settings/model'),
+    modelSettingsSave: (payload: {
+        base_url?: string;
+        model_name?: string;
+        api_key?: string;
+    }) => req<{
+        configured: boolean;
+        base_url: string;
+        model_name: string;
+        api_key_masked: string;
+    }>('/settings/model', { method: 'POST', body: JSON.stringify(payload) }),
+    modelSettingsTest: (payload: {
+        base_url?: string;
+        model_name?: string;
+        api_key?: string;
+    } = {}) => req<{
+        ok: boolean;
+        error?: string;
+        reply?: string;
+    }>('/settings/model/test', {
+        method: 'POST',
+        body: JSON.stringify(payload),
     }),
-  modelSettingsClear: () => req<Record<string, unknown>>('/growth/settings/model', { method: 'DELETE' }),
-
-
-  wechatLibrary: () => req<unknown[]>('/wechat/library'),
-  wechatDelete: (id: string) => req(`/wechat/library/${id}`, { method: 'DELETE' }),
-  wechatArticle: (url: string) =>
-    req<unknown>('/wechat/article', { method: 'POST', body: JSON.stringify({ url }) }),
-  wechatCollection: (url: string) =>
-    req<unknown>('/wechat/collection', { method: 'POST', body: JSON.stringify({ url }) }),
-  wechatTask: () => req<unknown>('/wechat/task'),
-  topicGenerate: (video_id?: string) =>
-    req<Topic>('/topics/generate', { method: 'POST', body: JSON.stringify({ video_id }) }),
-  topicDelete: (id: string) => req(`/topics/${id}`, { method: 'DELETE' }),
-  topicBoostVideo: (
-    topic_title: string,
-    competitor_links: string[],
-    personal_style = '',
-    auto_search = true,
-  ) =>
-    req<BoostVideoResult>('/topics/boost-video', {
-      method: 'POST',
-      body: JSON.stringify({ topic_title, competitor_links, personal_style, auto_search }),
+    commentsAnalyze: (date?: string, keywords?: string) => req<CommentReport>('/comments/analyze', {
+        method: 'POST',
+        body: JSON.stringify({ date, keywords }),
     }),
-
-  commentsAnalyze: (date?: string, keywords?: string) =>
-    req<CommentReport>('/comments/analyze', {
-      method: 'POST',
-      body: JSON.stringify({ date, keywords }),
+    commentsReports: () => req<ReportSummary[]>('/comments/reports'),
+    commentsReport: (id: string) => req<CommentReport>(`/comments/reports/${id}`),
+    commentsReportDelete: (id: string) => req(`/comments/reports/${id}`, { method: 'DELETE' }),
+    // ---- 评论洞察 ----
+    insightSources: () => req<{
+        groups?: InsightSourceGroup[];
+        total_files?: number;
+        total_comments?: number;
+    }>('/analysis/sources'),
+    insightRuns: () => req<{
+        runs: InsightRunSummary[];
+    }>('/analysis/runs'),
+    insightProfiles: () => req<InsightProfilesResponse>('/analysis/profiles'),
+    insightPricing: () => req<InsightPricing>('/analysis/pricing'),
+    insightCreateRun: (payload: InsightCreateRunPayload) => req<{
+        run_id: string;
+        reused?: boolean;
+        total_records?: number;
+    }>('/analysis/runs', {
+        method: 'POST',
+        body: JSON.stringify(payload),
     }),
-  commentsReports: () => req<ReportSummary[]>('/comments/reports'),
-  commentsReport: (id: string) => req<CommentReport>(`/comments/reports/${id}`),
-  commentsReportDelete: (id: string) => req(`/comments/reports/${id}`, { method: 'DELETE' }),
-
-  youvibeQuery: (queries: { name: string; endpoint: string; params?: Record<string, unknown> }[]) =>
-    req<Record<string, unknown>>('/youvibe/query', {
-      method: 'POST',
-      body: JSON.stringify({ queries }),
+    insightRun: (runId: string) => req<InsightRunDetail>(`/analysis/runs/${runId}`),
+    insightAnalyze: (runId: string, payload: Record<string, unknown> = {}) => req<Record<string, unknown>>(`/analysis/runs/${runId}/analyze`, {
+        method: 'POST',
+        body: JSON.stringify({ background: true, ...payload }),
     }),
-
-  writerList: () => req<Draft[]>('/writer/list'),
-  writerGenerate: (
-    topic_title: string,
-    topic_context: string,
-    format: 'xhs' | 'koubo' | 'skeleton',
-    style = 'checklist',
-  ) =>
-    req<Draft>('/writer/generate', {
-      method: 'POST',
-      body: JSON.stringify({ topic_title, topic_context, format, style }),
+    insightReport: (runId: string) => req<InsightReport>(`/analysis/runs/${runId}/research-report`),
+    insightCancel: (runId: string) => req<Record<string, unknown>>(`/analysis/runs/${runId}/cancel`, { method: 'POST' }),
+    // 后端实际返回 {text, generated}；以前这里写成 {narrative} —— 页面永远读不到内容
+    insightNarrative: (runId: string) => req<{
+        text?: string;
+        generated?: boolean;
+        error?: string;
+    }>(`/analysis/runs/${runId}/insight-narrative`),
+    insightNarrativeGenerate: (runId: string, payload: Record<string, unknown> = {}) => req<{
+        text?: string;
+        generated?: boolean;
+    }>(`/analysis/runs/${runId}/insight-narrative`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
     }),
-  writerHumanize: (text: string) =>
-    req<{ body: string; changes: string[]; quality?: ContentQuality }>('/writer/humanize', {
-      method: 'POST',
-      body: JSON.stringify({ text }),
+    insightResults: (runId: string, query: Record<string, string | number | boolean | undefined> = {}) => {
+        const params = new URLSearchParams();
+        for (const [k, v] of Object.entries(query)) {
+            if (v === undefined || v === '' || v === null)
+                continue;
+            params.set(k, String(v));
+        }
+        const qs = params.toString();
+        return req<InsightResultsResponse>(`/analysis/runs/${runId}/results/items${qs ? `?${qs}` : ''}`);
+    },
+    insightThemes: (runId: string) => req<InsightThemesResponse>(`/analysis/runs/${runId}/themes`),
+    insightCluster: (runId: string, payload: Record<string, unknown> = {}) => req<Record<string, unknown>>(`/analysis/runs/${runId}/themes/cluster`, {
+        method: 'POST',
+        body: JSON.stringify({ background: true, ...payload }),
     }),
-  writerCheck: (title: string, body: string, format: string) =>
-    req<ContentQuality>('/writer/check', {
-      method: 'POST',
-      body: JSON.stringify({ title, body, format }),
+    automationConfigUpdate: (patch: Record<string, unknown>, platform: AutomationPlatform = 'bili') => req(`/automation/config?platform=${platform}`, { method: 'POST', body: JSON.stringify(patch) }),
+    // 产品触达场景：搜索词建议、语料验证与人工采纳。
+    // ---- 切场景 ----
+    scenarioPlan: (payload: {
+        positioning?: string;
+        audience?: string;
+        value?: string;
+        existing_hint?: string;
+        limit?: number;
+    }) => req<ScenarioPlanResult>('/strategy/scenario/plan', {
+        method: 'POST',
+        body: JSON.stringify(payload),
     }),
-  writerCritic: (title: string, body: string, format: string) =>
-    req<LlmReview>('/writer/critic', {
-      method: 'POST',
-      body: JSON.stringify({ title, body, format }),
+    scenarioVerify: (scenarios: Scenario[]) => req<ScenarioVerifyResult>('/strategy/scenario/verify', {
+        method: 'POST',
+        body: JSON.stringify({ scenarios }),
     }),
-  writerQualitySummary: (limit = 50) =>
-    req<QualitySummary>(`/writer/quality/summary?limit=${limit}`),
-
-  publishRecords: () => req<PublishRecord[]>('/publish/records'),
-  publishDrafts: () => req<UnregisteredDraft[]>('/publish/drafts'),
-  publishAnalysis: () => req<PublishAnalysis>('/publish/analysis'),
-  // ---- 评论洞察 ----
-  insightSources: () =>
-    req<{ groups?: InsightSourceGroup[]; total_files?: number; total_comments?: number }>(
-      '/analysis/sources',
-    ),
-  insightRuns: () => req<{ runs: InsightRunSummary[] }>('/analysis/runs'),
-  insightProfiles: () => req<InsightProfilesResponse>('/analysis/profiles'),
-  insightPricing: () => req<InsightPricing>('/analysis/pricing'),
-  insightCreateRun: (payload: InsightCreateRunPayload) =>
-    req<{ run_id: string; reused?: boolean; total_records?: number }>('/analysis/runs', {
-      method: 'POST',
-      body: JSON.stringify(payload),
+    scenarioAdopt: (scenarios: Scenario[]) => req<{
+        ok: boolean;
+        target_scenarios: unknown[];
+    }>('/strategy/scenario/adopt', {
+        method: 'POST',
+        body: JSON.stringify({ scenarios }),
     }),
-  insightRun: (runId: string) => req<InsightRunDetail>(`/analysis/runs/${runId}`),
-  insightAnalyze: (runId: string, payload: Record<string, unknown> = {}) =>
-    req<Record<string, unknown>>(`/analysis/runs/${runId}/analyze`, {
-      method: 'POST',
-      body: JSON.stringify({ background: true, ...payload }),
-    }),
-  insightReport: (runId: string) => req<InsightReport>(`/analysis/runs/${runId}/research-report`),
-  insightCancel: (runId: string) =>
-    req<Record<string, unknown>>(`/analysis/runs/${runId}/cancel`, { method: 'POST' }),
-  insightRetryFailed: (runId: string, payload: Record<string, unknown> = {}) =>
-    req<Record<string, unknown>>(`/analysis/runs/${runId}/retry-failed`, {
-      method: 'POST',
-      body: JSON.stringify({ background: true, ...payload }),
-    }),
-  // 后端实际返回 {text, generated}；以前这里写成 {narrative} —— 页面永远读不到内容
-  insightNarrative: (runId: string) =>
-    req<{ text?: string; generated?: boolean; error?: string }>(
-      `/analysis/runs/${runId}/insight-narrative`,
-    ),
-  insightNarrativeGenerate: (runId: string, payload: Record<string, unknown> = {}) =>
-    req<{ text?: string; generated?: boolean }>(`/analysis/runs/${runId}/insight-narrative`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  insightResults: (runId: string, query: Record<string, string | number | boolean | undefined> = {}) => {
-    const params = new URLSearchParams()
-    for (const [k, v] of Object.entries(query)) {
-      if (v === undefined || v === '' || v === null) continue
-      params.set(k, String(v))
-    }
-    const qs = params.toString()
-    return req<InsightResultsResponse>(`/analysis/runs/${runId}/results/items${qs ? `?${qs}` : ''}`)
-  },
-  insightThemes: (runId: string) => req<InsightThemesResponse>(`/analysis/runs/${runId}/themes`),
-  insightCluster: (runId: string, payload: Record<string, unknown> = {}) =>
-    req<Record<string, unknown>>(`/analysis/runs/${runId}/themes/cluster`, {
-      method: 'POST',
-      body: JSON.stringify({ background: true, ...payload }),
-    }),
-  publishCreate: (body: Record<string, unknown>) =>
-    req<PublishRecord>('/publish/records', { method: 'POST', body: JSON.stringify(body) }),
-  publishUpdate: (id: string, body: Record<string, unknown>) =>
-    req<PublishRecord>(`/publish/records/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
-  publishDelete: (id: string) => req(`/publish/records/${id}`, { method: 'DELETE' }),
-  writerDelete: (id: string) => req(`/writer/${id}`, { method: 'DELETE' }),
-
-  automationConfigUpdate: (patch: Record<string, unknown>, platform: AutomationPlatform = 'bili') =>
-    req(`/automation/config?platform=${platform}`, { method: 'POST', body: JSON.stringify(patch) }),
-  studioSkills: (platform = '', stage = '', q = '') =>
-    req<{ items: StudioSkill[]; stages: { stage: string; count: number }[]; stats: { total: number; by_platform: Record<string, number> } }>(
-      `/studio/skills?platform=${encodeURIComponent(platform)}&stage=${encodeURIComponent(stage)}&q=${encodeURIComponent(q)}`,
-    ),
-  studioContext: () => req<StudioContext>('/studio/context'),
-  studioTitles: (payload: {
-    topic: string
-    body?: string
-    platform: string
-    count?: number
-  }) =>
-    req<StudioTitlePack>('/studio/titles', { method: 'POST', body: JSON.stringify(payload) }),
-  studioReviewTitles: (payload: {
-    candidates: { text: string; method?: string }[]
-    topic?: string
-    body?: string
-    platform: string
-  }) =>
-    req<StudioTitlePack>('/studio/titles/review', { method: 'POST', body: JSON.stringify(payload) }),
-  studioCheckTitle: (payload: { text: string; platform: string; body?: string }) =>
-    req<{
-      ok: boolean
-      length: number
-      limit: number
-      score: number
-      risk: { level: string; flags: string[]; blocking: string[] }
-      notes: string[]
-    }>('/studio/titles/check', { method: 'POST', body: JSON.stringify(payload) }),
-  studioDeliver: (payload: {
-    format: 'wechat' | 'xhs' | 'storyboard' | 'cover'
-    title?: string
-    body?: string
-    tags?: string[]
-    style?: string
-  }) => req<StudioDeliverable>('/studio/deliver', { method: 'POST', body: JSON.stringify(payload) }),
-  studioCoverCheck: (path: string, platform = 'wechat') =>
-    req<Record<string, unknown>>('/studio/cover/check', {
-      method: 'POST',
-      body: JSON.stringify({ path, platform }),
-    }),
-  studioPipeline: (payload: {
-    topic: string
-    format: 'wechat' | 'xhs' | 'video'
-    style_slug?: string
-    material?: string
-    title?: string
-    count?: number
-    with_titles?: boolean
-    deliverable?: string
-    skill_id?: string
-  }) => req<StudioRun>('/studio/pipeline', { method: 'POST', body: JSON.stringify(payload) }),
-  studioRuns: (limit = 20) => req<StudioRun[]>(`/studio/runs?limit=${limit}`),
-  // 三源选题：评论痛点 / 洗稿台 / 事件（api/routers/topics.py 新增接口）
-  // 轻量数据指纹：选题中心用它判断「数据有没有变」，不变就不重拉、不重算
-
-  // ---- 切场景 ----
-  scenarioPlan: (payload: {
-    positioning?: string
-    audience?: string
-    value?: string
-    existing_hint?: string
-    limit?: number
-  }) =>
-    req<ScenarioPlanResult>('/topics/scenario/plan', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  scenarioVerify: (scenarios: Scenario[]) =>
-    req<ScenarioVerifyResult>('/topics/scenario/verify', {
-      method: 'POST',
-      body: JSON.stringify({ scenarios }),
-    }),
-  scenarioAdopt: (scenarios: Scenario[]) =>
-    req<{ ok: boolean; target_scenarios: unknown[] }>('/topics/scenario/adopt', {
-      method: 'POST',
-      body: JSON.stringify({ scenarios }),
-    }),
-
-  topicVersion: () =>
-    req<{
-      version: string
-      topics: { count: number }
-      corpus: { files: number; signature: string }
-      youtube_corpus: { files: number; signature: string }
-    }>('/topics/version'),
-  topicDemand: (mode: 'llm' | 'rules' = 'llm', limit = 8, source: 'bili' | 'youtube' = 'bili') =>
-    req<TopicDemandResult>(
-      `/topics/demand?mode=${mode}&limit=${limit}&source=${source}`,
-    ),
-  topicFromDemand: (payload: TopicDemandInput) =>
-    req<TopicWriteResult>('/topics/from-demand', { method: 'POST', body: JSON.stringify(payload) }),
-  topicFromEvent: (payload: {
-    material: string
-    personal_style?: string
-    application_domain?: string
-    create_topics?: boolean
-  }) =>
-    req<TopicFromEventResult>('/topics/from-event', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  /** manual_text：拿不到字幕时直接粘贴的参考正文/口播稿（≤20000 字），传了就不必给 links */
-  topicRewritePlan: (payload: {
-    topic_title?: string
-    links: string[]
-    personal_style?: string
-    manual_text?: string
-  }) =>
-    req<RewritePlan>('/topics/rewrite/plan', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  topicRewriteDraft: (payload: {
-    plan: RewritePlan | Record<string, unknown>
-    links: string[]
-    personal_style?: string
-  }) =>
-    req<TopicRewriteDraftResult>('/topics/rewrite/draft', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  /** 一键直出：内部先出方案再成稿，方案只留痕不挡路（约 2-3 分钟） */
-  /** manual_text 同 topicRewritePlan：没有链接也能出稿 */
-  topicRewriteOnce: (payload: {
-    topic_title?: string
-    links: string[]
-    personal_style?: string
-    manual_text?: string
-  }) =>
-    req<TopicRewriteOnceResult>('/topics/rewrite/once', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  topicPatchStatus: (id: string, status: TopicStatus) =>
-    req<Topic>(`/topics/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
-  topicStats: () => req<TopicStats>('/topics/stats'),
-  youtubeTargets: (limit = 3) => req<{ targets: YouTubeTarget[] }>(`/youtube/comments/targets?limit=${limit}`),
-  youtubeCollect: (payload: {
-    limit?: number
-    channels?: string[]
-    max_comments?: number
-    sort?: 'top' | 'newest'
-  }) => req<YouTubeJob>('/youtube/comments/collect', { method: 'POST', body: JSON.stringify(payload) }),
-  youtubeJob: (id: string) => req<YouTubeJob>(`/youtube/comments/jobs/${id}`),
-  youtubeJobs: (limit = 10) => req<YouTubeJob[]>(`/youtube/comments/jobs?limit=${limit}`),
-  youtubeSummary: () => req<YouTubeSummary>('/youtube/comments/summary'),
-  youtubeReport: (payload: { channels?: string[]; keywords?: string }) =>
-    req<CommentReport>('/youtube/comments/report', { method: 'POST', body: JSON.stringify(payload) }),
-}
-
-// ---------------------------------------------------------------------------
-// 三源选题的类型（评论驱动 / 洗稿驱动 / 事件驱动）
-//   数字全部由后端用真实评论统计，模型只负责分组与起名。
-// ---------------------------------------------------------------------------
-
-export type TopicStatus = 'planned' | 'drafting' | 'drafted' | 'published' | 'dropped'
-
-/** 一条证据评论（原文，不加工） */
-export interface DemandEvidence {
-  text: string
-  likes: number
-  video_title: string
-}
-
-/** 一个「一群人反复没被满足的需求」簇 */
-export interface DemandCluster {
-  theme: string
-  need: string
-  problem_type: string
-  users: number
-  videos: number
-  comments: number
-  likes: number
-  score: number
-  /** 只有 mode=llm 分组时才有 */
-  why_worth_writing?: string
-  video_titles: string[]
-  evidence: DemandEvidence[]
-  signals?: Record<string, number>
-  phrases?: string[]
-  source?: string
-}
-
-export interface DemandCorpus {
-  comments: number
-  videos: number
-  /** 求资料/求网盘这类已被剔除的条数 */
-  resource_asks: number
-  candidates: number
-  /** 这份结果基于哪一版评论语料；与 /topics/version 的 corpus.signature 比对即可判断是否过期 */
-  signature?: string
-}
-
-export interface TopicDemandResult {
-  mode: 'llm' | 'rules' | 'empty'
-  /** 语料来源：bili = 自己受众的 B 站评论；youtube = 对标频道英文评论 */
-  source?: 'bili' | 'youtube'
-  corpus: DemandCorpus
-  /** mode=rules 且带此字段 = 模型分组失败已降级 */
-  fallback_reason?: string
-  clusters: DemandCluster[]
-}
-
-/** 入库请求：需求数字与证据原样带过去，方便日后复核 */
-export interface TopicDemandInput {
-  theme: string
-  need?: string
-  problem_type?: string
-  application_domain?: string
-  why_worth_writing?: string
-  users: number
-  videos: number
-  comments: number
-  likes: number
-  evidence: DemandEvidence[]
-}
-
-export interface TopicWriteResult {
-  inserted: number
-  skipped: string[]
-  total: number
-  topic?: Topic
-}
-
-/** 事件卡里的一条事实（claim 可回溯到原文摘录 evidence） */
-export interface EventFact {
-  claim: string
-  evidence: string
-}
-
-export interface EventAngle {
-  title: string
-  problem_type: string
-  why: string
-}
-
-export interface EventCard {
-  facts: EventFact[]
-  stance: string
-  why_now: string
-  audience: string
-  angles: EventAngle[]
-  format: string
-  /** 事实对不上原文的地方，要用小字提醒人 */
-  grounding_problems: string[]
-}
-
-export interface TopicFromEventResult {
-  card: EventCard
-  topics: Topic[]
-  inserted: number
-  skipped: string[]
-}
-
-export interface RewriteSource {
-  url: string
-  platform: string
-  title: string
-  chars: number
-  error: string
-}
-
-/** 洗稿第一步：拆解参考 + 差异化方案（还没落库，等人拍板） */
-export interface RewritePlan {
-  topic_title: string
-  reference_digest: string[]
-  keep: string[]
-  drop: string[]
-  your_angle: string
-  differentiation: string[]
-  outline: string[]
-  originality_risk: string
-  go_no_go: string
-  sources: RewriteSource[]
-}
-
-export interface RewriteDraft {
-  title: string
-  titles: string[]
-  body: string
-  self_check: string
-}
-
-export interface TopicRewriteDraftResult {
-  draft: RewriteDraft
-  topic: Topic
-  inserted: number
-  draft_record: Record<string, unknown> | null
-  /** 撞了库里同名选题：成稿已存草稿箱，但没动旧选题的状态 */
-  duplicate_warning?: string
-}
-
-export interface TopicStats {
-  total: number
-  by_source: Record<string, number>
-  by_status: Record<string, number>
-  missing_origin: number
-}
-
-/** 一键直出：一次调用跑完方案 + 成稿；方案照样返回，供事后回溯 */
-export interface TopicRewriteOnceResult {
-  draft: RewriteDraft
-  plan: RewritePlan
-  topic: Topic
-  draft_record: Record<string, unknown> | null
-  /** 非空就提示人看一眼（后端目前放的是 go/no-go 结论原文） */
-  warning: string
-  /** 撞了库里同名选题：成稿已存草稿箱，但没动旧选题的状态 */
-  duplicate_warning?: string
-
-}
+    youtubeTargets: (limit = 3) => req<{
+        targets: YouTubeTarget[];
+    }>(`/youtube/comments/targets?limit=${limit}`),
+    youtubeCollect: (payload: {
+        limit?: number;
+        channels?: string[];
+        max_comments?: number;
+        sort?: 'top' | 'newest';
+    }) => req<YouTubeJob>('/youtube/comments/collect', { method: 'POST', body: JSON.stringify(payload) }),
+    youtubeJob: (id: string) => req<YouTubeJob>(`/youtube/comments/jobs/${id}`),
+    youtubeJobs: (limit = 10) => req<YouTubeJob[]>(`/youtube/comments/jobs?limit=${limit}`),
+    youtubeSummary: () => req<YouTubeSummary>('/youtube/comments/summary'),
+    youtubeReport: (payload: {
+        channels?: string[];
+        keywords?: string;
+    }) => req<CommentReport>('/youtube/comments/report', { method: 'POST', body: JSON.stringify(payload) })
+};

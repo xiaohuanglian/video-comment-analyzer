@@ -140,7 +140,7 @@ export default function ReportPanel() {
                 </button>
               </div>
               <div className="text-[11px] text-stone-400">
-                {h.total_comments} 条 · {h.theme_count} 主题 · {h.topic_count} 选题
+                {h.total_comments} 条 · {h.theme_count} 主题
               </div>
               {h.keywords && <div className="truncate text-[11px] text-stone-400">🏷{h.keywords}</div>}
             </div>
@@ -199,20 +199,6 @@ export default function ReportPanel() {
                       <div className="text-sm font-medium text-stone-700">{t.target}</div>
                       <div className="text-xs text-stone-500">{t.why}</div>
                       {t.example && <div className="mt-1 text-xs text-stone-400">例:{t.example}</div>}
-                    </div>
-                  ))}
-                </div>
-              </Block>
-
-              <Block title="选题线索">
-                <div className="space-y-1">
-                  {current.topic_hints.map((t, i) => (
-                    <div key={i} className="flex items-center gap-2 text-sm">
-                      <span className="w-8 shrink-0 rounded bg-orange-100 px-1.5 py-0.5 text-center text-xs text-(--brand)">
-                        {t.score}分
-                      </span>
-                      <span className="font-medium text-stone-700">{t.title}</span>
-                      <span className="truncate text-xs text-stone-400">{t.signal}</span>
                     </div>
                   ))}
                 </div>

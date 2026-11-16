@@ -9,11 +9,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
 
 from api.services.insight.export import (
     build_candidates_csv,
@@ -22,19 +21,11 @@ from api.services.insight.export import (
     build_report_markdown,
     build_results_csv,
 )
-from api.services.insight.storage import load_config, load_content_plan
+from api.services.insight.storage import load_config
 
 router = APIRouter()
 
 
-class ContentPlanRequest(BaseModel):
-    api_key: Optional[str] = None
-    use_mock: Optional[bool] = None
-    max_topics: int = Field(default=12, ge=1, le=50)
-    draft_topics: int = Field(default=5, ge=0, le=20)
-    with_hot: bool = Field(default=False, description="附加外部热点信号")
-    hot_boost: bool = Field(default=False, description="按「需求×热度」重排（需 with_hot）")
-    with_quality: bool = Field(default=True, description="跑发布前质检（纯代码，零成本）")
 
 
 def _attachment_headers(filename: str, fallback: str) -> Dict[str, str]:
@@ -119,64 +110,3 @@ async def export_run_outreach_csv(run_id: str) -> Response:
 
 
 # ---- 内容草稿 -------------------------------------------------------------
-
-@router.post("/runs/{run_id}/content/generate")
-async def post_generate_content(run_id: str, body: ContentPlanRequest) -> Dict[str, Any]:
-    """Build ranked content topics from insights and optionally AI-draft them."""
-    from api.services.insight.content_plan import build_content_plan, content_plan_markdown
-    from api.services.insight.storage import _run_dir, save_content_plan
-
-    try:
-        config = load_config(run_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="任务不存在") from exc
-    use_mock = config.use_mock if body.use_mock is None else body.use_mock
-    doc = build_content_plan(
-        run_id,
-        use_mock=use_mock,
-        api_key=body.api_key or "",
-        max_topics=body.max_topics,
-        draft_topics=body.draft_topics,
-        with_hot=body.with_hot,
-        hot_boost=body.hot_boost,
-        with_quality=body.with_quality,
-    )
-    payload = doc.model_dump()
-    save_content_plan(run_id, payload)
-    try:
-        (_run_dir(run_id) / "content_plan.md").write_text(
-            content_plan_markdown(doc), encoding="utf-8"
-        )
-    except OSError:
-        pass
-    return payload
-
-
-@router.get("/runs/{run_id}/content")
-async def get_content_plan(run_id: str) -> Dict[str, Any]:
-
-    try:
-        load_config(run_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="任务不存在") from exc
-    return load_content_plan(run_id)
-
-
-@router.get("/runs/{run_id}/export/content.md")
-async def export_content_markdown(run_id: str) -> Response:
-    from api.services.insight.content_plan import ContentPlanDocument, content_plan_markdown
-
-    try:
-        load_config(run_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="任务不存在") from exc
-    payload = load_content_plan(run_id)
-    if not payload:
-        raise HTTPException(status_code=404, detail="尚未生成内容选题")
-    doc = ContentPlanDocument.model_validate(payload)
-    markdown = content_plan_markdown(doc)
-    return Response(
-        content=markdown,
-        media_type="text/markdown; charset=utf-8",
-        headers=_attachment_headers(f"{run_id}_内容选题.md", "content_plan.md"),
-    )

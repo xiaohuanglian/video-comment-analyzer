@@ -17,30 +17,29 @@ from __future__ import annotations
 import re
 from typing import List
 
-# 共享写作规则：稿件质检（api/services/content_quality.py）与评论区回复共用一份，
-# 避免两套词表各自漂移。改规则改共享层，两边同时生效。
-from api.services.content_quality import (
+# 回复风格规则独立于内容创作模块。
+from api.services.outreach.text_rules import (
     JARGON_WORDS as _JARGON_WORDS,
 )
-from api.services.content_quality import (
+from api.services.outreach.text_rules import (
     RE_CONNECTIVES as _RE_CONNECTIVES,
 )
-from api.services.content_quality import (
+from api.services.outreach.text_rules import (
     RE_FAKE_PRECISION as _RE_FAKE_PRECISION,
 )
-from api.services.content_quality import (
+from api.services.outreach.text_rules import (
     RE_TAIL_HEDGE as _RE_TAIL_HEDGE,
 )
-from api.services.content_quality import (
+from api.services.outreach.text_rules import (
     RE_TAIL_OPEN_QUESTION as _RE_TAIL_OPEN_QUESTION,
 )
-from api.services.content_quality import (
+from api.services.outreach.text_rules import (
     RE_TAIL_PUNCHLINE as _RE_TAIL_PUNCHLINE,
 )
-from api.services.content_quality import (
+from api.services.outreach.text_rules import (
     REVERSAL_PATTERNS as _REVERSAL_PATTERNS,
 )
-from api.services.content_quality import (
+from api.services.outreach.text_rules import (
     tail_sentence as _tail_sentence,
 )
 

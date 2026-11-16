@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from api.services.topics import scenario as svc
+from api.services.outreach import scenario as svc
 
 # ---------------------------------------------------------------------------
 # 六个轴

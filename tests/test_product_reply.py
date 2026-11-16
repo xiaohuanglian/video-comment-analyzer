@@ -72,6 +72,7 @@ def test_source_audit_expires_when_original_draft_changes():
 
 def test_failed_redraft_cannot_approve_the_unchanged_old_copy(tmp_path):
     import pytest
+
     from api.services.outreach.reply_automation import AutomationStore
     store = AutomationStore(tmp_path / 'store.json')
     store._state['items'] = [{'id': '1', 'status': 'pending_review', 'draft': '先前旧稿', 'draft_review': {'status': 'blocked'}}]

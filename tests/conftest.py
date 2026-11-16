@@ -109,7 +109,7 @@ def _isolate_real_state_files(tmp_path, monkeypatch):
     # 2026-11-13 起洞察路由的 key 解析会回落到持久化配置，不隔离的话
     # 「无 key 必须 400」那条红线测试会读到真实 key 而失败（而且测试结果
     # 会随开发机状态变）。隔离成空文件 = 「这个进程什么都没配」。
-    from api.services.growth import model_settings as _model_settings
+    from api.services import model_settings as _model_settings
 
     monkeypatch.setattr(_model_settings, "SETTINGS_PATH", tmp_path / "model_settings.json")
     # 环境变量也得清：开发机的 shell 里可能已经 export 了真 key，那会带进整个

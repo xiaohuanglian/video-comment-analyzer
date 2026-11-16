@@ -1,7 +1,11 @@
 import asyncio
 import json
 
-from api.services.insight.evidence_adapter import analysis_dict_from_result_row, infer_single_video_relation, outreach_analysis_from_card
+from api.services.insight.evidence_adapter import (
+    analysis_dict_from_result_row,
+    infer_single_video_relation,
+    outreach_analysis_from_card,
+)
 from api.services.insight.evidence_schemas import EvidenceCard
 from api.services.insight.statistics import build_statistics, compute_candidate_score
 from api.services.outreach import reply_automation as auto

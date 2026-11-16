@@ -909,21 +909,6 @@ class TestTailQuestionLint:
 # ---------------------------------------------------------------------------
 
 class TestKnowledgeBase:
-    def test_search_relevant_atoms(self):
-        from api.services import knowledge as kb
-        if kb.count() == 0:
-            pytest.skip("本地无 atoms.jsonl(仅内部数据)")
-        hits = kb.search("客户嫌贵不回消息", k=3)
-        assert hits and all(h["id"] for h in hits)
-        assert any("嫌贵" in h["knowledge"] or "价格" in h["knowledge"] or "异议" in h["knowledge"] for h in hits)
-
-    def test_context_for_cites_source(self):
-        from api.services import knowledge as kb
-        if kb.count() == 0:
-            pytest.skip("本地无 atoms.jsonl")
-        ctx = kb.context_for("朋友圈怎么发")
-        assert "私域操盘知识库" in ctx and "[XY-" in ctx or "[" in ctx
-
     def test_draft_user_message_has_structure_hint(self):
         # 结构变体:同批条目骨架提示互不相同
         ids = ["c_a1", "c_a2", "c_a3", "c_a4", "c_a5"]
@@ -1008,8 +993,8 @@ class TestAutoDeAIFlavor:
         class FakeClient:
             chat = type("Chat", (), {"completions": FakeCompletions()})()
 
-        import api.services.growth.model_settings as ms
         import api.services.insight.llm_analyzer as la
+        import api.services.model_settings as ms
         orig_ms, orig_la = ms.load_model_settings, la.build_openai_client
         ms.load_model_settings = lambda: {"api_key": "k", "base_url": "http://x", "model_name": "m"}
         la.build_openai_client = lambda *a, **k: FakeClient()

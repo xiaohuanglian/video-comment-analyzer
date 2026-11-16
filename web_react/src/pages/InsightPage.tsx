@@ -536,7 +536,7 @@ export default function InsightPage() {
       return
     }
     if (!profileId) {
-      setError('还没有可用档案：先到「增长工作台 → 产品档案」建立一份，或点右上角新建')
+      setError('还没有可用档案：先到「产品与筛选档案」建立一份，或点右上角新建')
       return
     }
     setBusy('create')
@@ -901,7 +901,7 @@ export default function InsightPage() {
             </div>
             {activeProfile && !activeProfile.is_configured && (
               <p className="rounded-lg bg-amber-50 px-2 py-1.5 text-[11px] text-amber-700">
-                这份档案还没填产品/人群/研究目标，分类维度会是通用占位。到「增长工作台 → 产品档案」按需补充评论研究口径后再跑。
+                这份档案还没填产品/人群/研究目标，分类维度会是通用占位。到「产品与筛选档案」按需补充评论研究口径后再跑。
               </p>
             )}
             <label className="flex items-center gap-2 text-[11px] text-stone-600">

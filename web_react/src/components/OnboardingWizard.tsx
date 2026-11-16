@@ -81,7 +81,7 @@ export default function OnboardingWizard({ onDone, onClose }: Props) {
           <h2 className="text-sm font-semibold">档案已建好</h2>
         </div>
         <p className="text-xs text-stone-600">
-          已完成建档，之后的分析、筛选、选题都会按这份口径走。想再建第二个产品，回这里点「新建档案」。
+          已完成建档，之后的分析、筛选、回复都会按这份口径走。想再建第二个产品，回这里点「新建档案」。
         </p>
 
         {runScenario && (
@@ -89,7 +89,7 @@ export default function OnboardingWizard({ onDone, onClose }: Props) {
             {result.scenarioError ? (
               <p className="text-xs text-amber-700">{result.scenarioError}</p>
             ) : result.scenarios.length === 0 ? (
-              <p className="text-xs text-stone-500">没有生成场景。可以稍后在「选题中心 → 切场景」重跑。</p>
+              <p className="text-xs text-stone-500">没有生成场景。可以稍后在「产品与筛选档案 → 寻找目标用户的具体场景与搜索词」重跑。</p>
             ) : (
               <>
                 <p className="mb-2 text-xs font-medium text-stone-600">

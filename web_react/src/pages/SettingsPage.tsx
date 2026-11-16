@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Check, Coins, KeyRound, Loader2, RefreshCw } from 'lucide-react'
 import { api, type CostSummary } from '../lib/api'
-import { growthApi, type SystemStatus } from '../lib/growth-api'
-import { Field } from '../components/growth/ui'
-import { buttonClass, errorText, inputClass, panelClass, primaryClass } from '../components/growth/ui-helpers'
+import { settingsApi, type SystemStatus } from '../lib/settings-api'
+import { Field } from '../components/ui/Field'
+import { buttonClass, errorText, inputClass, panelClass, primaryClass } from '../components/ui/helpers'
 
 const channelLabels: Record<string, string> = {
   manual_hold: '人工停采记录待核查', cooling: '采集冷却中', paused: '发送停损中',
@@ -21,7 +21,7 @@ export default function SettingsPage() {
   const [connection, setConnection] = useState<'not_checked' | 'ok' | 'failed'>('not_checked')
   useEffect(() => {
     let current = true
-    growthApi.systemStatus().then(value => {
+    settingsApi.systemStatus().then(value => {
       if (!current) return
       setStatus(value); setModel({ base_url: value.model.base_url, model_name: value.model.model, api_key: '' }); setMaskedKey(value.model.api_key_masked)
     }).catch(e => { if (current) setError(errorText(e)) })
@@ -40,21 +40,21 @@ export default function SettingsPage() {
       } else {
         const saved = await api.modelSettingsSave(payload)
         setMaskedKey(saved.api_key_masked); setModel(value => ({ ...value, api_key: '' })); setConnection('not_checked')
-        const current = await growthApi.systemStatus(); setStatus(current)
+        const current = await settingsApi.systemStatus(); setStatus(current)
         setNotice(current.model.environment_override ? '已保存。运行环境中的模型配置优先，请核对实际使用的模型。' : '配置已保存，请测试连接。')
       }
     } catch (e) { setError(errorText(e)); if (test) setConnection('failed') } finally { setBusy('') }
   }
   const issues = status?.channels.filter(channel => ['manual_hold', 'cooling', 'paused', 'error'].includes(channel.state)) ?? []
   return <div className="mx-auto max-w-5xl space-y-5 px-5 py-7 sm:px-8">
-    <header><h1 className="text-2xl font-semibold">连接与系统设置</h1><p className="mt-2 text-sm text-stone-500">处理模型连接、账号异常与费用。产品定位和增长任务在增长工作台里完成。</p></header>
+    <header><h1 className="text-2xl font-semibold">连接与系统设置</h1><p className="mt-2 text-sm text-stone-500">处理模型连接、账号异常与费用。产品定位、目标人群和回复口吻在产品档案中维护。</p></header>
     {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
     <section className={`${panelClass} space-y-3`}><h2 className="font-semibold">现在需要处理什么</h2>
       {!status ? <p className="text-sm text-stone-500">{error ? '状态未能读取，尚不能判断是否需要处理。' : '正在读取本地状态…'}</p> : <>
         <a href="#model-connection" className="block rounded-lg bg-stone-50 p-3 text-sm">{status.model.configured ? connection === 'ok' ? '这组模型连接刚刚测试成功' : connection === 'failed' ? '模型连接失败，请核查网络和配置' : '模型已配置，连接尚未验证；使用 AI 前可在下方测试' : '尚未配置模型，AI 起草需要先连接模型'} →</a>
         {issues.map(channel => <div key={channel.platform} className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{channel.label}：{channelLabels[channel.state]}。{channel.manual_hold ? '请由人核查账号恢复情况，人工停采不会在此自动解除。' : '请核对已有拦截记录，等待或处理异常后再执行。'}</div>)}
         {issues.length === 0 && <p className="text-sm text-stone-500">未发现已记录的通道拦截；账号登录有效性尚未验证。</p>}
-        <Link to="/?view=product" className={buttonClass}>回到产品档案与增长任务</Link>
+        <Link to="/profiles" className={buttonClass}>维护产品与筛选档案</Link>
       </>}
     </section>
     <section id="model-connection" className={`${panelClass} space-y-4`}>
@@ -69,7 +69,7 @@ export default function SettingsPage() {
     </section>
     <section className={`${panelClass} space-y-4`}>
       <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">平台与账号</h2><p className="mt-1 text-xs text-stone-500">节奏由平台执行策略管理；这里说明当前有效策略与已有异常。</p></div><button type="button" disabled={busy !== ''} className={buttonClass} onClick={async () => {
-        setBusy('refresh'); setError(''); try { setStatus(await growthApi.systemStatus()) } catch (e) { setError(errorText(e)) } finally { setBusy('') }
+        setBusy('refresh'); setError(''); try { setStatus(await settingsApi.systemStatus()) } catch (e) { setError(errorText(e)) } finally { setBusy('') }
       }}><RefreshCw size={14} />刷新本地状态</button></div>
       {status?.channels.map(channel => <article key={channel.platform} className="space-y-3 border-t border-stone-100 pt-4">
         <div className="flex flex-wrap justify-between gap-3"><h3 className="text-sm font-medium">{channel.label} · {channelLabels[channel.state] ?? '状态未知'}</h3><Link className="text-xs text-(--brand) underline" to={`/automation?platform=${channel.platform}`}>查看本平台任务与账号处理</Link></div>

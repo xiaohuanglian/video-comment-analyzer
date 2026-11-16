@@ -106,18 +106,6 @@ def test_extract_json_list():
     assert extract_json_list("没有数组") is None
 
 
-def test_shared_impl_is_actually_shared():
-    """各模块的私有包装应委托到同一实现，而不是各留一份。"""
-    from api.services import content_quality, llm_json
-    from api.services.creator import title_lab
-    from api.services.topics import demand, event
+def test_report_parser_uses_shared_implementation():
     from api.services.youtube import report
-
-    tricky = '{"first": 1}\n{"second": 2}'
-    # 贪婪正则在这里会失败（拼成非法 JSON），统一实现应稳定返回第一个对象
-    for module in (content_quality, title_lab, report):
-        assert module._parse_json_object(tricky) if module is content_quality else module._extract_json(tricky)
-
-    assert event.parse_topic_json(tricky) == {"first": 1}
-    assert demand._parse_groups(tricky) == []  # 没有 groups 字段
-    assert llm_json.extract_json_object(tricky) == {"first": 1}
+    assert report._extract_json('{"first": 1}\n{"second": 2}') == {"first": 1}

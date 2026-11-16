@@ -295,11 +295,7 @@ export default function YouTubePanel() {
                     ))}
                   </ul>
                 )}
-                {report.topic_hints.length > 0 && (
-                  <p className="mt-1.5 text-xs text-stone-600">
-                    选题：{report.topic_hints.slice(0, 3).map((t) => t.title).join(' / ')}
-                  </p>
-                )}
+
               </>
             )
           )}

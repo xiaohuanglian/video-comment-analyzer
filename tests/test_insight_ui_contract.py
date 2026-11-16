@@ -136,8 +136,7 @@ def test_analyze_uses_server_side_model_config(monkeypatch, tmp_path):
     页面看着整个坏掉。现在路由走 require_llm_api_key()：入参 → 环境变量 →
     设置页保存的配置。这里只验证「服务端有配置时不再拦」，不真的调模型。
     """
-    from api.services import llm_config
-    from api.services.growth import model_settings
+    from api.services import llm_config, model_settings
 
     monkeypatch.setattr(model_settings, "SETTINGS_PATH", tmp_path / "model_settings.json")
     model_settings.save_model_settings("https://gw.example.com", "m-1", "sk-stored")

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""采集数据分析:一键出本轮洞察报告(人群/痛点/选题线索/回复机会)。"""
+"""采集数据分析:一键出本轮洞察报告(人群/痛点/回复机会)。"""
 
 from __future__ import annotations
 
@@ -39,7 +39,6 @@ ANALYZE_PROMPT = """你是评论区数据分析专家。给你一批评论(B 站
  "audience": "这批评论者是谁(2-3 句话,具体到人群特征和水平阶段)",
  "pain_themes": [{"theme": "痛点/需求主题(延续既往的在主题后标(延续),新发现标(新增))", "evidence": "引用 1-2 条典型评论(精简)", "heat": "高/中/低"}],
  "reply_opportunities": [{"target": "适合回复的评论类型", "why": "为什么值得回", "example": "典型评论(精简)"}],
- "topic_hints": [{"title": "20字内选题", "signal": "来自什么评论信号", "score": 1-10}],
  "dos": ["接下来最该做的 3 件事(具体、可执行)"],
  "carry_over": "从既往报告延续下来的关键结论(一句话;无既往则空字符串)"
 }
@@ -163,8 +162,7 @@ def _previous_digest(n: int = 3) -> str:
     parts = []
     for r in reports:
         themes = ";".join(str(t.get("theme") or "")[:20] for t in (r.get("pain_themes") or [])[:5])
-        topics = ";".join(str(t.get("title") or "")[:16] for t in (r.get("topic_hints") or [])[:4])
-        parts.append(f"[{r.get('scope')} {time.strftime('%m-%d', time.localtime(r.get('ts', 0)))}] 人群:{str(r.get('audience') or '')[:60]} 痛点:{themes} 选题:{topics}")
+        parts.append(f"[{r.get('scope')} {time.strftime('%m-%d', time.localtime(r.get('ts', 0)))}] 人群:{str(r.get('audience') or '')[:60]} 痛点:{themes}")
     return "\n".join(parts)
 
 
@@ -180,7 +178,6 @@ async def list_reports() -> list[dict[str, Any]]:
             "total_videos": r.get("total_videos"),
             "audience": str(r.get("audience") or "")[:80],
             "theme_count": len(r.get("pain_themes") or []),
-            "topic_count": len(r.get("topic_hints") or []),
             "keywords": r.get("keywords"),
         }
         for r in _load_reports()[::-1]
@@ -243,7 +240,6 @@ async def analyze(body: AnalyzeRequest) -> dict[str, Any]:
         "audience": parsed.get("audience", ""),
         "pain_themes": parsed.get("pain_themes", []),
         "reply_opportunities": parsed.get("reply_opportunities", []),
-        "topic_hints": parsed.get("topic_hints", []),
         "dos": parsed.get("dos", []),
         "carry_over": str(parsed.get("carry_over") or ""),
         "raw": "" if parsed else reply[:500],

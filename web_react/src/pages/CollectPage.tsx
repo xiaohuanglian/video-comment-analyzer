@@ -1,8 +1,8 @@
+import ReportPanel from '../components/ReportPanel'
 import CollectPanel from '../components/CollectPanel'
 import XhsNotesPanel from '../components/XhsNotesPanel'
 import LocalDataPanel from '../components/LocalDataPanel'
 import YouTubePanel from '../components/YouTubePanel'
-import ReportPanel from '../components/ReportPanel'
 
 export default function CollectPage() {
   return (
@@ -10,7 +10,7 @@ export default function CollectPage() {
       <header>
         <h1 className="text-lg font-semibold">评论采集</h1>
         <p className="text-xs text-stone-400">
-          一切的前提:先把评论批量采回来,洞察、选题、回复才有原料。建议一次采几千到几万条。
+          先小批量采集评论，再分析用户需求、筛选并起草回复。采集节奏和冷却按平台执行。
         </p>
       </header>
       <CollectPanel />

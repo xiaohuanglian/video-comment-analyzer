@@ -75,7 +75,7 @@ def _env(name: str) -> str:
 def _stored() -> Dict[str, str]:
     """读服务端持久化的模型配置；读不到/损坏都不算致命。"""
     try:
-        from api.services.growth import model_settings
+        from api.services import model_settings
 
         data = model_settings.load_model_settings()
     except Exception:  # noqa: BLE001 - 配置缺失不该拦住请求

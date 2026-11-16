@@ -8,7 +8,7 @@
 这是对的——不能替用户假设行业——但体验上等于"必须先手填一整页表单才能用"。
 
 所以这里提供一条最短路径：问 3 个问题，填出档案的**必填三件套**
-（domain / target_audience / research_goal），立刻可以跑分析、筛选和选题。
+（domain / target_audience / research_goal），立刻可以跑分析、筛选和回复。
 
 ## 为什么是 3 个而不是 8 个
 
@@ -161,7 +161,7 @@ async def onboard(
 
     if run_scenario:
         try:
-            from .topics import scenario as scenario_svc
+            from .outreach import scenario as scenario_svc
 
             scenarios, warnings = await scenario_svc.generate_scenarios(
                 positioning=stored.niche or stored.domain,

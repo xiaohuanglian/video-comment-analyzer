@@ -22,25 +22,17 @@ from .routers import (
     analysis_router,
     automation_router,
     bilibili_router,
-    chat_router,
     comments_router,
     costs_router,
     crawler_router,
     creator_router,
     data_router,
-    growth_router,
-    hot_radar_router,
-    publish_router,
+    scenario_router,
+    settings_router,
     strategy_router,
-    studio_router,
-    topics_router,
     websocket_router,
-    wechat_router,
-    writer_router,
     youtube_router,
-    youvibe_router,
 )
-from .routers.growth_workspace import router as growth_workspace_router
 from .services.browser_check import probe_browser_launch
 from .services.platform_capabilities import PLATFORM_CAPABILITIES
 
@@ -160,29 +152,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register routers
-app.include_router(crawler_router, prefix="/api")
-app.include_router(data_router, prefix="/api")
-app.include_router(websocket_router, prefix="/api")
-app.include_router(bilibili_router, prefix="/api")
-app.include_router(creator_router, prefix="/api")
+# Register the standalone comment workflow only.
 app.include_router(analysis_router, prefix="/api")
 app.include_router(analysis_artifacts_router, prefix="/api/analysis")
-app.include_router(growth_router, prefix="/api")
-app.include_router(growth_workspace_router, prefix="/api")
 app.include_router(automation_router, prefix="/api")
-app.include_router(chat_router, prefix="/api")
-app.include_router(topics_router, prefix="/api")
-app.include_router(writer_router, prefix="/api")
-app.include_router(youvibe_router, prefix="/api")
+app.include_router(bilibili_router, prefix="/api")
 app.include_router(comments_router, prefix="/api")
-app.include_router(strategy_router, prefix="/api")
-app.include_router(wechat_router, prefix="/api")
 app.include_router(costs_router, prefix="/api")
-app.include_router(hot_radar_router, prefix="/api")
-app.include_router(publish_router, prefix="/api")
-app.include_router(studio_router, prefix="/api")
+app.include_router(crawler_router, prefix="/api")
+app.include_router(creator_router, prefix="/api")
+app.include_router(data_router, prefix="/api")
+app.include_router(strategy_router, prefix="/api")
+app.include_router(websocket_router, prefix="/api")
 app.include_router(youtube_router, prefix="/api")
+app.include_router(settings_router, prefix="/api")
+app.include_router(scenario_router, prefix="/api")
 
 
 @app.get("/")

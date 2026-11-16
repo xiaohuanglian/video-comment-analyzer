@@ -20,7 +20,6 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..growth.operating_models import GrowthContext
 from ..json_store import lock_for, read_json, write_json
 from .prompts import (
     PERSONALIZED_VIDEO_KEYWORDS,
@@ -88,7 +87,6 @@ class ProjectProfile(BaseModel):
     goal: str = ""
     evidence: str = ""
     target_scenarios: List[Dict[str, Any]] = Field(default_factory=list)
-    growth_context: GrowthContext = Field(default_factory=GrowthContext)
     updated_at: str = ""
 
     # 2026-11-11：允许未知字段**原样保留**。
@@ -190,8 +188,8 @@ class ProfileNotConfigured(RuntimeError):
     def __init__(self, message: str = "") -> None:
         super().__init__(
             message
-            or "还没有配置项目档案。请先在「增长工作台 → 产品档案」填写你的产品、目标人群与研究目标"
-            "（或用「AI 根据评论生成档案」生成一份），否则采集口径、筛选标准与选题都会失准。"
+            or "还没有配置项目档案。请先在「产品与筛选档案」填写你的产品、目标人群与研究目标"
+            "（或用「AI 根据评论生成档案」生成一份），否则采集口径、筛选标准与回复都会失准。"
         )
 
 

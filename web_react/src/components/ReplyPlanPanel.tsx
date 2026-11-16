@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, type AutomationPlatform, type AutomationStatus, type Strategy } from '../lib/api'
-import { Field } from './growth/ui'
-import { buttonClass, errorText, inputClass, panelClass, primaryClass } from './growth/ui-helpers'
+import { Field } from './ui/Field'
+import { buttonClass, errorText, inputClass, panelClass, primaryClass } from './ui/helpers'
 
 const businessKeys = ['keywords', 'note_urls', 'collect_mode', 'freshness_a_hours', 'freshness_b_hours', 'hot_comment_enabled', 'hot_comment_max_per_cycle', 'hot_comment_min_play', 'hot_comment_max_silence_hours'] as const
 const signature = (config: Record<string, unknown>) => JSON.stringify(businessKeys.map(key => config[key] ?? null))

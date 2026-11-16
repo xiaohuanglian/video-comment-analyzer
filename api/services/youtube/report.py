@@ -4,7 +4,7 @@
 和 B 站报告共用 `data/analysis/reports.json`（同 schema），所以在「历史报告」里
 和以前的报告并排放，点开是同一种卡片。
 
-区别在分析口径：这批是**别人的**评论区，目的是找可迁移的选题信号与人群判断，
+区别在分析口径：这批是**别人的**评论区，目的是找目标人群需求与回复机会，
 不是给自己评论区做运营复盘。
 """
 
@@ -24,7 +24,7 @@ PROMPT = """你是评论区数据分析专家。给你一批 YouTube **对标创
 目标不是复盘自己的账号，而是：
 1) 判断这些频道吸引的是什么人（人群特征、水平阶段、动机）；
 2) 找出反复出现的真实痛点 / 需求 / 卡点；
-3) 提炼可以直接迁移成我方选题的信号；
+3) 识别可回答的具体需求和回复机会；
 4) 识别噪音（求带党、纯情绪、卖课同行），别把噪音当需求。
 
 若提供了【既往报告结论】，必须在其基础上融合演进：延续的标(延续)，变化的更新判断，
@@ -35,7 +35,6 @@ PROMPT = """你是评论区数据分析专家。给你一批 YouTube **对标创
  "audience": "这些评论者是谁(2-3 句话,具体到人群特征和水平阶段;区分不同频道的人群差异)",
  "pain_themes": [{"theme": "痛点/需求主题(延续/新增)", "evidence": "引用 1-2 条典型评论(精简)", "heat": "高/中/低"}],
  "reply_opportunities": [{"target": "值得互动的评论类型", "why": "为什么值得回", "example": "典型评论(精简)"}],
- "topic_hints": [{"title": "20字内选题", "signal": "来自什么评论信号", "score": 1-10}],
  "dos": ["接下来最该做的 3 件事(具体、可执行)"],
  "carry_over": "从既往报告延续下来的关键结论(一句话;无既往则空字符串)"
 }
@@ -146,8 +145,7 @@ def previous_digest(n: int = 3) -> str:
     parts = []
     for r in reports:
         themes = ";".join(str(t.get("theme") or "")[:20] for t in (r.get("pain_themes") or [])[:5])
-        topics = ";".join(str(t.get("title") or "")[:16] for t in (r.get("topic_hints") or [])[:4])
-        parts.append(f"[{r.get('scope')}] 人群:{str(r.get('audience') or '')[:60]} 痛点:{themes} 选题:{topics}")
+        parts.append(f"[{r.get('scope')}] 人群:{str(r.get('audience') or '')[:60]} 痛点:{themes}")
     return "\n".join(parts)
 
 
@@ -213,7 +211,6 @@ async def analyze(
         "audience": str(parsed.get("audience") or ""),
         "pain_themes": parsed.get("pain_themes") or [],
         "reply_opportunities": parsed.get("reply_opportunities") or [],
-        "topic_hints": parsed.get("topic_hints") or [],
         "dos": parsed.get("dos") or [],
         "carry_over": str(parsed.get("carry_over") or ""),
     }

@@ -10,7 +10,7 @@
 1. ``check_reply_style`` 硬禁令（破折号/提示性冒号/翻案腔/黑话/结尾反问…）
 2. 长度 ≤ ``MAX_CHARS``（默认 260，**只是糊弄不过去的兜底，不是发布标准** ——
    官方号回复本来就比普通评论长，真实评论 p99 是 164 字，260 是「明显失控」的线）
-3. ``assess_content`` 无 high 风险项（绝对化用语/导流/医疗金融越界）
+3. ``check_reply_risks`` 无高风险项（绝对化用语/导流/医疗金融越界）
 4. 档案 ``forbidden`` 里的效果承诺词（弱承诺句式，见 README 说明）
 
 用法：
@@ -31,8 +31,8 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from api.services.content_quality import QUALITY_VERSION, assess_content  # noqa: E402
 from api.services.outreach.reply_style import check_reply_style  # noqa: E402
+from api.services.outreach.text_rules import REPLY_RISK_VERSION, check_reply_risks  # noqa: E402
 
 DOC = ROOT / "docs/早播/评论区话术库_2026-11-12.md"
 PROFILES = ROOT / "data/project_profiles.json"
@@ -109,10 +109,7 @@ def check(text: str, *, max_chars: int = MAX_CHARS) -> list[str]:
     if len(text) > max_chars:
         problems.append(f"长度：{len(text)} 字，超过 {max_chars} 字上限")
 
-    quality = assess_content(body=text, platform="xhs")
-    for issue in quality.issues:
-        if issue.severity == "high":
-            problems.append(f"风险：{issue.message}")
+    problems.extend(f"风险：{issue}" for issue in check_reply_risks(text))
 
     hit = _WEAK_PROMISE_RE.search(text)
     if hit:
@@ -155,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"\n共 {len(items)} 条，通过 {len(items) - failures} 条，"
         f"失败 {failures} 条；档案「{PROFILE_ID}」禁区 {len(forbidden)} 条已加载"
-        f"（{QUALITY_VERSION}）"
+        f"（{REPLY_RISK_VERSION}）"
     )
     return 1 if failures else 0
 

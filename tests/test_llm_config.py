@@ -57,7 +57,7 @@ def test_no_double_v1_regression():
 
 
 def test_growth_normalize_delegates_to_single_impl():
-    from api.services.growth.model_settings import normalize_base_url as growth_normalize
+    from api.services.model_settings import normalize_base_url as growth_normalize
 
     for raw in ("https://a.com/v1", "https://a.com", "https://a.com/x/v1/"):
         assert growth_normalize(raw) == normalize_base_url(raw)
@@ -65,7 +65,7 @@ def test_growth_normalize_delegates_to_single_impl():
 
 def test_resolution_falls_back_to_persisted_settings(monkeypatch, tmp_path):
     """设置页保存后，未设环境变量的进程也应能用同一份配置。"""
-    from api.services.growth import model_settings
+    from api.services import model_settings
 
     settings = tmp_path / "model_settings.json"
     monkeypatch.setattr(model_settings, "SETTINGS_PATH", settings)
@@ -82,7 +82,7 @@ def test_resolution_falls_back_to_persisted_settings(monkeypatch, tmp_path):
 
 
 def test_explicit_request_beats_env_and_stored(monkeypatch, tmp_path):
-    from api.services.growth import model_settings
+    from api.services import model_settings
 
     monkeypatch.setattr(model_settings, "SETTINGS_PATH", tmp_path / "s.json")
     model_settings.save_model_settings("https://stored.example.com", "stored-model", "sk-stored")
@@ -97,7 +97,7 @@ def test_explicit_request_beats_env_and_stored(monkeypatch, tmp_path):
 
 
 def test_env_beats_stored(monkeypatch, tmp_path):
-    from api.services.growth import model_settings
+    from api.services import model_settings
 
     monkeypatch.setattr(model_settings, "SETTINGS_PATH", tmp_path / "s.json")
     model_settings.save_model_settings("https://stored.example.com", "stored-model", "sk-stored")
@@ -110,7 +110,7 @@ def test_env_beats_stored(monkeypatch, tmp_path):
 
 
 def test_default_base_when_nothing_configured(monkeypatch, tmp_path):
-    from api.services.growth import model_settings
+    from api.services import model_settings
 
     monkeypatch.setattr(model_settings, "SETTINGS_PATH", tmp_path / "none.json")
     for var in ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL"):
@@ -131,8 +131,7 @@ def test_masked_never_returns_plaintext_key():
 def test_complete_raises_clear_error_when_unconfigured(monkeypatch, tmp_path):
     import asyncio
 
-    from api.services import llm
-    from api.services.growth import model_settings
+    from api.services import llm, model_settings
 
     monkeypatch.setattr(model_settings, "SETTINGS_PATH", tmp_path / "none.json")
     for var in ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL"):
@@ -187,7 +186,7 @@ def test_settings_page_save_drives_all_llm_calls(monkeypatch, tmp_path):
     审计（2026-11-11）：`llm.complete` 原先只读环境变量，而设置页写的是
     `data/model_settings.json`，等于「保存了也不生效」。现在两者走同一个 resolver。
     """
-    from api.services.growth import model_settings
+    from api.services import model_settings
 
     monkeypatch.setattr(model_settings, "SETTINGS_PATH", tmp_path / "s.json")
     for var in ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL"):

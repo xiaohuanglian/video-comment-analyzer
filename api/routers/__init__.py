@@ -2,44 +2,15 @@ from .analysis import router as analysis_router
 from .analysis_artifacts import router as analysis_artifacts_router
 from .automation import router as automation_router
 from .bilibili import router as bilibili_router
-from .chat import router as chat_router
 from .comments import router as comments_router
 from .costs import router as costs_router
 from .crawler import router as crawler_router
 from .creator import router as creator_router
 from .data import router as data_router
-from .growth import router as growth_router
-from .hot_radar import router as hot_radar_router
-from .publish import router as publish_router
+from .scenario import router as scenario_router
+from .settings import router as settings_router
 from .strategy import router as strategy_router
-from .studio import router as studio_router
-from .topics import router as topics_router
 from .websocket import router as websocket_router
-from .wechat import router as wechat_router
-from .writer import router as writer_router
 from .youtube import router as youtube_router
-from .youvibe import router as youvibe_router
 
-__all__ = [
-    "crawler_router",
-    "data_router",
-    "websocket_router",
-    "bilibili_router",
-    "creator_router",
-    "analysis_router",
-    "analysis_artifacts_router",
-    "growth_router",
-    "automation_router",
-    "chat_router",
-    "topics_router",
-    "writer_router",
-    "youvibe_router",
-    "comments_router",
-    "strategy_router",
-    "hot_radar_router",
-    "wechat_router",
-    "costs_router",
-    "publish_router",
-    "studio_router",
-    "youtube_router",
-]
+__all__ = ['analysis_router', 'analysis_artifacts_router', 'automation_router', 'bilibili_router', 'comments_router', 'costs_router', 'crawler_router', 'creator_router', 'data_router', 'strategy_router', 'websocket_router', 'youtube_router', 'settings_router', 'scenario_router']
