@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """模块可达性分析：找出「有测试、没用户」的悬空模块。
 
-起因（2026-11-06）：`api/services/style/` 4006 行、13 个模块，测试全绿、
-台账记「已落地」，但没有 router、没有页面、没有 CLI —— 生产引用数为 0。
-测试绿只证明函数对，不证明有人调用。这个脚本把「有没有人调用」变成可断言的事实。
+测试全绿只证明函数写得对，不证明真的有人调用。这个脚本把「有没有人
+调用」变成可断言的事实，避免只凭覆盖率就把没有入口的模块当成已交付。
 
 用法：
     uv run python -m tools.reachability            # 打印悬空模块
@@ -194,9 +193,8 @@ def write_baseline(path: Path, modules: Iterable[str]) -> None:
 # 路由 → UI 可达性
 #
 # 起因（2026-11-11 审计）：上面的 dangling() 只看 Python import，抓不到
-# 「后端有 47 条路由、前端一行都没调用」这种情况。/api/analysis/* 与
-# /api/growth/*（共 93 条）在移除旧前端后一直没有 React 入口，而
-# PROJECT_STATE 与 README 仍把它们写成已交付功能。
+# 「后端有路由、前端一行都没调用」这种情况。这里按前缀统计后端路由，要求
+# 每个前缀要么被前端调用，要么在 UI_EXEMPT_PREFIXES 里写明理由。
 # ---------------------------------------------------------------------------
 
 #: 明确声明「只给 CLI / 外部脚本用、不需要 Web UI」的前缀。
@@ -204,9 +202,7 @@ def write_baseline(path: Path, modules: Iterable[str]) -> None:
 UI_EXEMPT_PREFIXES = {
     "data": "文件浏览接口服务于下载链接，页面内以 href 直接引用",
     "bilibili": "B 站直连调试接口，由 CLI 使用",
-    "youvibe": "内部数据分析查询，随 skill 离线使用",
     "creator": "创作者排行由采集页间接调用，主页暂无独立入口",
-    "hot-radar": "热点雷达尚未接前端",
 }
 
 

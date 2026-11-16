@@ -20,17 +20,17 @@ def _isolate_ledger(tmp_path, monkeypatch):
 
 
 def test_record_and_ledger_newest_first():
-    costs.record(feature="chat", model="m1", prompt_tokens=100, completion_tokens=50, duration_ms=900)
-    costs.record(feature="writer", model="m1", prompt_tokens=10, completion_tokens=5)
+    costs.record(feature="reply_draft", model="m1", prompt_tokens=100, completion_tokens=50, duration_ms=900)
+    costs.record(feature="insight", model="m1", prompt_tokens=10, completion_tokens=5)
     entries = costs.ledger(limit=10)
     assert len(entries) == 2
-    assert entries[0]["feature"] == "writer"  # 新→旧
+    assert entries[0]["feature"] == "insight"  # 新→旧
     assert entries[1]["total_tokens"] == 150
     assert entries[1]["ok"] is True
 
 
 def test_record_failure_counts_call():
-    costs.record(feature="chat", model="m", ok=False, error="HTTPError: 502")
+    costs.record(feature="reply_draft", model="m", ok=False, error="HTTPError: 502")
     s = costs.summary()
     assert s["total"]["calls"] == 1
     assert s["total"]["ok_calls"] == 0
@@ -38,31 +38,31 @@ def test_record_failure_counts_call():
 
 
 def test_summary_aggregates_by_feature_and_today():
-    costs.record(feature="chat", prompt_tokens=100, completion_tokens=40)
-    costs.record(feature="chat", prompt_tokens=60, completion_tokens=20)
-    costs.record(feature="topics.plan", prompt_tokens=1000, completion_tokens=500)
+    costs.record(feature="reply_draft", prompt_tokens=100, completion_tokens=40)
+    costs.record(feature="reply_draft", prompt_tokens=60, completion_tokens=20)
+    costs.record(feature="analysis.plan", prompt_tokens=1000, completion_tokens=500)
     s = costs.summary()
     assert s["total"]["calls"] == 3
     assert s["total"]["prompt_tokens"] == 1160
     assert s["total"]["completion_tokens"] == 560
     assert s["today"]["calls"] == 3  # 测试记录都落在当天
     by = {f["feature"]: f for f in s["by_feature"]}
-    assert by["chat"]["calls"] == 2
-    assert by["topics.plan"]["total_tokens"] == 1500
-    assert s["by_feature"][0]["feature"] == "topics.plan"  # 按 tokens 降序
+    assert by["reply_draft"]["calls"] == 2
+    assert by["analysis.plan"]["total_tokens"] == 1500
+    assert s["by_feature"][0]["feature"] == "analysis.plan"  # 按 tokens 降序
 
 
 def test_cost_computed_when_price_configured(monkeypatch):
     monkeypatch.setenv(costs.ENV_PRICE_IN, "2.0")   # 元/百万
     monkeypatch.setenv(costs.ENV_PRICE_OUT, "8.0")
-    costs.record(feature="chat", prompt_tokens=1_000_000, completion_tokens=500_000)
+    costs.record(feature="reply_draft", prompt_tokens=1_000_000, completion_tokens=500_000)
     s = costs.summary()
     assert s["pricing"]["configured"] is True
     assert s["total"]["cost"] == pytest.approx(2.0 + 4.0, rel=1e-3)
 
 
 def test_cost_zero_when_unpriced():
-    costs.record(feature="chat", prompt_tokens=999, completion_tokens=999)
+    costs.record(feature="reply_draft", prompt_tokens=999, completion_tokens=999)
     s = costs.summary()
     assert s["pricing"]["configured"] is False
     assert s["total"]["cost"] == 0.0

@@ -37,9 +37,7 @@ import { formatCount } from '../lib/format'
  * 后端 `/api/analysis/*` 提供任务、主题与报告数据，这里把它们组织成
  * 「选语料 → 建任务 → 开始分析 → 看报告」的完整路径。
  *
-
- *
- * 这一版把「做分析」和「看结果」分开：
+ * 页面把「做分析」和「看结果」分开：
  *   左：语料树（搜索/折叠/全选可见/已选汇总）
  *   右：任务工作区（进度与费用 → 指标卡 → 开放主题 → 结果表 → 决策报告 → 中文解读）
  *
@@ -881,9 +879,7 @@ export default function InsightPage() {
                   className="w-full rounded-lg border border-stone-200 px-2 py-1.5"
                 >
                   {profiles.map((p) => {
-                    // 显示 id：档案名（如「AI 创业者」）不带 id，用户会以为那份档案不存在
                     // （2026-11-13 反馈）。但 id 本身就是中文名字时不要再拼一次——
-                    // 「我的 · AI 创业者（自媒体账号）」这种并列会让人以为它们是两份东西
                     // （2026-11-14 反馈）。
                     const name = p.name || p.profile_id
                     const showId = p.profile_id !== name && /[A-Za-z]/.test(p.profile_id)

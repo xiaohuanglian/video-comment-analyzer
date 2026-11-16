@@ -41,9 +41,7 @@ DATA_DIR = Path(__file__).parent.parent.parent / "data"
 
 #: 允许浏览的目录（相对 DATA_DIR）。**新增目录要显式加进来**，
 #: 内部状态目录与派生素材目录（队列、cookie、密钥、中间态和内部语料）
-
 #: 以及 data 根目录一律不开放——那里放的不是用户要下载的采集结果。
-
 ALLOWED_DIRS: tuple[str, ...] = (
     "comments",
     "wechat",
@@ -348,7 +346,7 @@ def _preview_payload(full_path: Path, limit: int) -> dict:
                     records.append(json.loads(line))
         return {"data": records, "total": total}
 
-    # 文本/图片类素材（公众号 article.md 等）：直接给原文，不再 500。
+    # 文本/图片类素材（article.md 等）：直接给原文，不再 500。
     text = full_path.read_text(encoding="utf-8", errors="replace")
     return {
         "data": text[: max(limit, 1) * 4000],

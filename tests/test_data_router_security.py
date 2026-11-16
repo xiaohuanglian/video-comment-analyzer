@@ -132,7 +132,7 @@ def test_csv_preview_and_total(client):
 
 
 def test_wechat_markdown_preview_no_longer_500(client):
-    """公众号「查看 md」曾因不支持的后缀返回 500（还包成 detail=400）。"""
+    """素材「查看 md」曾因不支持的后缀返回 500（还包成 detail=400）。"""
     response = client.get("/api/data/files/wechat/作者/2026-11-01_标题/article.md")
     assert response.status_code == 200
     body = response.json()

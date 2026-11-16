@@ -115,7 +115,6 @@ def _isolate_real_state_files(tmp_path, monkeypatch):
     # 环境变量也得清：开发机的 shell 里可能已经 export 了真 key，那会带进整个
     # 测试进程（pytest 先在收集阶段 import 所有测试模块，早于任何 fixture）。
     # 洞察路由会回落到环境变量，「无 key 必须 400」的红线否则会随开发机状态飘。
-
     for _var in ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL"):
         monkeypatch.delenv(_var, raising=False)
 

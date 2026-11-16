@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """LLM 配置解析：单一真相源，不再出现双 `/v1`。
 
-背景（2026-11-11 审计）：`llm.py` 硬拼 `/v1/chat/completions`（期望 env 不带
-`/v1`），`growth/model_settings.normalize_base_url()` 却会补 `/v1`（期望带）。
-两边一起来就变成 `.../ai-router/v1/v1/chat/completions`。而且 `llm.complete`
-只读环境变量，不回落设置页保存的配置。
+背景：底层调用硬拼 `/v1/chat/completions`（期望 env 不带 `/v1`），而设置页
+的 `normalize_base_url()` 会补 `/v1`（期望带）。两边一起来就变成
+`.../ai-router/v1/v1/chat/completions`。而且底层 `complete` 只读环境变量，
+不回落设置页保存的配置。
 """
 
 from __future__ import annotations
@@ -56,11 +56,11 @@ def test_no_double_v1_regression():
     assert "v1/v1" not in chat_completions_url("https://gw/ai-router/v1")
 
 
-def test_growth_normalize_delegates_to_single_impl():
-    from api.services.model_settings import normalize_base_url as growth_normalize
+def test_model_settings_normalize_delegates_to_single_impl():
+    from api.services.model_settings import normalize_base_url as settings_normalize
 
     for raw in ("https://a.com/v1", "https://a.com", "https://a.com/x/v1/"):
-        assert growth_normalize(raw) == normalize_base_url(raw)
+        assert settings_normalize(raw) == normalize_base_url(raw)
 
 
 def test_resolution_falls_back_to_persisted_settings(monkeypatch, tmp_path):

@@ -1,7 +1,3 @@
-# persist-1<persist1@126.com>
-# Reason: Refactored db.py into a module, removed direct execution entry point, fixed relative import issues.
-# Side effects: None
-# Rollback strategy: Restore this file.
 import asyncio
 import sys
 from pathlib import Path

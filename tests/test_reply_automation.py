@@ -59,10 +59,9 @@ class TestClassifyComment:
         status, label = auto.classify_comment("这种AI视频怎么做变现啊，能赚钱吗")
         assert status == "target_a", label  # "怎么做"命中 HOWTO,进 A 档
 
-    def test_business_entity_recalled_as_target_c(self):
-        # 商业词不带AI也能被 C 档召回(AI×商业讨论)
-        status, label = auto.classify_comment("一人公司才是普通人在AI时代翻身的正路,别老想着打工")
-        assert status == "target_c", label
+    def test_personal_business_vocabulary_is_not_a_product_signal(self):
+        status, label = auto.classify_comment("商业课程讲的是获客销售和门店经营，和内容制作无关")
+        assert status == "excluded", label
 
     def test_debug_excluded(self):
         status, label = auto.classify_comment("工作流里的加载器一直报错说无法检测模型，找不到原因")
@@ -867,9 +866,8 @@ class TestPersonaScreening:
         # 营销号不入起草；需要入门引导的人不因标签被否决
         assert "beggar" in auto._PERSONA_TACTICS and "seller" not in auto._PERSONA_TACTICS
 
-    def test_keywords_default_v2(self):
-        assert "AI工具" in auto.DEFAULT_CONFIG["keywords"]
-        assert "AI赚钱" not in auto.DEFAULT_CONFIG["keywords"]  # 求带重灾区不入采集
+    def test_default_keywords_require_an_explicit_product_plan(self):
+        assert auto.DEFAULT_CONFIG["keywords"] == []
 
 
 class TestCollectCommand:
@@ -881,8 +879,8 @@ class TestCollectCommand:
         assert "--keywords AI工具" in joined
 
     def test_keywords_joined(self):
-        cmd = auto.build_collect_command({"keywords": ["AI工具", "一人公司"]})
-        assert "AI工具,一人公司" in cmd
+        cmd = auto.build_collect_command({"keywords": ["AI作品", "提示词"]})
+        assert "AI作品,提示词" in cmd
 
 
 class TestTailQuestionLint:
@@ -1184,10 +1182,10 @@ class TestXhsCollectCommand:
 
     def test_search_mode_when_no_urls(self):
         cmd = auto.build_collect_command(
-            {"keywords": ["AI工具", "AI副业"], "collect_mode": "auto"}, platform="xhs"
+            {"keywords": ["AI作品", "制作流程"], "collect_mode": "auto"}, platform="xhs"
         )
         joined = " ".join(cmd)
-        assert "--type search" in joined and "--keywords AI工具,AI副业" in joined
+        assert "--type search" in joined and "--keywords AI作品,制作流程" in joined
 
     def test_mode_search_forces_keyword_scan_even_with_list(self):
         cmd = auto.build_collect_command(

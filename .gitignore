@@ -190,8 +190,6 @@ database/*.db
 data/.insight_run_index.json
 **/.insight/
 
-
-
 # 本地草稿与产物（不进仓库）
 /.tmp_bp/
 /cache/tmp_kw/

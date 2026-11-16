@@ -1,7 +1,7 @@
 [project]
 name = "video-comment-analyzer"
 version = "1.0.0"
-description = "多平台视频评论采集与预览工具，支持 Web 界面操作与 CSV/Excel 导出"
+description = "多平台评论工作台：采集评论、筛选用户、起草回复、人工审核与受控发送"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

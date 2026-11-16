@@ -3,8 +3,6 @@
 
 判据只有一条：服务模块必须真的被 router、页面或 CLI 调用，光有测试不算落地。
 
-
-
 本测试把「被调用」变成可断言的事实：
   1. 新出现的悬空模块 -> 失败（要么接线，要么别写）
   2. 基线里已经接线的条目 -> 失败（保持基线诚实，防止被当成永久白名单）
@@ -106,8 +104,8 @@ def test_analyzer_treats_package_init_as_reachable(tmp_path: Path):
 # 路由 → UI 可达性
 #
 # 2026-11-11：上面的 dangling() 只看 Python import，抓不到
-# 「后端有 47 条路由、前端一行都没调用」——/api/analysis/* 在移除旧前端后
-# 一直没有 React 入口，却被当成已交付功能写进 README/PROJECT_STATE。
+# 「后端有路由、前端一行都没调用」。这里按前缀核对一遍，避免某个
+# 路由悄悄变成没有 UI 入口的孤儿。
 # ---------------------------------------------------------------------------
 
 
@@ -127,7 +125,7 @@ def test_no_backend_prefix_without_ui():
 
 
 def test_insight_prefix_is_wired_to_a_page():
-    """洞察曾是最典型的缺口：后端 47 条路由、前端零调用。"""
+    """洞察链路应至少接上几个主干端点。"""
     called = reachability.frontend_called_paths()
     insight_calls = [p for p in called if p.split("/")[0] == "analysis"]
     assert len(insight_calls) >= 3, "InsightPage 应至少接上几个主干端点"
@@ -187,8 +185,8 @@ def test_detector_accepts_prefix_with_enough_ui_calls(tmp_path: Path):
 def test_detector_reads_split_api_clients_but_not_test_requests(tmp_path: Path):
     client = tmp_path / "web_react" / "src" / "lib"
     client.mkdir(parents=True)
-    (client / "growth-api.ts").write_text("req<X>('/growth/workspaces/a')", encoding="utf-8")
+    (client / "extra-api.ts").write_text("req<X>('/analysis/runs')", encoding="utf-8")
     (client / "api.test.ts").write_text("req<X>('/phantom/not-production')", encoding="utf-8")
     called = reachability.frontend_called_paths(tmp_path)
-    assert "growth/workspaces/a" in called
+    assert "analysis/runs" in called
     assert not any("phantom" in path for path in called)

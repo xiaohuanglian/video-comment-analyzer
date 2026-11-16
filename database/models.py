@@ -387,11 +387,6 @@ class ZhihuContent(Base):
     add_ts = Column(BigInteger, comment='添加时间戳')
     last_modify_ts = Column(BigInteger, comment='最后修改时间戳')
 
-    # persist-1<persist1@126.com>
-    # Reason: Fixed ORM model definition error, ensuring consistency with database table structure.
-    # Side effects: None
-    # Rollback strategy: Restore this line
-
 class ZhihuComment(Base):
     __tablename__ = 'zhihu_comment'
     id = Column(Integer, primary_key=True, comment='主键ID')

@@ -94,37 +94,21 @@ def test_builtin_profile_is_not_reported_as_configured(isolated):
     assert strategy.exists() is False
 
 
-def test_legacy_strategy_file_is_migrated(tmp_path, monkeypatch):
-    """单档案时代的文件自动变成多档案里的一个，旧文件不删。"""
-    monkeypatch.setattr(insight_paths, "DATA_DIR", tmp_path)
-    legacy_dir = tmp_path / "strategy"
-    legacy_dir.mkdir(parents=True)
-    (legacy_dir / "youvibe_account.json").write_text(
-        json.dumps(
-            {
-                "niche": "AI 创业者,教人用 AI 赚钱",
-                "target_audience": "想做副业的上班族",
-                "tone_rules": ["说话直接"],
-                "target_scenarios": [{"name": "旧场景"}],
-                "updated_at": "2026-10-01 00:00:00",
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
+def test_stray_account_file_is_not_auto_imported(isolated):
+    """磁盘上出现一个同名旧文件，不该被自动当成产品档案导入。"""
+    stray = isolated / "strategy" / "youvibe_account.json"
+    stray.parent.mkdir()
+    stray.write_text(json.dumps({"niche": "旧定位", "target_audience": "旧受众"}), encoding="utf-8")
+    assert pp.get_active_profile_id() == ""
+    assert strategy.load() == {}
+    assert pp.get_profile("youvibe") is None
+    assert stray.exists()
 
-    # 迁移出来的这份是「我的自媒体账号」，id 用中文「我的」；
-    # youvibe 是造浪那个产品的名字，不该挂在这份账号档案上（2026-11-14 纠正）。
-    migrated = pp.get_profile(pp.MY_ACCOUNT_PROFILE_ID)
-    assert migrated is not None
-    assert migrated.niche.startswith("AI 创业者")
-    assert migrated.target_audience == "想做副业的上班族"
-    assert migrated.target_scenarios == [{"name": "旧场景"}]
-    assert pp.get_active_profile_id() == pp.MY_ACCOUNT_PROFILE_ID
-    # 历史 id 仍可解析，老配置不会因为改名而丢档案
-    assert pp.get_profile("youvibe").profile_id == pp.MY_ACCOUNT_PROFILE_ID
-    # 旧文件保留，可回溯
-    assert (legacy_dir / "youvibe_account.json").exists()
+
+def test_youvibe_id_resolves_to_the_product_itself(isolated):
+    pp.upsert_profile(pp.ProjectProfile(profile_id="youvibe", name="YouVibe", niche="AI 内容社区"))
+    assert pp.get_profile("youvibe").profile_id == "youvibe"
+    assert pp.get_profile("youvibe").name == "YouVibe"
 
 
 def test_unknown_fields_survive_roundtrip(isolated):

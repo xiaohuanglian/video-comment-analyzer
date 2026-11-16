@@ -25,7 +25,6 @@ cd web_react && npx tsc -b --noEmit && npx oxlint && npx vitest run
 
 - 本地网关/密钥等配置在 `.env`（git 忽略，模板见 `.env.example`）；LLM 网关需 `LLM_BASE_URL/LLM_API_KEY/LLM_MODEL`。
 
-
 ## 约定
 
 - 改完代码先跑 `uv run pytest tests -q`，通过后再提交；本地改 → 测试 → push。
@@ -91,6 +90,7 @@ cd web_react && npx tsc -b --noEmit && npx oxlint && npx vitest run
 ## 跨会话续接
 
 如需在本地保存跨会话交接记录，请写在本地的 `docs/` 目录（docs/ 有独立本地 git 保护，可追溯），新会话开始时先读该文件。
+
 ## 相关配置入口
 
 模型设置为 `api/services/model_settings.py`，只读系统状态为 `api/services/system_status.py`，接口 `/api/settings/*`。产品场景为 `/api/strategy/scenario/*`。真实 data/docs/.env/browser_data 永远只在本地，仓库中只保留代码。删除功能时同时清理页面、路由、服务、CLI 和客户端类型。

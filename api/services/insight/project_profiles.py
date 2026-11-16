@@ -12,7 +12,6 @@ A single domain-neutral default is defined in code; user profiles live in
 
 from __future__ import annotations
 
-import json
 import threading
 import time
 from pathlib import Path
@@ -225,21 +224,8 @@ def builtin_profiles() -> Dict[str, ProjectProfile]:
 
 
 DEFAULT_PROFILE_ID = "default"
-#: 「我自己的自媒体账号」这份档案的 id。
-#:
-#: 2026-11-14 纠正：这份档案是在「单档案时代」从 data/strategy/youvibe_account.json
-#: 迁过来的，迁移代码把文件名当成了 id，于是你自媒体的账号档案被叫成 youvibe——
-#: 而 youvibe 是造浪 YouVibe 这个产品（BP 里的产品），两件事被同一个名字拴在一起，
-#: 档案下拉里才会显示成「AI 创业者（自媒体账号） · youvibe」。
-#: 现在：产品归「造浪」档案，账号归这份「我的」（name 仍是「AI 创业者（自媒体账号）」）。
-MY_ACCOUNT_PROFILE_ID = "我的"
-
-# "generic" was an early neutral synonym for the built-in default; keep it as a
-# convenience alias. Unknown ids are NOT special-cased — they simply fall back to
-# `default` in resolve_profile(), so old configs still load.
-# "youvibe" 是上面那份账号档案的历史 id（迁移遗留），重命名后继续可解析，
-# 老的 run/文案配置不会因为改名而丢档案。
-_LEGACY_PROFILE_ALIASES = {"generic": "default", "youvibe": MY_ACCOUNT_PROFILE_ID}
+# 中立占位别名，产品 id 一律按显式保存的档案解析。
+_LEGACY_PROFILE_ALIASES = {"generic": "default"}
 
 
 # --- storage -----------------------------------------------------------------
@@ -256,8 +242,6 @@ _LEGACY_PROFILE_ALIASES = {"generic": "default", "youvibe": MY_ACCOUNT_PROFILE_I
 # 损坏不静默。
 
 PROFILES_FILE_VERSION = 2
-#: 旧版策略档案位置（单档案时代）。首次读取时自动迁移为多档案中的一个。
-LEGACY_STRATEGY_FILE = "strategy/youvibe_account.json"
 
 
 class ActiveProfileMissing(RuntimeError):
@@ -270,19 +254,13 @@ def _profiles_path() -> Path:
     return paths.DATA_DIR / PROFILES_FILE_NAME
 
 
-def _legacy_strategy_path() -> Path:
-    from . import paths
-
-    return paths.DATA_DIR / LEGACY_STRATEGY_FILE
 
 
 def _read_raw() -> Dict[str, Any]:
-    """读整个文件（含 active_profile_id），顺手做一次旧数据迁移。"""
+    """读取显式保存的产品档案。"""
     path = _profiles_path()
     with lock_for(path):
         data = read_json(path, default={}, expect=dict)
-        if not data:
-            data = _migrate_legacy_strategy() or {}
         if "profiles" not in data and isinstance(data, list):
             data = {"version": PROFILES_FILE_VERSION, "profiles": data}
     return data
@@ -297,61 +275,8 @@ def _write_raw(data: Dict[str, Any]) -> None:
         write_json(path, payload)
 
 
-def _short_name(text: str, limit: int = 24) -> str:
-    """从定位里取一个能当档案名的短句（按标点切，不硬截断）。"""
-    cleaned = (text or "").strip()
-    for sep in ("，", ",", "：", ":", "。", "；", ";", "\n"):
-        if sep in cleaned:
-            head = cleaned.split(sep)[0].strip()
-            if head:
-                cleaned = head
-                break
-    return cleaned[:limit] or "未命名档案"
 
 
-def _migrate_legacy_strategy() -> Optional[Dict[str, Any]]:
-    """把单档案时代的 `strategy/youvibe_account.json` 迁成第一个项目档案。
-
-    只在还没有 project_profiles.json 时执行；旧文件保留不动（可回溯），
-    但不再被读取。返回迁移后的完整文件内容。
-    """
-    legacy = _legacy_strategy_path()
-    if not legacy.exists():
-        return None
-    try:
-        raw = json.loads(legacy.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(raw, dict) or not raw.get("niche"):
-        return None
-
-    niche = str(raw.get("niche") or "")
-    profile = {
-        "profile_id": MY_ACCOUNT_PROFILE_ID,
-        # 名字只取定位的第一个短句：整段定位有 60+ 字，直接截断会断在半句上，
-        # 在档案列表里看起来像是数据坏了。
-        "name": _short_name(niche),
-        "niche": str(raw.get("niche") or ""),
-        "target_audience": str(raw.get("target_audience") or ""),
-        "monetization": str(raw.get("monetization") or ""),
-        "tone_rules": [str(x) for x in (raw.get("tone_rules") or [])],
-        "forbidden": [str(x) for x in (raw.get("forbidden") or [])],
-        "reference_styles": [str(x) for x in (raw.get("reference_styles") or [])],
-        "goal": str(raw.get("goal") or ""),
-        "evidence": str(raw.get("evidence") or ""),
-        "target_scenarios": raw.get("target_scenarios") or [],
-        "domain": str(raw.get("niche") or ""),
-        "research_goal": str(raw.get("goal") or ""),
-        "updated_at": str(raw.get("updated_at") or ""),
-    }
-    data = {
-        "version": PROFILES_FILE_VERSION,
-        "active_profile_id": MY_ACCOUNT_PROFILE_ID,
-        "profiles": [profile],
-        "migrated_from": str(legacy.name),
-    }
-    _write_raw(data)
-    return data
 
 
 def _parse_profile(item: Any) -> Optional[ProjectProfile]:
