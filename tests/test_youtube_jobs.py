@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import time
+from threading import Event
 
 import pytest
 
@@ -29,14 +30,19 @@ def _wait(job_id: str, timeout: float = 3.0) -> dict:
 
 def test_collect_job_completes_and_reports_progress():
     seen = {}
+    release = Event()
 
     def fake_collect(**kwargs):
+        assert release.wait(timeout=10), "测试未释放采集任务"
         seen.update(kwargs)
         kwargs["progress"]({"channel": "ch", "video_id": "v1", "rows": 7, "error": ""})
         return {"channels": [], "total": 7}
 
     job = jobs.start_collect(limit=1, channels=["LiamOttley"], collect_fn=fake_collect)
-    assert job["status"] == "running"
+    try:
+        assert job["status"] == "running"
+    finally:
+        release.set()
 
     done = _wait(job["id"])
     assert done["status"] == "done"
