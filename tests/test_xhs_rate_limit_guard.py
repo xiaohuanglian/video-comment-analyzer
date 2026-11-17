@@ -27,6 +27,21 @@ from media_platform.xhs.exception import CaptchaError, IPBlockError, PlatformAcc
 from tools import crawl_pacing as cp
 from tools import xhs_safety as xs
 
+
+@pytest.fixture(autouse=True)
+def _no_quiet_hours(monkeypatch):
+    """跑测试的时刻不该决定用例成败。
+
+    ``xhs_keyword_notes.collect()`` 批前会调 ``ensure_not_quiet_hours()``，
+    它读的是墙上时间：凌晨跑 CI 就会抛 ``QuietHoursActive``，把「撞验证码即停批」
+    这类断言连带打红。作息本身在 ``tests/test_douyin_crawl_guard.py`` 里用显式
+    时间戳单独验证，这条链路只需要把闸门摘掉。
+    """
+    from scripts import xhs_keyword_notes as script
+
+    monkeypatch.setattr(script, "ensure_not_quiet_hours", lambda *a, **kw: None)
+
+
 # ---------------------------------------------------------------------------
 # 1. 平台级间隔
 # ---------------------------------------------------------------------------
