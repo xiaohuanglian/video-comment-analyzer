@@ -64,4 +64,4 @@ npm run build
 
 ## 许可证
 
-MIT。本项目派生自 [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler)（MIT），保留其原始版权声明，详见 [LICENSE](LICENSE)。
+MIT。本项目派生自 [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler)（MIT），保留其原始版权声明，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
