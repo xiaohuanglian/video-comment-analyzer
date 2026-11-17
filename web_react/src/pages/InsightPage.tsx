@@ -46,8 +46,8 @@ import { formatCount } from '../lib/format'
 
 const LIMIT_OPTIONS = [
   { value: 100, label: '100 条' },
-  { value: 1000, label: '1K' },
-  { value: 10000, label: '10K' },
+  { value: 1000, label: '1,000 条' },
+  { value: 10000, label: '10,000 条' },
   { value: 0, label: '全部' },
 ]
 
@@ -661,9 +661,9 @@ export default function InsightPage() {
     <div className="mx-auto max-w-[1400px] px-5 py-5 space-y-4">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold">评论洞察</h1>
+          <h1 className="text-lg font-semibold">看懂用户需求</h1>
           <p className="text-xs text-stone-400">
-            微批次证据抽取 → 代码校验 → 数据集研究 → 可读报告。AI 只发现，结论由人确认。
+            勾选评论数据 → 创建任务 → 点击开始分析 → 查看报告。第一次建议分析 100 条。
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -913,7 +913,7 @@ export default function InsightPage() {
             {!useMock && modelReady === false && (
               <p className="rounded-lg bg-amber-50 px-2 py-1.5 text-[11px] text-amber-700">
                 还没配模型网关，现在点「开始分析」会被拦下。去「设置 → 模型网关」填一次
-                base_url / 模型 / API Key（存服务端，前端不保存），或先勾上面的演示模式。
+                服务地址、模型名称和密钥（保存在本机服务端），或先勾上面的演示模式。
               </p>
             )}
             {!useMock && modelReady === true && (
@@ -927,7 +927,7 @@ export default function InsightPage() {
               className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-(--brand) px-3 py-2 text-xs font-medium text-white disabled:opacity-40"
             >
               {busy === 'create' ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-              {selected.length === 0 ? '先在上面勾选语料' : '创建分析任务'}
+              {selected.length === 0 ? '先勾选要分析的评论数据' : '创建分析任务'}
             </button>
             <p className="text-center text-[11px] text-stone-400">创建后仍需手动点「开始分析」，不会自动跑。</p>
           </section>

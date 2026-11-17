@@ -25,7 +25,7 @@ describe('回复任务明确绑定产品', () => {
   it('不借用全局早播档案替用户决定产品', async () => {
     render(<MemoryRouter><AutomationPage /></MemoryRouter>)
     await screen.findByRole('option', { name: '造浪 · 造浪' })
-    const run = screen.getByRole('button', { name: /从已采集数据筛选/ }) as HTMLButtonElement
+    const run = screen.getByRole('button', { name: /筛选值得回复的用户/ }) as HTMLButtonElement
     expect(run.disabled).toBe(true)
     expect(screen.queryByLabelText('本次回复目标')).toBeNull()
   })
@@ -36,7 +36,7 @@ describe('回复任务明确绑定产品', () => {
     fireEvent.change(screen.getByLabelText('回复任务产品'), { target: { value: '造浪' } })
     const goal = await screen.findByLabelText('本次回复目标')
     fireEvent.change(goal, { target: { value: '让新手完成第一条内容' } })
-    fireEvent.click(screen.getByRole('button', { name: /从已采集数据筛选/ }))
+    fireEvent.click(screen.getByRole('button', { name: /筛选值得回复的用户/ }))
     await waitFor(() => expect(api.screenCollected).toHaveBeenCalledWith(50, true, 'bili', '造浪', '让新手完成第一条内容', 'recommend'))
     await waitFor(() => expect((screen.getByLabelText('回复任务产品') as HTMLSelectElement).disabled).toBe(false))
     fireEvent.change(screen.getByLabelText('回复任务产品'), { target: { value: '早播' } })

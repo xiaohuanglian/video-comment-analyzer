@@ -75,7 +75,7 @@ export default function LocalDataPanel() {
           <Database size={14} className="text-stone-400" />
           本地已采数据
           <span className="ml-1 text-xs font-normal text-stone-400">
-            采回来的都存在本地;小红书评论由「回复自动化→小红书」筛选消费
+            数据保存在本机；三平台用户筛选统一在“待回复列表”
           </span>
         </h2>
         <button
@@ -91,7 +91,7 @@ export default function LocalDataPanel() {
       {error && <p className="text-xs text-red-500">{error}</p>}
 
       {Object.keys(platforms).length === 0 && !busy && (
-        <p className="text-xs text-stone-400">还没有本地数据,先在上面跑一次采集。</p>
+        <p className="text-xs text-stone-400">还没有评论。在上方输入一个关键词，点击“开始采集评论”。</p>
       )}
 
       {orderedPlatforms.length > 0 && (

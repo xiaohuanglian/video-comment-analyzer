@@ -138,6 +138,9 @@ export interface CrawlerStatus {
     comments_crawled?: number | null;
     comments_target?: number | null;
     progress_updated_at?: string | null;
+    error_code?: string | null;
+    error_hint?: string | null;
+    retry_after_seconds?: number | null;
     result_kind?: string | null;
     result_title?: string | null;
     result_message?: string | null;

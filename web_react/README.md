@@ -1,32 +1,34 @@
-# React + TypeScript + Vite
+# 评论工作台前端
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+普通使用：在项目根目录双击 `run.command`（Mac）或 `run.bat`（Windows）。界面和 API 共用 `http://127.0.0.1:8766`。
 
-Currently, two official plugins are available:
+## 开发
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+在根目录运行 `./run_web_dev.sh`；另开终端：
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+cd web_react
+npm ci
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+打开 `http://localhost:5173`，`/api` 自动代理到后端。
+
+## 发布界面
+
+```bash
+npm run build
+```
+
+`dist/` 由后端提供，支持刷新 `/collect`、`/insight` 等页面。更新源码后需重新构建，再重启后端。
+
+## 检查
+
+```bash
+npx tsc -b --noEmit
+npm run lint
+npm run test:ci
+npm run build
+```
+
+入口为新手首页；帮助页解释流程和常见问题。三步工作流保留人工启动分析、逐条审核和受控发送。

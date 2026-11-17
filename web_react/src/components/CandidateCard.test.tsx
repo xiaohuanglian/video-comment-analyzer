@@ -100,3 +100,16 @@ it('保留历史原稿，单独展示产品复核与未入发送队列的改写�
   expect(screen.getByText(/YouVibe 有写法可参考/)).toBeTruthy()
   expect(screen.getByText(/用即梦，先固定参考图/)).toBeTruthy()
 })
+
+it('抖音手动回复使用抖音文案，不拼接 B 站评论锚点', () => {
+  render(<CandidateCard c={base({ platform: 'dy', video_id: '123', video_url: 'https://www.douyin.com/video/123' })} onApprove={noop} />)
+  const link = screen.getByRole('link', { name: '去抖音回 ↗' })
+  expect(link.getAttribute('href')).toBe('https://www.douyin.com/video/123')
+  expect(screen.queryByText('去B站回 ↗')).toBeNull()
+})
+
+it('小红书保留带访问令牌的评论原链接', () => {
+  const url = 'https://www.xiaohongshu.com/explore/note?xsec_token=test#comment-c1'
+  render(<CandidateCard c={base({ platform: 'xhs', comment_url: url })} onApprove={noop} />)
+  expect(screen.getByRole('link', { name: '去小红书回 ↗' }).getAttribute('href')).toBe(url)
+})

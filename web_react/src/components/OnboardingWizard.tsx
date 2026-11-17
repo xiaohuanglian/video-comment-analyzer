@@ -26,7 +26,7 @@ interface Props {
 export default function OnboardingWizard({ onDone, onClose }: Props) {
   const [questions, setQuestions] = useState<Question[]>([])
   const [answers, setAnswers] = useState<Record<string, string>>({})
-  const [runScenario, setRunScenario] = useState(true)
+  const [runScenario, setRunScenario] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState<{
@@ -148,11 +148,13 @@ export default function OnboardingWizard({ onDone, onClose }: Props) {
       <div className="space-y-3">
         {questions.map((q, idx) => (
           <div key={q.key}>
-            <label className="mb-1 flex items-baseline gap-1.5 text-sm font-medium">
+            <label htmlFor={`onboarding-${q.key}`} className="mb-1 flex items-baseline gap-1.5 text-sm font-medium">
               <span className="text-stone-400">{idx + 1}.</span>
               {q.question}
             </label>
             <input
+              id={`onboarding-${q.key}`}
+              disabled={busy}
               value={answers[q.key] ?? ''}
               onChange={(e) => setAnswers((a) => ({ ...a, [q.key]: e.target.value }))}
               placeholder={q.placeholder}
@@ -165,7 +167,7 @@ export default function OnboardingWizard({ onDone, onClose }: Props) {
 
       <label className="flex items-center gap-2 text-xs text-stone-600">
         <input type="checkbox" checked={runScenario} onChange={(e) => setRunScenario(e.target.checked)} />
-        顺便切一次场景（从你的定位推导可切入的角度，约多花十几秒）
+        同时让 AI 推荐搜索词和用户场景（可选，需要已连接 AI）
       </label>
 
       <button
@@ -177,7 +179,7 @@ export default function OnboardingWizard({ onDone, onClose }: Props) {
         )}
       >
         {busy ? <Loader2 size={14} className="animate-spin" /> : <ArrowRight size={14} />}
-        {busy ? '正在建档…' : '建好并开始'}
+        {busy ? '正在保存业务档案…' : '建好并开始'}
       </button>
     </section>
   )

@@ -12,3 +12,10 @@ body {
   @apply bg-stone-100 text-stone-800 antialiased;
   font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
 }
+
+/* Keep keyboard navigation visible across the workspace. */
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+button, summary, select { touch-action: manipulation; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

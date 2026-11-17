@@ -211,6 +211,6 @@ def test_ui_has_model_settings_section():
     page = (Path(__file__).resolve().parents[1] / "web_react" / "src" / "pages" / "SettingsPage.tsx").read_text(
         encoding="utf-8"
     )
-    assert "模型网关" in page
+    assert "连接 AI" in page
     assert "modelSettingsSave" in page
     assert "modelSettingsTest" in page

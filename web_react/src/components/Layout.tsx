@@ -1,14 +1,17 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { Download, Bot, Settings, ScanSearch, Users } from 'lucide-react'
+import { Download, Bot, Settings, ScanSearch, Users, House, CircleHelp, ListChecks } from 'lucide-react'
 import clsx from 'clsx'
 import ErrorBoundary from './ErrorBoundary'
 
 const NAV = [
-  { to: '/', label: '采集评论', icon: Download, end: true },
-  { to: '/insight', label: '评论洞察与用户筛选', icon: ScanSearch },
-  { to: '/automation', label: '起草、审核与发送', icon: Bot },
-  { to: '/profiles', label: '产品与筛选档案', icon: Users },
+  { to: '/', label: '开始使用', icon: House, end: true },
+  { to: '/collect', label: '1. 采集评论', icon: Download },
+  { to: '/reply-list', label: '2. 待回复列表', icon: ListChecks },
+  { to: '/insight', label: '需求分析（可选）', icon: ScanSearch },
+  { to: '/automation', label: '受控发送（高级）', icon: Bot },
+  { to: '/profiles', label: '业务档案', icon: Users },
   { to: '/settings', label: '连接与设置', icon: Settings },
+  { to: '/help', label: '使用帮助', icon: CircleHelp },
 ]
 
 export default function Layout() {
@@ -16,16 +19,17 @@ export default function Layout() {
   const navigate = useNavigate()
   return (
     <div className="flex h-full flex-col md:flex-row">
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:bg-white focus:p-3">跳到页面内容</a>
       <header className="flex shrink-0 items-center justify-between gap-3 border-b border-stone-200 bg-white px-4 py-3 md:hidden">
         <span className="shrink-0 text-sm font-semibold">评论工作台</span>
         <select aria-label="工作台页面" className="min-w-0 rounded-lg border border-stone-200 px-2 py-1.5 text-sm" value={location.pathname} onChange={event => navigate(event.target.value)}>
           {NAV.map(item => <option key={item.to} value={item.to}>{item.label}</option>)}
         </select>
       </header>
-      <aside className="hidden w-52 shrink-0 flex-col border-r border-stone-200 bg-white md:flex">
+      <aside className="hidden w-60 shrink-0 flex-col border-r border-stone-200 bg-white md:flex">
         <div className="px-5 py-4 text-lg font-semibold tracking-tight">
           评论工作台
-          <span className="mt-1 block text-xs font-normal text-stone-400">采集 · 筛选 · 起草 · 发送</span>
+          <span className="mt-1 block text-xs font-normal text-stone-400">从真实评论中发现需求</span>
         </div>
         <nav className="flex-1 px-3 space-y-1">
           {NAV.map(({ to, label, icon: Icon, end }) => (
@@ -49,7 +53,7 @@ export default function Layout() {
         </nav>
 
       </aside>
-      <main className="min-h-0 flex-1 min-w-0 overflow-y-auto">
+      <main id="main-content" className="min-h-0 flex-1 min-w-0 overflow-y-auto">
         {/*
           页面级错误边界：任何一页渲染崩溃都只影响这一屏，
           侧边栏仍在，用户能切到别的页面继续干活（此前会整站白屏）。

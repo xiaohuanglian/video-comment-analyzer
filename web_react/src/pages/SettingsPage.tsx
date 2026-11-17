@@ -58,11 +58,12 @@ export default function SettingsPage() {
       </>}
     </section>
     <section id="model-connection" className={`${panelClass} space-y-4`}>
-      <h2 className="flex items-center gap-2 font-semibold"><KeyRound size={17} />模型网关连接</h2>
+      <h2 className="flex items-center gap-2 font-semibold"><KeyRound size={17} />连接 AI（分析和起草时使用）</h2>
       {status && <p className="break-words text-xs leading-relaxed text-stone-500">实际使用：{status.model.model || '未配置'} · {status.model.configured ? '有配置，连接需单独验证' : '缺少有效配置'}{status.model.environment_override && ' · 运行环境配置优先于本页保存值'}</p>}
+      <p className="text-sm leading-6 text-stone-500">请向工具维护者或模型服务商索取下方三项信息。填写后先点击“测试这组连接”，成功后再保存。只采集评论时可以稍后配置。</p>
       <fieldset disabled={busy !== '' || !status} className="space-y-4">
-        <div className="grid gap-4 sm:grid-cols-2"><Field label="网关根地址"><input className={inputClass} value={model.base_url} onChange={e => updateModel({ base_url: e.target.value })} /></Field><Field label="模型名称"><input className={inputClass} value={model.model_name} onChange={e => updateModel({ model_name: e.target.value })} /></Field></div>
-        <Field label="API Key" hint={maskedKey ? `已有凭据 ${maskedKey}；留空保留原 Key。` : '填写模型服务提供的凭据。'}><input type="password" autoComplete="off" className={inputClass} value={model.api_key} onChange={e => updateModel({ api_key: e.target.value })} /></Field>
+        <div className="grid gap-4 sm:grid-cols-2"><Field label="网关根地址" hint="AI 服务地址，例如 https://api.deepseek.com；不填聊天网页地址。"><input className={inputClass} value={model.base_url} onChange={e => updateModel({ base_url: e.target.value })} /></Field><Field label="模型名称" hint="使用服务商提供的完整模型名称，不确定时请询问维护者。"><input className={inputClass} value={model.model_name} onChange={e => updateModel({ model_name: e.target.value })} /></Field></div>
+        <Field label="API Key" hint={maskedKey ? `已有凭据 ${maskedKey}；留空保留原 Key。` : '填写服务商提供的 API 密钥（像密码一样保管），保存在运行工具的本机。'}><input type="password" autoComplete="off" className={inputClass} value={model.api_key} onChange={e => updateModel({ api_key: e.target.value })} /></Field>
         <div className="flex flex-wrap gap-2"><button type="button" className={primaryClass} onClick={() => void operateModel(true)}>{busy === 'test' ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}测试这组连接</button><button type="button" className={buttonClass} onClick={() => void operateModel(false)}>保存连接配置</button></div>
       </fieldset>
       {notice && <p role="status" className="text-sm text-stone-600">{notice}</p>}

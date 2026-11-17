@@ -1,3 +1,4 @@
+import { replyLocation } from '../lib/reply-location'
 import { api, type AutomationCandidate } from '../lib/api'
 import clsx from 'clsx'
 import { CheckCircle2, XCircle } from 'lucide-react'
@@ -31,12 +32,7 @@ export default function CandidateCard({
   // 热评条目没有目标评论(comment_id 是 "0"),手动入口只能开到视频本身
   const isHot = c.action === 'hot_comment'
   // 小红书条目:手动回复入口用带 xsec_token 的评论直链(B站的 #reply 锚点对小红书无效)
-  const isXhs = c.platform === 'xhs'
-  const manualReplyUrl = isXhs
-    ? c.comment_url || c.video_url
-    : isHot
-      ? c.video_url
-      : `${c.video_url}#reply${c.comment_id}`
+  const { url: manualReplyUrl, name: platformName } = replyLocation(c)
   return (
     <div
       role="button"
@@ -232,13 +228,11 @@ export default function CandidateCard({
             title={
               isHot
                 ? '打开这条视频,自己手动发一条根评论'
-                : isXhs
-                  ? '打开这条评论在小红书的位置,自己手动回复'
-                  : '打开这条评论在B站的位置,自己手动回复'
+                : `打开${platformName}原帖，在评论区查找并手动回复`
             }
             className="rounded-lg border border-stone-200 px-2.5 py-1 text-xs text-stone-500 hover:border-(--brand) hover:text-(--brand)"
           >
-            {isHot ? '去视频下评论 ↗' : isXhs ? '去小红书回 ↗' : '去B站回 ↗'}
+            {isHot ? '去视频下评论 ↗' : `去${platformName}回 ↗`}
           </a>
           {onHumanTouch && hasDraft && (
             <button

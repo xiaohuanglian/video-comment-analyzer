@@ -27,6 +27,7 @@ from .routers import (
     crawler_router,
     creator_router,
     data_router,
+    manual_replies_router,
     scenario_router,
     settings_router,
     strategy_router,
@@ -162,22 +163,12 @@ app.include_router(costs_router, prefix="/api")
 app.include_router(crawler_router, prefix="/api")
 app.include_router(creator_router, prefix="/api")
 app.include_router(data_router, prefix="/api")
+app.include_router(manual_replies_router, prefix="/api")
 app.include_router(strategy_router, prefix="/api")
 app.include_router(websocket_router, prefix="/api")
 app.include_router(youtube_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
 app.include_router(scenario_router, prefix="/api")
-
-
-@app.get("/")
-async def root():
-    """8766 只提供 API;工作台面板在 web_react(默认 http://localhost:5173,/api 自动代理)。"""
-    return {
-        "message": "视频评论分析 API",
-        "workbench": "http://localhost:5173 (cd web_react && npm run dev)",
-        "docs": "/docs",
-        "health": "/api/health",
-    }
 
 
 @app.get("/api/health")
@@ -315,6 +306,11 @@ async def get_config_options():
         ],
     }
 
+
+# Register after all API endpoints so SPA routing cannot swallow API errors.
+from .services.workbench_static import install_workbench
+
+install_workbench(app, APP_DIR / "web_react" / "dist")
 
 if __name__ == "__main__":
     host = os.environ.get("WEB_HOST", "127.0.0.1")

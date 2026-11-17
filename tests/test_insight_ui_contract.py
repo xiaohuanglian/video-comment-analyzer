@@ -155,7 +155,7 @@ def test_frontend_wires_insight_page():
     api_ts = (root / "lib" / "api.ts").read_text(encoding="utf-8")
 
     assert "InsightPage" in app_tsx and 'path="insight"' in app_tsx
-    assert "/insight" in layout and "评论洞察" in layout
+    assert "/insight" in layout and "需求分析" in layout
     assert "insightSources" in api_ts and "insightAnalyze" in api_ts
 
     page = (root / "pages" / "InsightPage.tsx").read_text(encoding="utf-8")

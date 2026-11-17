@@ -1,3 +1,4 @@
+import { replyLocation } from '../lib/reply-location'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { X, RefreshCw, AlertTriangle, CheckCircle2, Filter, Loader2 } from 'lucide-react'
@@ -167,10 +168,10 @@ export default function AutomationPage() {
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-6 space-y-4">
-      <header className="flex items-center justify-between">
+      <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-lg font-semibold">回复自动化</h1>
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-lg font-semibold">审核与发送</h1>
             {/* 平台通道切换：B站 / 小红书（独立队列与节奏） */}
             <div className="flex rounded-lg border border-stone-200 bg-white p-0.5">
               {PLATFORM_TABS.map((pt) => (
@@ -193,13 +194,13 @@ export default function AutomationPage() {
           </div>
           <p className="text-xs text-stone-400">
             {platform === 'xhs'
-              ? '小红书通道：竞品笔记/关键词采集 → 筛选 → 起草 → 硬校验 → 人批 → CDP 受控发送（撞风控自动停损）'
+              ? '小红书：先筛选用户，再起草回复。检查每条草稿后，批准需要发送的内容。'
               : platform === 'dy'
-                ? '抖音通道：对标视频/关键词采集 → 筛选 → 起草 → 硬校验 → 人批 → CDP 受控发送（发送默认关闭，撞风控自动停损）'
-                : '存量评论 → 筛选目标 → LLM 起草 → lint → 人工批准 → 受控发送(采集在「采集」页)'}
+                ? '抖音：先筛选用户，再起草回复。发送默认关闭，准备好后再开启。'
+                : 'B 站：使用已采集的评论筛选用户，起草后逐条检查，再批准发送。'}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {status && (
             <span
               title="现在唯一在跑的是发送队列:每 20 秒检查一次有没有你批准的回复要发。不会自己采集、不会自己开网页找用户(自动采集已按你的要求关闭)"
@@ -241,16 +242,18 @@ export default function AutomationPage() {
             className="flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs hover:border-(--brand) disabled:opacity-50"
           >
             {screening ? <Loader2 size={13} className="animate-spin" /> : <Filter size={13} />}
-            {screening ? '筛选中…后台在跑,可以离开这页,完成后自动刷新' : '从已采集数据筛选目标（读取全库，按时效与模型预算评估）'}
+            {screening ? '筛选中…后台在跑,可以离开这页,完成后自动刷新' : '筛选值得回复的用户'}
           </button>
           <button
             onClick={() => void refresh()}
+            aria-label="刷新回复任务"
             className="rounded-lg border border-stone-200 bg-white p-1.5 hover:border-(--brand)"
           >
             <RefreshCw size={13} />
           </button>
         </div>
       </header>
+      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">操作顺序：选择业务档案和回复目标 → 点击“筛选值得回复的用户” → 检查草稿 → 批准发送。队列开启后，已批准的回复会按规则发出。</div>
       <section className="space-y-3 rounded-xl border border-orange-200 bg-orange-50/40 p-4">
         <label className="block text-sm font-medium">这次为哪个产品做回复？
           <select aria-label="回复任务产品" value={profileId} disabled={screening} className="ml-3 rounded border border-stone-200 bg-white px-3 py-2"
@@ -572,12 +575,7 @@ function Drawer({
   if (!c) return null
   const warnings = c.lint_warnings ?? []
   const isHot = c.action === 'hot_comment'
-  const isXhs = platform === 'xhs' || c.platform === 'xhs'
-  const manualReplyUrl = isXhs
-    ? c.comment_url || c.video_url
-    : isHot
-      ? c.video_url
-      : `${c.video_url}#reply${c.comment_id}`
+  const { url: manualReplyUrl, name: platformName } = replyLocation(c, platform)
 
   const approve = async () => {
     setBusy(true)
@@ -624,13 +622,11 @@ function Drawer({
                   title={
                     isHot
                       ? '打开这条视频,自己手动发一条根评论'
-                      : isXhs
-                        ? '打开这条评论在小红书的位置,自己手动回复'
-                        : '打开这条评论在B站的位置,自己手动回复'
+                      : `打开${platformName}原帖，在评论区查找并手动回复`
                   }
                   className="shrink-0 rounded-lg border border-stone-200 px-2 py-0.5 text-xs text-stone-500 hover:border-(--brand) hover:text-(--brand)"
                 >
-                  {isHot ? '去视频下评论 ↗' : isXhs ? '去小红书回复 ↗' : '去B站回复 ↗'}
+                  {isHot ? '去视频下评论 ↗' : `去${platformName}回复 ↗`}
                 </a>
               </div>
             </section>

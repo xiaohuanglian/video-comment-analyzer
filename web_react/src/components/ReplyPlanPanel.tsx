@@ -28,7 +28,7 @@ export default function ReplyPlanPanel({ platform, status, onSaved, profileId, r
   return <details className={`${panelClass} space-y-4`}><summary className="cursor-pointer font-medium">采集范围与回复时效</summary>
     <div className="space-y-4 pt-3">
       <p className="text-xs leading-relaxed text-stone-500">回复判断依据：评论想表达什么、视频上下文，以及{profile?.name ?? '所选产品'}实际能提供什么。关键词只用于在平台搜索视频，不要求评论命中关键词，也不参与从已采集数据筛选。下方词表按平台保存，切换产品后请核对采集范围。</p>
-      <Link to={`/?view=product${profile?.profile_id ? `&profile=${encodeURIComponent(profile.profile_id)}` : ''}`} className="text-xs text-(--brand) underline">查看或明确切换产品档案</Link>
+      <Link to="/profiles" className="text-xs text-(--brand) underline">查看或明确切换产品档案</Link>
       <form className="space-y-4" onSubmit={async event => {
         event.preventDefault(); setBusy(true); setNotice('')
         try {
